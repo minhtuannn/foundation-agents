@@ -1,0 +1,147 @@
+LGBM || Forecasting Sticker Sales
+In [1]:
+%%time
+
+!pip install -qq lifelines
+
+import numpy as np, pandas as pd
+import matplotlib.pyplot as plt
+from colorama import Fore
+from IPython.display import clear_output
+
+from sklearn.model_selection import *
+from xgboost import XGBRegressor, XGBClassifier
+from catboost import CatBoostRegressor, CatBoostClassifier
+import catboost as cb
+from lightgbm import LGBMRegressor
+import lightgbm as lgb
+from tqdm import tqdm
+import numpy as np
+  Preparing metadata (setup.py) ... done
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 349.3/349.3 kB 6.3 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 115.7/115.7 kB 7.5 MB/s eta 0:00:00
+  Building wheel for autograd-gamma (setup.py) ... done
+CPU times: user 3.02 s, sys: 458 ms, total: 3.48 s
+Wall time: 13 s
+Load Data
+In [2]:
+%%time
+
+SEED = 114514
+n_splits = 5
+
+!git clone https://github.com/muhammadabdullah0303/AbdML
+
+import sys
+sys.path.append('/kaggle/working/repository')
+
+from AbdML.main import AbdBase
+
+train = pd.read_csv('/kaggle/input/playground-series-s5e1/train.csv')
+test = pd.read_csv('/kaggle/input/playground-series-s5e1/test.csv')
+sample = pd.read_csv('/kaggle/input/playground-series-s5e1/sample_submission.csv')
+train = train.dropna(subset=['num_sold'])
+
+train = train.drop('id', axis=1)
+test = test.drop('id', axis=1)
+
+cat_c = ['country', 'store', 'product','month_name','day_of_week']
+
+ohe_cols = {'cat_c': cat_c}
+
+base = AbdBase(train_data=train, test_data=test, target_column='num_sold',gpu=False,handle_date=True,
+                 problem_type="regression", metric="mape", seed=SEED,
+                 n_splits=n_splits,early_stop=True,num_classes=0,cat_features=None,ohe_fe=ohe_cols,
+                 fold_type='GKF')
+Cloning into 'AbdML'...
+remote: Enumerating objects: 289, done.
+remote: Counting objects: 100% (142/142), done.
+remote: Compressing objects: 100% (105/105), done.
+remote: Total 289 (delta 45), reused 0 (delta 0), pack-reused 147 (from 1)
+Receiving objects: 100% (289/289), 108.16 KiB | 1.08 MiB/s, done.
+Resolving deltas: 100% (92/92), done.
+*** AbdBase ['V_1.3'] ***
+
+ *** Available Settings *** 
+
+Available Models: LGBM, CAT, XGB, Voting, TABNET, Ridge, LR
+Available Metrics: roc_auc, accuracy, f1, precision, recall, rmse, wmae, rmsle, mae, r2, mse, mape, custom
+Available Problem Types: classification, regression
+Available Fold Types: SKF, KF, GKF, GSKF, RKF
+
+ *** Configuration *** 
+
+Problem Type Selected: REGRESSION
+Metric Selected: MAPE
+Fold Type Selected: GKF
+Calculate Train Probabilities: False
+Calculate Test Probabilities: False
+Early Stopping: True
+GPU: False
+Eval_Metric Selected is: None
+
+Adding Date Features
+
+---> Adding OHE Features
+
+CPU times: user 1.88 s, sys: 534 ms, total: 2.42 s
+Wall time: 4.49 s
+In [3]:
+%%time
+
+base.X_train.head()
+CPU times: user 144 µs, sys: 34 µs, total: 178 µs
+Wall time: 182 µs
+Out[3]:
+year day month week month_sin month_cos day_sin day_cos group cos_year ... month_name_November month_name_October month_name_September day_of_week_Friday day_of_week_Monday day_of_week_Saturday day_of_week_Sunday day_of_week_Thursday day_of_week_Tuesday day_of_week_Wednesday
+0 2010 1 1 53 0.5 0.866025 0.201299 0.97953 -476 0.809017 ... 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 0.0 0.0
+1 2010 1 1 53 0.5 0.866025 0.201299 0.97953 -476 0.809017 ... 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 0.0 0.0
+2 2010 1 1 53 0.5 0.866025 0.201299 0.97953 -476 0.809017 ... 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 0.0 0.0
+3 2010 1 1 53 0.5 0.866025 0.201299 0.97953 -476 0.809017 ... 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 0.0 0.0
+4 2010 1 1 53 0.5 0.866025 0.201299 0.97953 -476 0.809017 ... 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 0.0 0.0
+5 rows × 46 columns
+In [4]:
+%%time
+
+base.X_test.head()
+CPU times: user 141 µs, sys: 32 µs, total: 173 µs
+Wall time: 177 µs
+Out[4]:
+year day month week month_sin month_cos day_sin day_cos group cos_year ... month_name_November month_name_October month_name_September day_of_week_Friday day_of_week_Monday day_of_week_Saturday day_of_week_Sunday day_of_week_Thursday day_of_week_Tuesday day_of_week_Wednesday
+0 2017 1 1 52 0.5 0.866025 0.201299 0.97953 -140 0.481754 ... 0.0 0.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0
+1 2017 1 1 52 0.5 0.866025 0.201299 0.97953 -140 0.481754 ... 0.0 0.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0
+2 2017 1 1 52 0.5 0.866025 0.201299 0.97953 -140 0.481754 ... 0.0 0.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0
+3 2017 1 1 52 0.5 0.866025 0.201299 0.97953 -140 0.481754 ... 0.0 0.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0
+4 2017 1 1 52 0.5 0.866025 0.201299 0.97953 -140 0.481754 ... 0.0 0.0 0.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0
+5 rows × 46 columns
+LGBM Model | GroupKFold
+In [5]:
+%%time
+
+params = {'n_estimators': 848, 'max_depth': 4, 'colsample_bytree': 0.40922204719271094, 
+          'subsample': 0.5185247148796622, 'learning_rate': 0.08812296173534281, 'min_child_samples': 91}
+
+rLGBM = base.Train_ML(params,'LGBM',e_stop=200, y_log=True, g_col='group')  
+Training Folds: 100%|██████████| 5/5 [01:04<00:00, 12.96s/it]
+Overall Train MAPE: 0.0439
+Overall OOF MAPE: 0.0470 
+CPU times: user 2min 4s, sys: 805 ms, total: 2min 5s
+Wall time: 1min 4s
+Submission
+In [6]:
+%%time
+
+sample["num_sold"] = rLGBM[1]
+sample.to_csv("submission.csv", index=False)
+print("Sub shape:", sample.shape)
+sample.head()
+Sub shape: (98550, 2)
+CPU times: user 186 ms, sys: 11 ms, total: 197 ms
+Wall time: 199 ms
+Out[6]:
+id num_sold
+0 230130 170.119528
+1 230131 893.535709
+2 230132 718.642981
+3 230133 397.446168
+4 230134 492.245142

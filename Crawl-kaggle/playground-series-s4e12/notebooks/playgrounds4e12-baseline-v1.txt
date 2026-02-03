@@ -1,0 +1,703 @@
+In [ ]:
+ 
+ FOREWORD
+This kernel is a second part to my ML baseline public materials. My older kernel for Baseline models became a bit clunky and needed revision.
+This kernel is divided into 2 parts with scripts-
+Utility script with relevant imports, package installations and model training script for all types of Playground assignments
+Model kernel using the previous step as imported script and execution of the model
+I wish to extend sincere thanks to the Kaggle community for the long standing support over the years! Thanks for all the feedback on my kernels and many thanks for your collective generosity!
+WHAT IS DIFFERENT HERE
+Usage of a utility script for imports and a general training class for all types of Playground datasets with(out) the original data
+Common training class for regression, multiclass and binary problems
+Ability to train single models one at a time
+Ability to enter a pipeline object instead of a model object for training
+Separate ensemble with facility for Optuna blending with normalised weights as output. User has full choice to implement his/ her ensemble method
+Ability to skip early stopping if needed in the pipeline
+Compatible with any scikit-learn model/ classical ML model
+Ability to perform online full fit
+Can be used for code competitions as well, returns fitted models as one of the outputs
+Ability to load the dataset as per the choice of original dataset included/ excluded in the CV scheme
+COMPETITION AND DATASET DETAILS
+This is a regression problem for the Playground Series S4-E12 competition.
+RMSLE score is the evaluation metric and needs to be minimized
+In this baseline kernel, I start off with simple feature engneering and ML models to initiate the process. Let's delve deeper into the challenge as we move along and improve the process!
+All the best!
+IMPORTS
+In [1]:
+%%time 
+
+!pip install -q -r /kaggle/input/playgrounds4e12-public-imports-v1/req_kaggle.txt
+
+exec(open('/kaggle/input/playgrounds4e12-public-imports-v1/myimports.py','r').read())
+exec(open('/kaggle/input/playgrounds4e12-public-imports-v1/training.py','r').read())
+
+%matplotlib inline
+print()
+---> XGBoost = 2.1.2 | LightGBM = 4.5.0 | Catboost = 1.2.7
+---> Sklearn = 1.5.2| Pandas = 2.2.3
+---> Imports- part 1 done
+
+---> Commencing imports-part2
+---> XGBoost = 2.1.2 | LightGBM = 4.5.0
+---> Imports- part 2 done
+---> Seeding everything
+
+---> Imports done
+
+
+
+CPU times: user 5.5 s, sys: 945 ms, total: 6.44 s
+Wall time: 40.9 s
+CONFIGURATION
+In [2]:
+%%time 
+
+class CFG:
+    """
+    Configuration class for parameters and CV strategy for tuning and training
+    Some parameters may be unused here as this is a general configuration class
+    """;
+
+    # Data preparation:-
+    version_nb  = 1
+    model_id    = "V1_5"
+    model_label = "ML"
+
+    test_req           = False
+    test_sample_frac   = 0.01
+
+    gpu_switch         = "OFF"
+    state              = 42
+    target             = f"PremiumAmount"
+    grouper            = f""
+    tgt_mapper         = {}
+
+    ip_path            = f"/kaggle/input/playground-series-s4e12"
+    op_path            = f"/kaggle/working"
+    orig_path          = f"/kaggle/input/insurance-premium-prediction/Insurance Premium Prediction Dataset.csv"
+
+    dtl_preproc_req    = True
+    ftre_plots_req     = True
+    ftre_imp_req       = True
+
+    nb_orig            = 0
+    orig_all_folds     = False
+
+    # Model Training:-
+    pstprcs_oof        = True
+    pstprcs_train      = True
+    pstprcs_test       = True
+    
+    ML                 = True
+    test_preds_req     = False
+
+    pseudo_lbl_req     = "N"
+    pseudolbl_up       = 0.975
+    pseudolbl_low      = 0.00
+
+    n_splits           = 3 if test_req == True else 10
+    n_repeats          = 1
+    nbrnd_erly_stp     = 0
+    mdlcv_mthd         = 'KF'
+
+    # Ensemble:-
+    ensemble_req       = True
+    optuna_req         = False
+    metric_obj         = 'minimize'
+    ntrials            = 10 if test_req == True else 300
+
+    # Global variables for plotting:-
+    grid_specs = {'visible'  : True,
+                  'which'    : 'both',
+                  'linestyle': '--',
+                  'color'    : 'lightgrey',
+                  'linewidth': 0.75
+                 }
+
+    title_specs = {'fontsize'   : 9,
+                   'fontweight' : 'bold',
+                   'color'      : '#992600',
+                  }
+
+PrintColor(f"\n---> Configuration done!\n")
+
+cv_selector = \
+{
+ "RKF"   : RKF(n_splits = CFG.n_splits, n_repeats= CFG.n_repeats, random_state= CFG.state),
+ "RSKF"  : RSKF(n_splits = CFG.n_splits, n_repeats= CFG.n_repeats, random_state= CFG.state),
+ "SKF"   : SKF(n_splits = CFG.n_splits, shuffle = True, random_state= CFG.state),
+ "KF"    : KFold(n_splits = CFG.n_splits, shuffle = True, random_state= CFG.state),
+ "GKF"   : GKF(n_splits = CFG.n_splits)
+}
+
+collect()
+---> Configuration done!
+
+CPU times: user 165 ms, sys: 501 µs, total: 166 ms
+Wall time: 165 ms
+Out[2]:
+4
+Configuration parameter Explanation Data type Sample values
+version_nb Version Number int 1
+model_id Model ID string V1_1
+model_label Model Label string ML
+test_req Test Required bool True / False
+test_sample_frac Test sampled fraction int 1000
+gpu_switch Do we need GPU support bool True / False
+state Random state int 42
+target Target column str
+grouper CV grouper column str
+ip_path, op_path Data paths str
+pstprcs_* Do we need post-processing bool True / False
+ML Do we need machine learning models bool True / False
+test_preds_req Do we need test set predictions (training in inference kernel) bool True / False
+pseudo_lbl_req Pseudo label required? bool True / False
+pseudolbl* Pseudo label cutoff float
+n_splits/ n_repeats N-splits and repeats for CV scheme int 3/5/10
+nbrnd_erly_stp Early stopping rounds int 40
+mdlcv_mthd Model CV method str RSKF
+ensemble_req Do we need ensemble bool True / False
+optuna_req Do we need optuna bool True / False
+metric_obj Metric direction str minimize/ maximize
+ntrials Trials int 300
+PREPROCESSING
+In [3]:
+%%time 
+
+exec(open('/kaggle/input/playgrounds4e12-public-imports-v1/pp.py','r').read())
+pp = Preprocessor()
+pp.DoPreprocessing();
+Data shapes - train-test-original | (1200000, 20) (800000, 19) (278860, 20)
+
+Train set head
+  Age Gender AnnualIncome MaritalStatus NumberofDependents EducationLevel Occupation HealthScore Location PolicyType PreviousClaims VehicleAge CreditScore InsuranceDuration PolicyStartDate CustomerFeedback SmokingStatus ExerciseFrequency PropertyType PremiumAmount
+id                                        
+0 19.000 Female 10049.000 Married 1.000 Bachelor's Self-Employed 22.599 Urban Premium 2.000 17.000 372.000 5.000 2023-12-23 15:21:39.134960 Poor No Weekly House 2869.000
+1 39.000 Female 31678.000 Divorced 3.000 Master's nan 15.570 Rural Comprehensive 1.000 12.000 694.000 2.000 2023-06-12 15:21:39.111551 Average Yes Monthly House 1483.000
+2 23.000 Male 25602.000 Divorced 3.000 High School Self-Employed 47.178 Suburban Premium 1.000 14.000 nan 3.000 2023-09-30 15:21:39.221386 Good Yes Weekly House 567.000
+3 21.000 Male 141855.000 Married 2.000 Bachelor's nan 10.938 Rural Basic 1.000 0.000 367.000 1.000 2024-06-12 15:21:39.226954 Poor Yes Daily Apartment 765.000
+4 21.000 Male 39651.000 Single 1.000 Bachelor's Self-Employed 20.376 Rural Premium 0.000 8.000 598.000 4.000 2021-12-01 15:21:39.252145 Poor Yes Weekly House 2022.000
+Test set head
+  Age Gender AnnualIncome MaritalStatus NumberofDependents EducationLevel Occupation HealthScore Location PolicyType PreviousClaims VehicleAge CreditScore InsuranceDuration PolicyStartDate CustomerFeedback SmokingStatus ExerciseFrequency PropertyType
+id                                      
+1200000 28.000 Female 2310.000 nan 4.000 Bachelor's Self-Employed 7.658 Rural Basic nan 19.000 nan 1.000 2023-06-04 15:21:39.245086 Poor Yes Weekly House
+1200001 31.000 Female 126031.000 Married 2.000 Master's Self-Employed 13.381 Suburban Premium nan 14.000 372.000 8.000 2024-04-22 15:21:39.224915 Good Yes Rarely Apartment
+1200002 47.000 Female 17092.000 Divorced 0.000 PhD Unemployed 24.355 Urban Comprehensive nan 16.000 819.000 9.000 2023-04-05 15:21:39.134960 Average Yes Monthly Condo
+1200003 28.000 Female 30424.000 Divorced 3.000 PhD Self-Employed 5.136 Suburban Comprehensive 1.000 3.000 770.000 5.000 2023-10-25 15:21:39.134960 Poor Yes Daily House
+1200004 24.000 Male 10863.000 Divorced 2.000 High School Unemployed 11.844 Suburban Premium nan 14.000 755.000 7.000 2021-11-26 15:21:39.259788 Average No Weekly House
+Original set head
+  Age Gender AnnualIncome MaritalStatus NumberofDependents EducationLevel Occupation HealthScore Location PolicyType PreviousClaims VehicleAge CreditScore InsuranceDuration PolicyStartDate CustomerFeedback SmokingStatus ExerciseFrequency PropertyType PremiumAmount
+id                                        
+0 56.000 Male 99990.000 Married 1.000 Master's nan 31.075 Urban Comprehensive nan 13 320.000 5 2022-12-10 15:21:39.078837 Poor Yes Daily Condo 308.000
+1 46.000 Male 2867.000 Single 1.000 Bachelor's nan 50.271 Urban Comprehensive nan 3 694.000 4 2023-01-31 15:21:39.078837 Good Yes Monthly House 517.000
+2 32.000 Female 30154.000 Divorced 3.000 Bachelor's nan 14.715 Suburban Comprehensive 2.000 16 652.000 8 2023-11-26 15:21:39.078837 Poor No Monthly House 849.000
+3 60.000 Female 48371.000 Divorced 0.000 PhD Self-Employed 25.347 Rural Comprehensive 1.000 11 330.000 7 2023-02-27 15:21:39.078837 Poor No Rarely Condo 927.000
+4 25.000 Female 54174.000 Divorced 0.000 High School Self-Employed 6.659 Urban Comprehensive nan 9 nan 8 2020-11-25 15:21:39.078837 Poor No Rarely Condo 303.000
+We are using the competition training data only
+CPU times: user 8.88 s, sys: 2.47 s, total: 11.4 s
+Wall time: 14.4 s
+DATA TRANSFORMS
+In [4]:
+%%time 
+
+class FeatureMaker:
+    "This class develops features as per the requirement and cleans up the dataset off outliers"
+
+    def __init__(self):
+        self.target = CFG.target
+
+    def fit(self, X, y = None, **fit_params):
+        return self
+
+    def transform(
+        self, 
+        X        : pd.DataFrame, y = None,  
+        cat_cols : list = [],
+        mode     : str  = "Train",
+        **params
+    ):
+        "This method transforms the dataset based on additional columns and data cleaning"
+
+        df = X.copy()
+
+        df["PolicyStartDate"] = pd.to_datetime(df["PolicyStartDate"])
+        
+        df["Month"]       = df["PolicyStartDate"].dt.month
+        df["Day"]         = df["PolicyStartDate"].dt.day
+        df["Week"]        = df["PolicyStartDate"].dt.isocalendar().week
+        df["Weekday"]     = df["PolicyStartDate"].dt.weekday
+        df['DaySin']      = np.sin(2 * np.pi * df['Day'] / 30)  
+        df['DayCos']      = np.cos(2 * np.pi * df['Day'] / 30)
+        df['WeekdaySin']  = np.sin(2 * np.pi * df['Weekday'] / 7)
+        df['WeekdayCos']  = np.cos(2 * np.pi * df['Weekday'] / 7)
+        
+        df['DaysSinceStart']  = \
+        np.ceil(
+            (pd.to_datetime("12-31-2024") - df["PolicyStartDate"])/ pd.Timedelta(1, "d")
+        )
+        
+        df["Ratio_IncomeAge"]   = np.clip(df["AnnualIncome"] / df["Age"], a_min = 1e-6, a_max = 1e9)
+        df["Score"]             = df["CreditScore"] + df["HealthScore"]
+        
+        df = df.drop("PolicyStartDate", axis=1, errors = "ignore")
+        
+        if mode == "Train" :
+            cat_cols = \
+            (df.
+             drop(["Source", "PolicyStartDate"], axis=1, errors = "ignore").
+             select_dtypes(["object", pd.StringDtype, "category"]).
+             columns
+            )
+
+        for col in cat_cols:
+            try:
+                df[col] = \
+                df[col].astype(pd.StringDtype).fillna("missing").astype("category")
+            except:
+                df[col] = df[col].fillna("missing").astype("category")
+        
+        return (df, list(cat_cols))
+CPU times: user 44 µs, sys: 0 ns, total: 44 µs
+Wall time: 49.6 µs
+In [5]:
+%%time 
+
+Xtrain = pp.train.copy()
+
+if CFG.test_req:
+    Xtrain = Xtrain.groupby(["Source", CFG.target], as_index = False).sample(frac = CFG.test_sample_frac)
+    Xtrain.index = range(len(Xtrain))
+    PrintColor(f"---> Syntax check mode - shape = {Xtrain.shape}", color = Fore.RED)
+    
+ytrain = Xtrain[CFG.target]
+Xtrain = Xtrain.drop([CFG.target, CFG.grouper], axis= 1, errors = "ignore")  
+
+xform = FeatureMaker()
+xform.fit(Xtrain, ytrain);
+
+Xtrain, cat_cols  = xform.transform(Xtrain, cat_cols = [], mode = "Train")
+Xtest, _          = xform.transform(pp.test, cat_cols = cat_cols, mode = "Test")
+
+PrintColor(f"\n---> Shapes = {Xtrain.shape} {ytrain.shape} {Xtest.shape}")
+
+# Initializing the cv scheme:-
+cv = cv_selector[CFG.mdlcv_mthd]
+
+if CFG.nb_orig > 0:
+    all_df = []
+    
+    for mysource in ["Competition", "Original"]:
+        df = pd.concat([Xtrain.loc[Xtrain.Source == mysource], ytrain], axis=1, join = "inner")
+        df.index = range(len(df))
+        for fold_nb, (_, dev_idx) in enumerate(cv.split(df, df[CFG.target])):
+            df.loc[dev_idx, "fold_nb"] = fold_nb
+            
+        all_df.append(df)      
+    ygrp = pd.concat(all_df, axis=0, ignore_index = True)["fold_nb"].astype(np.uint8)
+                      
+else:
+    df = Xtrain.loc[Xtrain.Source == "Competition"]
+    df.index = range(len(df))
+    
+    for fold_nb, (_, dev_idx) in enumerate(cv.split(df, ytrain.iloc[df.index])):
+        df.loc[dev_idx, "fold_nb"] = fold_nb 
+    ygrp = df["fold_nb"].astype(np.uint8)
+
+ytrain = np.log1p(ytrain)
+
+collect();
+print();
+
+_ = utils.CleanMemory()
+---> Shapes = (1200000, 30) (1200000,) (800000, 30)
+
+CPU times: user 5.67 s, sys: 1.27 s, total: 6.94 s
+Wall time: 6.94 s
+MODEL TRAINING
+In [6]:
+%%time 
+
+try:
+    l = MyLogger()
+    l.init(logging_lbl = "lightgbm_custom")
+    lgb.register_logger(l)
+except:
+    pass
+
+def mymetric(ytrue, ypred):
+    """
+    Custom evaluation metric to track RMSLE during training.
+    
+    Args:
+        ytrue - true values
+        ypred - prediction values
+    """
+    return ('RMSLE', utils.ScoreMetric(ytrue, np.clip(ypred, 20, 4999)), False)
+    
+Mdl_Master = \
+{   
+ f'CB1R' : CBR(**{    "loss_function"         : "RMSE",
+                      'task_type'             : "GPU" if CFG.gpu_switch == "ON" else "CPU",
+                      'learning_rate'         : 0.035,
+                      'iterations'            : 200,
+                      'max_bin'               : 16384,
+                      'max_depth'             : 8,
+                      'colsample_bylevel'     : 0.70,
+                      'l2_leaf_reg'           : 0.25,
+                      'random_strength'       : 0.20,
+                      'verbose'               : 0,
+                      'random_state'          : CFG.state,
+                      'cat_features'          : cat_cols,
+                     }
+                  ),
+    
+ f'LGBM1R' : LGBMR(**{"objective"           : "regression_l2",
+                      'device'              : "gpu" if CFG.gpu_switch == "ON" else "cpu",
+                      'metric'              : "custom",
+                      'learning_rate'       : 0.03,
+                      'n_estimators'        : 200,
+                      'max_bin'             : 8192,
+                      'max_depth'           : 8,
+                      'num_leaves'          : 128,
+                      'min_data_in_leaf'    : 128,
+                      'colsample_bytree'    : 0.70,
+                      'lambda_l1'           : 0.001,
+                      'lambda_l2'           : 0.01,
+                      'verbosity'           : -1,
+                      'random_state'        : CFG.state,
+                     }
+                  ),
+
+ f'LGBM2R' : LGBMR(**{"objective"           : "regression_l2",
+                      'device'              : "gpu" if CFG.gpu_switch == "ON" else "cpu",
+                      'metric'              : "custom",
+                      'data_sample_strategy': 'goss',
+                      'learning_rate'       : 0.035,
+                      'n_estimators'        : 150,
+                      'max_bin'             : 4096,
+                      'max_depth'           : 8,
+                      'num_leaves'          : 64,
+                      'min_data_in_leaf'    : 64,
+                      'colsample_bytree'    : 0.75,
+                      'lambda_l1'           : 0.01,
+                      'lambda_l2'           : 0.01,
+                      'verbosity'           : -1,
+                      'random_state'        : CFG.state,
+                     }
+                  ),
+
+ f'XGB1R' : XGBR(**{  "objective"             : "reg:squarederror",
+                      'device'                : "cuda" if CFG.gpu_switch == "ON" else "cpu",
+                      'disable_default_eval_metric' : True,
+                      'learning_rate'       : 0.035,
+                      'n_estimators'        : 200,
+                      'max_bin'             : 8192,
+                      'max_depth'           : 8,
+                      'colsample_bytree'    : 0.75,
+                      'colsample_bylevel'   : 0.70,
+                      'lambda_l1'           : 0.01,
+                      'lambda_l2'           : 0.01,
+                      'verbose'             : 0,
+                      'random_state'        : CFG.state,
+                      'enable_categorical'  : True,
+                     }
+                  ),
+}
+
+# Initializing model outputs
+OOF_Preds    = {}
+Mdl_Preds    = {}
+FittedModels = {}
+FtreImp      = {}
+SelMdlCols   = {}
+CPU times: user 636 µs, sys: 5 µs, total: 641 µs
+Wall time: 2.65 ms
+In [7]:
+%%time
+
+# Model training:-
+drop_cols = ["Source", "id", "Id", "Label", CFG.target, "fold_nb"]
+
+for method, mymodel in tqdm(Mdl_Master.items()):
+
+    PrintColor(f"\n{'=' * 20} {method.upper()} MODEL TRAINING {'=' * 20}\n")
+
+    md = \
+    ModelTrainer(
+        problem_type   = "regression",
+        es             = CFG.nbrnd_erly_stp,
+        target         = CFG.target,
+        orig_req       = True if CFG.nb_orig > 0 else False,
+        orig_all_folds = CFG.orig_all_folds,
+        metric_lbl     = "rmsle",
+        drop_cols      = drop_cols,
+        pp_preds       = CFG.pstprcs_oof,
+        )
+
+    sel_mdl_cols = list(Xtest.columns) 
+    PrintColor(
+        f"Selected columns = {len(sel_mdl_cols) :,.0f}", 
+        color = Fore.RED
+    )
+    SelMdlCols[method] = (sel_mdl_cols, cat_cols)
+
+    Xtrain_ = Xtrain.copy()
+    Xtest_  = Xtest.copy()
+
+    if "CB" in method :
+        Xtrain_[cat_cols] = Xtrain_[cat_cols].astype(pd.StringDtype)
+        Xtest_[cat_cols]  = Xtest_[cat_cols].astype(pd.StringDtype)
+    else:
+        pass
+
+    fitted_models, oof_preds, test_preds, ftreimp, mdl_best_iter =  \
+    md.MakeOfflineModel(
+        Xtrain_,
+        ytrain,
+        ygrp,
+        Xtest_,
+        clone(mymodel),
+        method,
+        test_preds_req   = True,
+        ftreimp_plot_req = CFG.ftre_imp_req,
+        ntop = 50,
+    )
+
+    OOF_Preds[method]    = oof_preds
+    Mdl_Preds[method]    = test_preds
+    FittedModels[method] = fitted_models
+    FtreImp[method]      = ftreimp
+
+    del fitted_models, oof_preds, test_preds, ftreimp, sel_mdl_cols, Xtrain_, Xtest_
+    print()
+    collect();
+
+_ = utils.CleanMemory();
+100%
+4/4 [1:08:11<00:00, 851.58s/it]
+==================== CB1R MODEL TRAINING ====================
+
+Selected columns = 30
+10/? [38:47<00:00, 232.47s/it]
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+CB1R Fold0           OOF = 1.047917 | Train = 1.046301 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+CB1R Fold1           OOF = 1.048398 | Train = 1.046288 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+CB1R Fold2           OOF = 1.049347 | Train = 1.046156 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+CB1R Fold3           OOF = 1.044897 | Train = 1.046679 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+CB1R Fold4           OOF = 1.049488 | Train = 1.046089 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+CB1R Fold5           OOF = 1.046249 | Train = 1.046488 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+CB1R Fold6           OOF = 1.045285 | Train = 1.046518 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+CB1R Fold7           OOF = 1.046361 | Train = 1.046490 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+CB1R Fold8           OOF = 1.043606 | Train = 1.046780 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+CB1R Fold9           OOF = 1.051527 | Train = 1.045876 
+---> 1.047307 +- 0.002322 | OOF
+---> 1.046366 +- 0.000264 | Train
+
+
+==================== LGBM1R MODEL TRAINING ====================
+
+Selected columns = 30
+10/? [09:18<00:00, 55.70s/it]
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM1R Fold0         OOF = 1.045775 | Train = 1.039236 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM1R Fold1         OOF = 1.046261 | Train = 1.039179 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM1R Fold2         OOF = 1.047351 | Train = 1.039129 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM1R Fold3         OOF = 1.042982 | Train = 1.039459 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM1R Fold4         OOF = 1.047575 | Train = 1.039123 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM1R Fold5         OOF = 1.044169 | Train = 1.039279 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM1R Fold6         OOF = 1.043223 | Train = 1.039474 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM1R Fold7         OOF = 1.044681 | Train = 1.039368 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM1R Fold8         OOF = 1.041873 | Train = 1.039690 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM1R Fold9         OOF = 1.049281 | Train = 1.038802 
+---> 1.045317 +- 0.002224 | OOF
+---> 1.039274 +- 0.000231 | Train
+
+
+==================== LGBM2R MODEL TRAINING ====================
+
+Selected columns = 30
+10/? [06:27<00:00, 38.66s/it]
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM2R Fold0         OOF = 1.046206 | Train = 1.042761 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM2R Fold1         OOF = 1.046622 | Train = 1.042676 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM2R Fold2         OOF = 1.047653 | Train = 1.042566 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM2R Fold3         OOF = 1.043350 | Train = 1.043017 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM2R Fold4         OOF = 1.048009 | Train = 1.042490 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM2R Fold5         OOF = 1.044593 | Train = 1.042943 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM2R Fold6         OOF = 1.043695 | Train = 1.043016 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM2R Fold7         OOF = 1.044955 | Train = 1.042846 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM2R Fold8         OOF = 1.042124 | Train = 1.043116 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+LGBM2R Fold9         OOF = 1.049734 | Train = 1.042274 
+---> 1.045694 +- 0.002250 | OOF
+---> 1.042771 +- 0.000255 | Train
+
+
+==================== XGB1R MODEL TRAINING ====================
+
+Selected columns = 30
+10/? [13:28<00:00, 81.93s/it]
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+XGB1R Fold0          OOF = 1.045949 | Train = 1.034089 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+XGB1R Fold1          OOF = 1.046287 | Train = 1.033987 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+XGB1R Fold2          OOF = 1.047345 | Train = 1.034098 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+XGB1R Fold3          OOF = 1.043034 | Train = 1.034422 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+XGB1R Fold4          OOF = 1.047458 | Train = 1.033923 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+XGB1R Fold5          OOF = 1.044249 | Train = 1.034472 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+XGB1R Fold6          OOF = 1.043332 | Train = 1.034430 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+XGB1R Fold7          OOF = 1.044647 | Train = 1.034106 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+XGB1R Fold8          OOF = 1.041838 | Train = 1.034592 
+
+---> Shapes = (1080000, 29) (1080000,) -- (120000, 29) (120000,) -- (800000, 29)
+XGB1R Fold9          OOF = 1.049479 | Train = 1.033693 
+---> 1.045362 +- 0.002240 | OOF
+---> 1.034181 +- 0.000272 | Train
+
+CPU times: user 3h 8min 54s, sys: 9min 39s, total: 3h 18min 34s
+Wall time: 1h 8min 11s
+ENSEMBLE
+In [8]:
+%%time 
+
+oof_preds = pd.DataFrame(OOF_Preds)
+mdl_preds = pd.DataFrame(Mdl_Preds)
+
+oof_ens_preds = oof_preds.mean(axis=1).values
+test_preds    = mdl_preds.mean(axis=1).values
+
+score = \
+utils.ScoreMetric(
+    md.PostProcessPreds(ytrain.values), 
+    oof_ens_preds
+)
+
+PrintColor(f"\n---> Final Ensemble Score = {score :,.6f}\n\n")
+---> Final Ensemble Score = 1.045590
+
+
+CPU times: user 333 ms, sys: 48.9 ms, total: 382 ms
+Wall time: 382 ms
+CLOSURE
+In [9]:
+%%time 
+
+try:
+    oof_preds.assign(**{"Ensemble": oof_ens_preds}).\
+    to_parquet(
+        os.path.join(CFG.op_path, f"OOF_Preds_{CFG.model_label}{CFG.model_id}.parquet")
+    )
+
+    mdl_preds.assign(**{"Ensemble": test_preds}).\
+    to_parquet(
+        os.path.join(CFG.op_path, f"Mdl_Preds_{CFG.model_label}{CFG.model_id}.parquet")
+    )
+    
+except:
+    oof_preds.\
+    to_parquet(
+        os.path.join(CFG.op_path, f"OOF_Preds_{CFG.model_label}{CFG.model_id}.parquet")
+    )  
+    
+    mdl_preds.\
+    to_parquet(
+        os.path.join(CFG.op_path, f"Mdl_Preds_{CFG.model_label}{CFG.model_id}.parquet")
+    )
+
+pp.sub_fl[f"Premium Amount"] = test_preds
+pp.sub_fl.to_csv(
+    os.path.join(CFG.op_path, f"submission.csv"), index = None
+)
+
+
+print()
+!ls
+print()
+!head submission.csv
+
+_ = utils.CleanMemory()
+print()
+Mdl_Preds_MLV1_5.parquet  __notebook__.ipynb  submission.csv
+OOF_Preds_MLV1_5.parquet  catboost_info       xgb_optimize.log
+
+id,Premium Amount
+1200000,789.8799850045639
+1200001,789.9246666751396
+1200002,797.0540640507188
+1200003,794.7310888895385
+1200004,755.6764472878027
+1200005,783.0160651077714
+1200006,949.8374330651802
+1200007,739.7783649102523
+1200008,202.5410863948284
+
+CPU times: user 2.48 s, sys: 810 ms, total: 3.29 s
+Wall time: 6.03 s

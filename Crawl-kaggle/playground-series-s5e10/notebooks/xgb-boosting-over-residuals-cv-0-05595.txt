@@ -1,0 +1,421 @@
+XGB Boosting Over Residuals - CV 0.05595
+This is a starter notebook demonstrating "boosting over residuals". For the original dataset, @siukeitin (Kaggle user broccoli beef) published the optimal Bayesian solution here. (This is based on the original data's generation formula here).
+For this month's playground competition, Kaggle created synthetic data from this original data. Therefore the signal has been altered and augmented. Hence the optimal Bayesian solution is no longer optimal for this month's playground competition's data.
+None-the-less, we can begin with this optimal solution and have XGB learn how to improve it. So, instead of training with target, we will train our XGB with target minus optimal solution (i.e. the residual). XGB will learn to predict this residual aka "boost over residuals"!
+Discussion about this notebook is here
+Load Train, Test, Original
+In [1]:
+import pandas as pd, numpy as np
+
+train = pd.read_csv("/kaggle/input/playground-series-s5e10/train.csv")
+print("Train shape:", train.shape )
+train.head()
+Train shape: (517754, 14)
+Out[1]:
+id road_type num_lanes curvature speed_limit lighting weather road_signs_present public_road time_of_day holiday school_season num_reported_accidents accident_risk
+0 0 urban 2 0.06 35 daylight rainy False True afternoon False True 1 0.13
+1 1 urban 4 0.99 35 daylight clear True False evening True True 0 0.35
+2 2 rural 4 0.63 70 dim clear False True morning True False 2 0.30
+3 3 highway 4 0.07 35 dim rainy True True morning False False 1 0.21
+4 4 rural 1 0.58 60 daylight foggy False False evening True False 1 0.56
+In [2]:
+test = pd.read_csv("/kaggle/input/playground-series-s5e10/test.csv")
+test['accident_risk'] = 0.5
+print("Test shape:", test.shape )
+test.head()
+Test shape: (172585, 14)
+Out[2]:
+id road_type num_lanes curvature speed_limit lighting weather road_signs_present public_road time_of_day holiday school_season num_reported_accidents accident_risk
+0 517754 highway 2 0.34 45 night clear True True afternoon True True 1 0.5
+1 517755 urban 3 0.04 45 dim foggy True False afternoon True False 0 0.5
+2 517756 urban 2 0.59 35 dim clear True False afternoon True True 1 0.5
+3 517757 rural 4 0.95 35 daylight rainy False False afternoon False False 2 0.5
+4 517758 highway 2 0.86 35 daylight clear True False evening False True 3 0.5
+In [3]:
+orig = []
+for k in [2,10,100]:
+    df = pd.read_csv(f"/kaggle/input/simulated-roads-accident-data/synthetic_road_accidents_{k}k.csv")
+    orig.append(df)
+orig = pd.concat(orig,axis=0)
+orig['id'] = np.arange(len(orig))+test['id'].max()+1
+orig = orig[ train.columns ] 
+print("Original data shape:", orig.shape )
+orig.head()
+Original data shape: (112000, 14)
+Out[3]:
+id road_type num_lanes curvature speed_limit lighting weather road_signs_present public_road time_of_day holiday school_season num_reported_accidents accident_risk
+0 690339 rural 2 0.72 60 daylight clear True False afternoon False False 2 0.37
+1 690340 highway 4 0.95 45 daylight foggy False True evening False True 1 0.40
+2 690341 rural 1 0.72 25 night rainy False False evening True False 1 0.55
+3 690342 rural 4 0.86 70 dim foggy True False morning True True 1 0.56
+4 690343 highway 1 0.00 60 night rainy True True morning True True 3 0.54
+In [4]:
+combine = pd.concat([train,test,orig],axis=0,ignore_index=True)
+print("Combine shape:", combine.shape )
+combine.head()
+Combine shape: (802339, 14)
+Out[4]:
+id road_type num_lanes curvature speed_limit lighting weather road_signs_present public_road time_of_day holiday school_season num_reported_accidents accident_risk
+0 0 urban 2 0.06 35 daylight rainy False True afternoon False True 1 0.13
+1 1 urban 4 0.99 35 daylight clear True False evening True True 0 0.35
+2 2 rural 4 0.63 70 dim clear False True morning True False 2 0.30
+3 3 highway 4 0.07 35 dim rainy True True morning False False 1 0.21
+4 4 rural 1 0.58 60 daylight foggy False False evening True False 1 0.56
+Feature Engineer
+We will preprocess/feature engineer the following:
+Add @siukeitin optimal original data solution (from here)
+Label encode the categorical features
+Target encode all features using original data targets
+In [5]:
+FEATURES = list( orig.columns[1:-1] )
+TARGET = orig.columns[-1]
+print(f"Features: {FEATURES}, Target: '{TARGET}'")
+Features: ['road_type', 'num_lanes', 'curvature', 'speed_limit', 'lighting', 'weather', 'road_signs_present', 'public_road', 'time_of_day', 'holiday', 'school_season', 'num_reported_accidents'], Target: 'accident_risk'
+- Add New Feature!
+In [6]:
+# https://www.kaggle.com/competitions/playground-series-s5e10/discussion/609994#3296622
+import scipy
+
+def f(X):
+    return \
+    0.3 * X["curvature"] + \
+    0.2 * (X["lighting"] == "night").astype(int) + \
+    0.1 * (X["weather"] != "clear").astype(int) + \
+    0.2 * (X["speed_limit"] >= 60).astype(int) + \
+    0.1 * (X["num_reported_accidents"] > 2).astype(int)
+
+def clip(f):
+    def clip_f(X):
+        sigma = 0.05
+        mu = f(X)
+        a, b = -mu/sigma, (1-mu)/sigma
+        Phi_a, Phi_b = scipy.stats.norm.cdf(a), scipy.stats.norm.cdf(b)
+        phi_a, phi_b = scipy.stats.norm.pdf(a), scipy.stats.norm.pdf(b)
+        return mu*(Phi_b-Phi_a)+sigma*(phi_a-phi_b)+1-Phi_b
+    return clip_f
+
+z = clip(f)(combine)
+combine["y"] = z.values
+FEATURES.append("y")
+- Identify Nums and Cats
+In [7]:
+CATS = []
+NUMS = []
+for c in FEATURES:
+    t = "CAT"
+    if combine[c].dtype=='object':
+        CATS.append(c)
+    else:
+        NUMS.append(c)
+        t = "NUM"
+    n = combine[c].nunique()
+    na = combine[c].isna().sum()
+    print(f"[{t}] {c} has {n} unique and {na} NA")
+print("CATS:", CATS )
+print("NUMS:", NUMS )
+[CAT] road_type has 3 unique and 0 NA
+[NUM] num_lanes has 4 unique and 0 NA
+[NUM] curvature has 298 unique and 0 NA
+[NUM] speed_limit has 5 unique and 0 NA
+[CAT] lighting has 3 unique and 0 NA
+[CAT] weather has 3 unique and 0 NA
+[NUM] road_signs_present has 2 unique and 0 NA
+[NUM] public_road has 2 unique and 0 NA
+[CAT] time_of_day has 3 unique and 0 NA
+[NUM] holiday has 2 unique and 0 NA
+[NUM] school_season has 2 unique and 0 NA
+[NUM] num_reported_accidents has 11 unique and 0 NA
+[NUM] y has 1019 unique and 0 NA
+CATS: ['road_type', 'lighting', 'weather', 'time_of_day']
+NUMS: ['num_lanes', 'curvature', 'speed_limit', 'road_signs_present', 'public_road', 'holiday', 'school_season', 'num_reported_accidents', 'y']
+- Label Encode Cats
+In [8]:
+SIZES = {}
+for c in CATS:
+    combine[c],_ = combine[c].factorize()
+    SIZES[c] = combine[c].max()+1
+    combine[c] = combine[c].astype('int32')
+    combine[c] = combine[c].astype('int32')
+print("Cardinality of all CATS:", SIZES )
+Cardinality of all CATS: {'road_type': 3, 'lighting': 3, 'weather': 3, 'time_of_day': 3}
+In [9]:
+train = combine.iloc[:len(train)]
+test = combine.iloc[len(train):len(train)+len(test)]
+orig = combine.iloc[-len(orig):]
+print(f"Train shape: {train.shape}, Test shape: {test.shape}, Original data shape: {orig.shape}")
+Train shape: (517754, 15), Test shape: (172585, 15), Original data shape: (112000, 15)
+- Target Encode
+In [10]:
+TE = []
+for c in FEATURES:
+    tmp = orig.groupby(c)[TARGET].mean()
+    n = f"TE_{c}"
+    print(f"{n}, ",end="")
+    tmp.name = n
+    train = train.merge(tmp, on=c, how='left')
+    test = test.merge(tmp, on=c, how='left')
+    TE.append(n)
+TE_road_type, TE_num_lanes, TE_curvature, TE_speed_limit, TE_lighting, TE_weather, TE_road_signs_present, TE_public_road, TE_time_of_day, TE_holiday, TE_school_season, TE_num_reported_accidents, TE_y, 
+Train XGBoost on Residuals
+We will train XGB on residuals. Instead of using accident_risk as target, we will use target = accident_risk - y where y is @siukeitin (Kaggle user broccoli beef) optimal original data solution from here
+In [11]:
+from sklearn.model_selection import KFold
+import xgboost as xgb
+
+print(f"XGBoost version {xgb.__version__}")
+XGBoost version 2.0.3
+In [12]:
+FOLDS = 7
+SEED = 42
+
+params = {
+    "objective": "reg:squarederror",   
+    "eval_metric": "rmse",             
+    "learning_rate": 0.01,
+    "max_depth": 6,                    
+    "subsample": 0.9,
+    "colsample_bytree": 0.6,
+    "seed": SEED,
+    "device": "cuda",
+}
+In [13]:
+oof_preds = np.zeros(len(train))
+test_preds = np.zeros(len(test))
+
+kf = KFold(n_splits=FOLDS, shuffle=True, random_state=SEED)
+for fold, (train_idx, val_idx) in enumerate(kf.split(train)):
+    print("#"*25)
+    print(f"### Fold {fold+1} ###")
+    print("#"*25)
+
+    X_train = train.iloc[train_idx][FEATURES+TE].copy()
+    y_train = train.iloc[train_idx][TARGET] - train.iloc[train_idx]['y']
+    
+    X_valid = train.iloc[val_idx][FEATURES+TE].copy()
+    y_valid = train.iloc[val_idx][TARGET] - train.iloc[val_idx]['y']
+    y_valid2 = train.iloc[val_idx]['y'].values
+    
+    X_test = test[FEATURES+TE].copy()
+    y_test2 = test['y'].values
+        
+    dtrain = xgb.DMatrix(X_train, label=y_train, enable_categorical=True)
+    dval   = xgb.DMatrix(X_valid, label=y_valid, enable_categorical=True)
+    dtest  = xgb.DMatrix(X_test, enable_categorical=True)
+
+    model = xgb.train(
+        params=params,
+        dtrain=dtrain,
+        num_boost_round=100_000,
+        evals=[(dtrain, "train"), (dval, "valid")],
+        early_stopping_rounds=200,
+        verbose_eval=200
+    )
+
+    oof_preds[val_idx] = model.predict(dval, iteration_range=(0, model.best_iteration + 1)) +y_valid2
+    test_preds += (model.predict(dtest, iteration_range=(0, model.best_iteration + 1)) +y_test2)/ FOLDS
+#########################
+### Fold 1 ###
+#########################
+[0] train-rmse:0.05852 valid-rmse:0.05842
+[200] train-rmse:0.05644 valid-rmse:0.05643
+[400] train-rmse:0.05616 valid-rmse:0.05622
+[600] train-rmse:0.05601 valid-rmse:0.05612
+[800] train-rmse:0.05590 valid-rmse:0.05606
+[1000] train-rmse:0.05580 valid-rmse:0.05601
+[1200] train-rmse:0.05572 valid-rmse:0.05598
+[1400] train-rmse:0.05564 valid-rmse:0.05595
+[1600] train-rmse:0.05558 valid-rmse:0.05593
+[1800] train-rmse:0.05552 valid-rmse:0.05592
+[2000] train-rmse:0.05546 valid-rmse:0.05591
+[2200] train-rmse:0.05541 valid-rmse:0.05590
+[2400] train-rmse:0.05536 valid-rmse:0.05589
+[2600] train-rmse:0.05531 valid-rmse:0.05589
+[2800] train-rmse:0.05527 valid-rmse:0.05589
+[3000] train-rmse:0.05522 valid-rmse:0.05588
+[3200] train-rmse:0.05518 valid-rmse:0.05588
+[3400] train-rmse:0.05514 valid-rmse:0.05588
+[3438] train-rmse:0.05513 valid-rmse:0.05588
+#########################
+### Fold 2 ###
+#########################
+[0] train-rmse:0.05841 valid-rmse:0.05908
+[200] train-rmse:0.05632 valid-rmse:0.05705
+[400] train-rmse:0.05605 valid-rmse:0.05683
+[600] train-rmse:0.05590 valid-rmse:0.05672
+[800] train-rmse:0.05579 valid-rmse:0.05665
+[1000] train-rmse:0.05569 valid-rmse:0.05660
+[1200] train-rmse:0.05561 valid-rmse:0.05655
+[1400] train-rmse:0.05554 valid-rmse:0.05652
+[1600] train-rmse:0.05547 valid-rmse:0.05650
+[1800] train-rmse:0.05541 valid-rmse:0.05648
+[2000] train-rmse:0.05535 valid-rmse:0.05646
+[2200] train-rmse:0.05530 valid-rmse:0.05645
+[2400] train-rmse:0.05525 valid-rmse:0.05644
+[2600] train-rmse:0.05520 valid-rmse:0.05644
+[2800] train-rmse:0.05515 valid-rmse:0.05643
+[3000] train-rmse:0.05511 valid-rmse:0.05643
+[3111] train-rmse:0.05509 valid-rmse:0.05643
+#########################
+### Fold 3 ###
+#########################
+[0] train-rmse:0.05857 valid-rmse:0.05815
+[200] train-rmse:0.05646 valid-rmse:0.05624
+[400] train-rmse:0.05617 valid-rmse:0.05604
+[600] train-rmse:0.05602 valid-rmse:0.05596
+[800] train-rmse:0.05591 valid-rmse:0.05591
+[1000] train-rmse:0.05581 valid-rmse:0.05586
+[1200] train-rmse:0.05573 valid-rmse:0.05583
+[1400] train-rmse:0.05565 valid-rmse:0.05580
+[1600] train-rmse:0.05559 valid-rmse:0.05578
+[1800] train-rmse:0.05552 valid-rmse:0.05577
+[2000] train-rmse:0.05547 valid-rmse:0.05576
+[2200] train-rmse:0.05541 valid-rmse:0.05575
+[2400] train-rmse:0.05536 valid-rmse:0.05574
+[2600] train-rmse:0.05531 valid-rmse:0.05574
+[2800] train-rmse:0.05527 valid-rmse:0.05573
+[3000] train-rmse:0.05522 valid-rmse:0.05573
+[3200] train-rmse:0.05518 valid-rmse:0.05573
+[3400] train-rmse:0.05514 valid-rmse:0.05573
+[3600] train-rmse:0.05510 valid-rmse:0.05573
+[3614] train-rmse:0.05509 valid-rmse:0.05573
+#########################
+### Fold 4 ###
+#########################
+[0] train-rmse:0.05848 valid-rmse:0.05869
+[200] train-rmse:0.05639 valid-rmse:0.05659
+[400] train-rmse:0.05611 valid-rmse:0.05638
+[600] train-rmse:0.05596 valid-rmse:0.05629
+[800] train-rmse:0.05584 valid-rmse:0.05622
+[1000] train-rmse:0.05575 valid-rmse:0.05618
+[1200] train-rmse:0.05566 valid-rmse:0.05614
+[1400] train-rmse:0.05559 valid-rmse:0.05612
+[1600] train-rmse:0.05552 valid-rmse:0.05610
+[1800] train-rmse:0.05546 valid-rmse:0.05609
+[2000] train-rmse:0.05541 valid-rmse:0.05608
+[2200] train-rmse:0.05535 valid-rmse:0.05608
+[2400] train-rmse:0.05530 valid-rmse:0.05608
+[2600] train-rmse:0.05525 valid-rmse:0.05608
+[2771] train-rmse:0.05521 valid-rmse:0.05608
+#########################
+### Fold 5 ###
+#########################
+[0] train-rmse:0.05854 valid-rmse:0.05831
+[200] train-rmse:0.05643 valid-rmse:0.05645
+[400] train-rmse:0.05615 valid-rmse:0.05626
+[600] train-rmse:0.05599 valid-rmse:0.05618
+[800] train-rmse:0.05588 valid-rmse:0.05612
+[1000] train-rmse:0.05579 valid-rmse:0.05608
+[1200] train-rmse:0.05570 valid-rmse:0.05605
+[1400] train-rmse:0.05563 valid-rmse:0.05603
+[1600] train-rmse:0.05556 valid-rmse:0.05601
+[1800] train-rmse:0.05550 valid-rmse:0.05600
+[2000] train-rmse:0.05544 valid-rmse:0.05599
+[2200] train-rmse:0.05539 valid-rmse:0.05598
+[2400] train-rmse:0.05534 valid-rmse:0.05597
+[2600] train-rmse:0.05529 valid-rmse:0.05597
+[2800] train-rmse:0.05525 valid-rmse:0.05597
+[3000] train-rmse:0.05520 valid-rmse:0.05596
+[3200] train-rmse:0.05516 valid-rmse:0.05596
+[3400] train-rmse:0.05512 valid-rmse:0.05596
+[3586] train-rmse:0.05508 valid-rmse:0.05596
+#########################
+### Fold 6 ###
+#########################
+[0] train-rmse:0.05850 valid-rmse:0.05855
+[200] train-rmse:0.05643 valid-rmse:0.05643
+[400] train-rmse:0.05614 valid-rmse:0.05620
+[600] train-rmse:0.05599 valid-rmse:0.05610
+[800] train-rmse:0.05588 valid-rmse:0.05603
+[1000] train-rmse:0.05579 valid-rmse:0.05599
+[1200] train-rmse:0.05570 valid-rmse:0.05596
+[1400] train-rmse:0.05563 valid-rmse:0.05593
+[1600] train-rmse:0.05556 valid-rmse:0.05591
+[1800] train-rmse:0.05550 valid-rmse:0.05590
+[2000] train-rmse:0.05544 valid-rmse:0.05589
+[2200] train-rmse:0.05539 valid-rmse:0.05588
+[2400] train-rmse:0.05533 valid-rmse:0.05587
+[2600] train-rmse:0.05528 valid-rmse:0.05587
+[2800] train-rmse:0.05524 valid-rmse:0.05587
+[3000] train-rmse:0.05519 valid-rmse:0.05586
+[3200] train-rmse:0.05515 valid-rmse:0.05586
+[3348] train-rmse:0.05512 valid-rmse:0.05586
+#########################
+### Fold 7 ###
+#########################
+[0] train-rmse:0.05853 valid-rmse:0.05833
+[200] train-rmse:0.05645 valid-rmse:0.05634
+[400] train-rmse:0.05617 valid-rmse:0.05611
+[600] train-rmse:0.05602 valid-rmse:0.05601
+[800] train-rmse:0.05591 valid-rmse:0.05595
+[1000] train-rmse:0.05582 valid-rmse:0.05590
+[1200] train-rmse:0.05573 valid-rmse:0.05586
+[1400] train-rmse:0.05566 valid-rmse:0.05583
+[1600] train-rmse:0.05559 valid-rmse:0.05581
+[1800] train-rmse:0.05553 valid-rmse:0.05579
+[2000] train-rmse:0.05547 valid-rmse:0.05578
+[2200] train-rmse:0.05542 valid-rmse:0.05576
+[2400] train-rmse:0.05537 valid-rmse:0.05576
+[2600] train-rmse:0.05532 valid-rmse:0.05575
+[2800] train-rmse:0.05528 valid-rmse:0.05575
+[3000] train-rmse:0.05523 valid-rmse:0.05574
+[3200] train-rmse:0.05519 valid-rmse:0.05574
+[3400] train-rmse:0.05515 valid-rmse:0.05574
+[3524] train-rmse:0.05512 valid-rmse:0.05574
+CV Score
+The first CV score below is our XGB model which has improved upon the optimal original data solution (by training on residuals). The second CV score below is using optimal original data solution only.
+In [14]:
+m = np.sqrt( np.mean( (oof_preds - train[TARGET].values)**2. ) )
+print(f" Overall CV RMSE = {m}")
+np.save(f"oof",oof_preds)
+ Overall CV RMSE = 0.05595474410978158
+In [15]:
+m = np.sqrt( np.mean( (train.y.values - train[TARGET].values)**2. ) )
+print(f" Baseline CV RMSE = {m}")
+ Baseline CV RMSE = 0.05854285541757135
+OOF EDA
+We plot true vs predicted below. Discussion from @tilii7 (Kaggle user Tilii) about this plot is here
+In [16]:
+import matplotlib.pyplot as plt
+
+plt.scatter(train[TARGET].values,oof_preds,s=0.25)
+plt.plot([0,1],[0,1],'--',color='black')
+plt.title("True vs Predicted")
+plt.xlabel("True Target")
+plt.ylabel("Predicted Target")
+plt.show()
+XGB Feature Importance
+In [17]:
+plt.rcParams["figure.dpi"] = 160      
+fig, ax = plt.subplots(figsize=(15, 12))
+
+xgb.plot_importance(
+    model,
+    max_num_features=100,
+    importance_type="gain",
+    ax=ax,
+    show_values=False,                
+    grid=False
+)
+
+ax.set_title("XGB Feature Importances", fontsize=18)
+ax.tick_params(axis="both", labelsize=12)
+fig.tight_layout()
+plt.show()
+Create Submission CSV
+In [18]:
+sub = pd.read_csv("/kaggle/input/playground-series-s5e10/sample_submission.csv")
+sub['accident_risk'] = test_preds
+sub.to_csv("submission.csv",index=False)
+sub.head()
+Out[18]:
+id accident_risk
+0 517754 0.294914
+1 517755 0.120085
+2 517756 0.180709
+3 517757 0.307187
+4 517758 0.396670
+Test Pred EDA
+In [19]:
+plt.hist(sub['accident_risk'],bins=100)
+plt.title("Histogram of Test Preds")
+plt.show()

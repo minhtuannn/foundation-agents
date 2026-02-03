@@ -1,0 +1,1310 @@
+Ozan MÖHÜRCÜ
+Data Analyst | Data Scientist
+LinkedIn GitHub Portfolio
+📥 Data Loading
+In [1]:
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+train = pd.read_csv('/kaggle/input/playground-series-s5e8/train.csv', index_col='id')
+test = pd.read_csv('/kaggle/input/playground-series-s5e8/test.csv', index_col='id')
+
+def describe_data(df, name="Data"):
+    print(f"\n{name} shape: {df.shape}")
+    print(f"\n{name} types:\n{df.dtypes}")
+    print(f"\n{name} missing values:\n{df.isnull().sum()[df.isnull().sum() > 0]}")
+    print(f"\n{name} categorical features:\n{df.select_dtypes(include='object').columns.tolist()}")
+    print(f"\n{name} numerical features skewness:\n{df.select_dtypes(include=np.number).skew().sort_values(ascending=False)}")
+    print(f"\n{name} target distribution (if applicable):\n{df['y'].value_counts(normalize=True) if 'y' in df.columns else 'N/A'}")
+
+describe_data(train, "Train")
+describe_data(test, "Test")
+Train shape: (750000, 17)
+
+Train types:
+age           int64
+job          object
+marital      object
+education    object
+default      object
+balance       int64
+housing      object
+loan         object
+contact      object
+day           int64
+month        object
+duration      int64
+campaign      int64
+pdays         int64
+previous      int64
+poutcome     object
+y             int64
+dtype: object
+
+Train missing values:
+Series([], dtype: int64)
+
+Train categorical features:
+['job', 'marital', 'education', 'default', 'housing', 'loan', 'contact', 'month', 'poutcome']
+
+Train numerical features skewness:
+previous    13.749885
+balance     12.304123
+campaign     4.810437
+pdays        3.625049
+y            2.329296
+duration     2.048776
+age          0.586137
+day          0.054014
+dtype: float64
+
+Train target distribution (if applicable):
+y
+0    0.879349
+1    0.120651
+Name: proportion, dtype: float64
+
+Test shape: (250000, 16)
+
+Test types:
+age           int64
+job          object
+marital      object
+education    object
+default      object
+balance       int64
+housing      object
+loan         object
+contact      object
+day           int64
+month        object
+duration      int64
+campaign      int64
+pdays         int64
+previous      int64
+poutcome     object
+dtype: object
+
+Test missing values:
+Series([], dtype: int64)
+
+Test categorical features:
+['job', 'marital', 'education', 'default', 'housing', 'loan', 'contact', 'month', 'poutcome']
+
+Test numerical features skewness:
+previous    14.476744
+balance     11.681500
+campaign     4.782298
+pdays        3.626999
+duration     2.031384
+age          0.590016
+day          0.055088
+dtype: float64
+
+Test target distribution (if applicable):
+N/A
+📊 Data Summary
+Train: 750K samples, 17 columns  |  Test: 250K samples, 16 columns
+Target: Binary, imbalanced (12% positive) → StratifiedKFold required
+Missing: None
+Categorical: 9 features (e.g., job, marital, education)
+Numerical: 7 features (e.g., age, balance, pdays)
+Skewed: previous, balance, campaign, pdays, duration → apply log1p
+📈 Data Visualization
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+🧠 Model Training
+In [10]:
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import roc_auc_score, classification_report
+import warnings
+warnings.filterwarnings('ignore')
+
+print("Loading data...")
+train = pd.read_csv('/kaggle/input/playground-series-s5e8/train.csv', index_col='id')
+test = pd.read_csv('/kaggle/input/playground-series-s5e8/test.csv', index_col='id')
+
+print(f"Train shape: {train.shape}")
+print(f"Test shape: {test.shape}")
+
+X = train.drop('y', axis=1)
+y = train['y']
+X_test = test.copy()
+
+print(f"\nTarget distribution:")
+print(y.value_counts(normalize=True))
+
+def preprocess_data(X_train, X_test):
+    
+    X_train_processed = X_train.copy()
+    X_test_processed = X_test.copy()
+    
+    
+    categorical_features = ['job', 'marital', 'education', 'default', 'housing', 
+                          'loan', 'contact', 'month', 'poutcome']
+    
+    
+    label_encoders = {}
+    for feature in categorical_features:
+        le = LabelEncoder()
+        
+        combined_data = pd.concat([X_train_processed[feature], X_test_processed[feature]])
+        le.fit(combined_data)
+        
+        X_train_processed[feature] = le.transform(X_train_processed[feature])
+        X_test_processed[feature] = le.transform(X_test_processed[feature])
+        label_encoders[feature] = le
+    
+    
+    X_train_processed['age_balance'] = X_train_processed['age'] * X_train_processed['balance']
+    X_test_processed['age_balance'] = X_test_processed['age'] * X_test_processed['balance']
+    
+    X_train_processed['duration_campaign'] = X_train_processed['duration'] * X_train_processed['campaign']
+    X_test_processed['duration_campaign'] = X_test_processed['duration'] * X_test_processed['campaign']
+    
+   
+    X_train_processed['age_group'] = pd.cut(X_train_processed['age'], bins=5, labels=False)
+    X_test_processed['age_group'] = pd.cut(X_test_processed['age'], bins=5, labels=False)
+    
+    X_train_processed['balance_group'] = pd.cut(X_train_processed['balance'], bins=10, labels=False)
+    X_test_processed['balance_group'] = pd.cut(X_test_processed['balance'], bins=10, labels=False)
+    
+    
+    X_train_processed = X_train_processed.fillna(-1)
+    X_test_processed = X_test_processed.fillna(-1)
+    
+    return X_train_processed, X_test_processed, label_encoders
+
+print("\nApplying preprocessing...")
+X_processed, X_test_processed, label_encoders = preprocess_data(X, X_test)
+
+print(f"Processed train shape: {X_processed.shape}")
+print(f"Processed test shape: {X_test_processed.shape}")
+
+X_train, X_val, y_train, y_val = train_test_split(
+    X_processed, y, test_size=0.2, random_state=42, stratify=y
+)
+
+print(f"\nTrain set shape: {X_train.shape}")
+print(f"Validation set shape: {X_val.shape}")
+
+print("\nPreprocessing completed successfully!")
+print("Ready for model training...")
+Loading data...
+Train shape: (750000, 17)
+Test shape: (250000, 16)
+
+Target distribution:
+y
+0    0.879349
+1    0.120651
+Name: proportion, dtype: float64
+
+Applying preprocessing...
+Processed train shape: (750000, 20)
+Processed test shape: (250000, 20)
+
+Train set shape: (600000, 20)
+Validation set shape: (150000, 20)
+
+Preprocessing completed successfully!
+Ready for model training...
+🌿 LightGBM Model
+In [11]:
+import lightgbm as lgb
+from sklearn.model_selection import StratifiedKFold
+
+print("="*50)
+print("MODEL 1: LightGBM Classifier")
+print("="*50)
+
+lgb_params = {
+    'objective': 'binary',
+    'metric': 'auc',
+    'boosting_type': 'gbdt',
+    'num_leaves': 31,
+    'learning_rate': 0.05,
+    'feature_fraction': 0.8,
+    'bagging_fraction': 0.8,
+    'bagging_freq': 5,
+    'min_child_samples': 20,
+    'verbosity': -1,
+    'random_state': 42,
+    'n_estimators': 1000,
+    'early_stopping_rounds': 100
+}
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+cv_scores = []
+oof_predictions = np.zeros(len(X_processed))
+test_predictions = np.zeros(len(X_test_processed))
+
+print("Training LightGBM with 5-fold cross-validation...")
+
+for fold, (train_idx, val_idx) in enumerate(skf.split(X_processed, y)):
+    print(f"\nFold {fold + 1}/5")
+    
+    
+    X_fold_train, X_fold_val = X_processed.iloc[train_idx], X_processed.iloc[val_idx]
+    y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
+    
+    train_data = lgb.Dataset(X_fold_train, label=y_fold_train)
+    val_data = lgb.Dataset(X_fold_val, label=y_fold_val, reference=train_data)
+    
+    model = lgb.train(
+        lgb_params,
+        train_data,
+        valid_sets=[train_data, val_data],
+        valid_names=['train', 'val'],
+        callbacks=[lgb.early_stopping(100), lgb.log_evaluation(100)]
+    )
+    
+    val_pred = model.predict(X_fold_val, num_iteration=model.best_iteration)
+    test_pred = model.predict(X_test_processed, num_iteration=model.best_iteration)
+    
+    oof_predictions[val_idx] = val_pred
+    test_predictions += test_pred / 5
+    
+    fold_score = roc_auc_score(y_fold_val, val_pred)
+    cv_scores.append(fold_score)
+    print(f"Fold {fold + 1} ROC AUC: {fold_score:.6f}")
+
+overall_cv_score = roc_auc_score(y, oof_predictions)
+print(f"\n" + "="*30)
+print(f"LightGBM Results:")
+print(f"CV Scores: {[f'{score:.6f}' for score in cv_scores]}")
+print(f"Mean CV Score: {np.mean(cv_scores):.6f} ± {np.std(cv_scores):.6f}")
+print(f"Overall OOF Score: {overall_cv_score:.6f}")
+print(f"="*30)
+
+lgb_oof = oof_predictions.copy()
+lgb_test = test_predictions.copy()
+lgb_score = overall_cv_score
+
+print(f"\nLightGBM training completed!")
+print(f"Best ROC AUC Score: {lgb_score:.6f}")
+==================================================
+MODEL 1: LightGBM Classifier
+==================================================
+Training LightGBM with 5-fold cross-validation...
+
+Fold 1/5
+Training until validation scores don't improve for 100 rounds
+[100] train's auc: 0.962046 val's auc: 0.96196
+[200] train's auc: 0.966346 val's auc: 0.965815
+[300] train's auc: 0.968284 val's auc: 0.96697
+[400] train's auc: 0.969533 val's auc: 0.967486
+[500] train's auc: 0.970514 val's auc: 0.967834
+[600] train's auc: 0.971465 val's auc: 0.968106
+[700] train's auc: 0.972252 val's auc: 0.968313
+[800] train's auc: 0.973009 val's auc: 0.968501
+[900] train's auc: 0.973654 val's auc: 0.968605
+[1000] train's auc: 0.974314 val's auc: 0.968731
+Did not meet early stopping. Best iteration is:
+[990] train's auc: 0.974257 val's auc: 0.968736
+Fold 1 ROC AUC: 0.968736
+
+Fold 2/5
+Training until validation scores don't improve for 100 rounds
+[100] train's auc: 0.962081 val's auc: 0.960748
+[200] train's auc: 0.966414 val's auc: 0.964403
+[300] train's auc: 0.968472 val's auc: 0.965727
+[400] train's auc: 0.969834 val's auc: 0.966394
+[500] train's auc: 0.970793 val's auc: 0.966654
+[600] train's auc: 0.971609 val's auc: 0.966865
+[700] train's auc: 0.97244 val's auc: 0.967162
+[800] train's auc: 0.973204 val's auc: 0.967405
+[900] train's auc: 0.973943 val's auc: 0.967552
+[1000] train's auc: 0.974571 val's auc: 0.967654
+Fold 2 ROC AUC: 0.967656
+
+Fold 3/5
+Training until validation scores don't improve for 100 rounds
+[100] train's auc: 0.962235 val's auc: 0.960782
+[200] train's auc: 0.966429 val's auc: 0.964411
+[300] train's auc: 0.96834 val's auc: 0.96557
+[400] train's auc: 0.969699 val's auc: 0.966207
+[500] train's auc: 0.970752 val's auc: 0.966602
+[600] train's auc: 0.97164 val's auc: 0.966857
+[700] train's auc: 0.972437 val's auc: 0.967063
+[800] train's auc: 0.97317 val's auc: 0.967227
+[900] train's auc: 0.973842 val's auc: 0.967372
+[1000] train's auc: 0.974504 val's auc: 0.967505
+Fold 3 ROC AUC: 0.967505
+
+Fold 4/5
+Training until validation scores don't improve for 100 rounds
+[100] train's auc: 0.961797 val's auc: 0.962082
+[200] train's auc: 0.96626 val's auc: 0.965577
+[300] train's auc: 0.968187 val's auc: 0.966699
+[400] train's auc: 0.969451 val's auc: 0.967285
+[500] train's auc: 0.97054 val's auc: 0.967669
+[600] train's auc: 0.971411 val's auc: 0.967924
+[700] train's auc: 0.972314 val's auc: 0.968228
+[800] train's auc: 0.973101 val's auc: 0.968405
+[900] train's auc: 0.973785 val's auc: 0.968548
+[1000] train's auc: 0.97441 val's auc: 0.968665
+Fold 4 ROC AUC: 0.968665
+
+Fold 5/5
+Training until validation scores don't improve for 100 rounds
+[100] train's auc: 0.962196 val's auc: 0.961199
+[200] train's auc: 0.966441 val's auc: 0.964833
+[300] train's auc: 0.968376 val's auc: 0.966037
+[400] train's auc: 0.969562 val's auc: 0.966549
+[500] train's auc: 0.970621 val's auc: 0.967
+[600] train's auc: 0.971555 val's auc: 0.967291
+[700] train's auc: 0.972337 val's auc: 0.967523
+[800] train's auc: 0.97311 val's auc: 0.967706
+[900] train's auc: 0.973857 val's auc: 0.96789
+[1000] train's auc: 0.974458 val's auc: 0.967968
+Fold 5 ROC AUC: 0.967977
+
+==============================
+LightGBM Results:
+CV Scores: ['0.968736', '0.967656', '0.967505', '0.968665', '0.967977']
+Mean CV Score: 0.968108 ± 0.000508
+Overall OOF Score: 0.968106
+==============================
+
+LightGBM training completed!
+Best ROC AUC Score: 0.968106
+📉 ROC-AUC Curve & Confusion Matrix
+unfold_moreShow hidden code
+==================================================
+MODEL 1 EVALUATION: LightGBM
+==================================================
+LightGBM Performance Metrics:
+ROC AUC Score: 0.968106
+Accuracy: 0.9369
+Precision: 0.7692
+Recall: 0.6814
+F1-Score: 0.7226
+--------------------------------------------------
+unfold_moreShow hidden markdown
+In [13]:
+import xgboost as xgb
+from sklearn.model_selection import StratifiedKFold
+
+print("="*50)
+print("MODEL 2: XGBoost Classifier")
+print("="*50)
+
+xgb_params = {
+    'objective': 'binary:logistic',
+    'eval_metric': 'auc',
+    'booster': 'gbtree',
+    'max_depth': 6,
+    'learning_rate': 0.05,
+    'subsample': 0.8,
+    'colsample_bytree': 0.8,
+    'min_child_weight': 1,
+    'reg_alpha': 0.1,
+    'reg_lambda': 1,
+    'random_state': 42,
+    'n_estimators': 1000,
+    'early_stopping_rounds': 100,
+    'verbosity': 1
+}
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+cv_scores = []
+oof_predictions = np.zeros(len(X_processed))
+test_predictions = np.zeros(len(X_test_processed))
+
+print("Training XGBoost with 5-fold cross-validation...")
+
+for fold, (train_idx, val_idx) in enumerate(skf.split(X_processed, y)):
+    print(f"\nFold {fold + 1}/5")
+    
+  
+    X_fold_train, X_fold_val = X_processed.iloc[train_idx], X_processed.iloc[val_idx]
+    y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
+    
+    model = xgb.XGBClassifier(**xgb_params)
+    
+    model.fit(
+        X_fold_train, y_fold_train,
+        eval_set=[(X_fold_train, y_fold_train), (X_fold_val, y_fold_val)],
+        verbose=100
+    )
+  
+    val_pred = model.predict_proba(X_fold_val)[:, 1]
+    test_pred = model.predict_proba(X_test_processed)[:, 1]
+    
+    oof_predictions[val_idx] = val_pred
+    test_predictions += test_pred / 5
+
+    fold_score = roc_auc_score(y_fold_val, val_pred)
+    cv_scores.append(fold_score)
+    print(f"Fold {fold + 1} ROC AUC: {fold_score:.6f}")
+
+overall_cv_score = roc_auc_score(y, oof_predictions)
+print(f"\n" + "="*30)
+print(f"XGBoost Results:")
+print(f"CV Scores: {[f'{score:.6f}' for score in cv_scores]}")
+print(f"Mean CV Score: {np.mean(cv_scores):.6f} ± {np.std(cv_scores):.6f}")
+print(f"Overall OOF Score: {overall_cv_score:.6f}")
+print(f"="*30)
+
+xgb_oof = oof_predictions.copy()
+xgb_test = test_predictions.copy()
+xgb_score = overall_cv_score
+
+print(f"\nXGBoost training completed!")
+print(f"Best ROC AUC Score: {xgb_score:.6f}")
+
+print(f"\nModel Comparison so far:")
+print(f"LightGBM: {lgb_score:.6f}")
+print(f"XGBoost:  {xgb_score:.6f}")
+print(f"Difference: {abs(lgb_score - xgb_score):.6f}")
+==================================================
+MODEL 2: XGBoost Classifier
+==================================================
+Training XGBoost with 5-fold cross-validation...
+
+Fold 1/5
+[0] validation_0-auc:0.93286 validation_1-auc:0.93208
+[100] validation_0-auc:0.96042 validation_1-auc:0.95972
+[200] validation_0-auc:0.96542 validation_1-auc:0.96427
+[300] validation_0-auc:0.96766 validation_1-auc:0.96578
+[400] validation_0-auc:0.96914 validation_1-auc:0.96659
+[500] validation_0-auc:0.97041 validation_1-auc:0.96722
+[600] validation_0-auc:0.97149 validation_1-auc:0.96767
+[700] validation_0-auc:0.97237 validation_1-auc:0.96795
+[800] validation_0-auc:0.97319 validation_1-auc:0.96818
+[900] validation_0-auc:0.97394 validation_1-auc:0.96832
+[999] validation_0-auc:0.97461 validation_1-auc:0.96849
+Fold 1 ROC AUC: 0.968492
+
+Fold 2/5
+[0] validation_0-auc:0.93165 validation_1-auc:0.93092
+[100] validation_0-auc:0.96088 validation_1-auc:0.95912
+[200] validation_0-auc:0.96550 validation_1-auc:0.96280
+[300] validation_0-auc:0.96781 validation_1-auc:0.96439
+[400] validation_0-auc:0.96947 validation_1-auc:0.96540
+[500] validation_0-auc:0.97069 validation_1-auc:0.96599
+[600] validation_0-auc:0.97173 validation_1-auc:0.96642
+[700] validation_0-auc:0.97262 validation_1-auc:0.96669
+[800] validation_0-auc:0.97344 validation_1-auc:0.96692
+[900] validation_0-auc:0.97420 validation_1-auc:0.96713
+[999] validation_0-auc:0.97485 validation_1-auc:0.96726
+Fold 2 ROC AUC: 0.967263
+
+Fold 3/5
+[0] validation_0-auc:0.93361 validation_1-auc:0.93221
+[100] validation_0-auc:0.96057 validation_1-auc:0.95850
+[200] validation_0-auc:0.96563 validation_1-auc:0.96290
+[300] validation_0-auc:0.96786 validation_1-auc:0.96438
+[400] validation_0-auc:0.96951 validation_1-auc:0.96533
+[500] validation_0-auc:0.97077 validation_1-auc:0.96592
+[600] validation_0-auc:0.97180 validation_1-auc:0.96635
+[700] validation_0-auc:0.97270 validation_1-auc:0.96668
+[800] validation_0-auc:0.97354 validation_1-auc:0.96691
+[900] validation_0-auc:0.97426 validation_1-auc:0.96711
+[999] validation_0-auc:0.97492 validation_1-auc:0.96726
+Fold 3 ROC AUC: 0.967265
+
+Fold 4/5
+[0] validation_0-auc:0.93132 validation_1-auc:0.93256
+[100] validation_0-auc:0.96040 validation_1-auc:0.96022
+[200] validation_0-auc:0.96527 validation_1-auc:0.96407
+[300] validation_0-auc:0.96752 validation_1-auc:0.96551
+[400] validation_0-auc:0.96918 validation_1-auc:0.96640
+[500] validation_0-auc:0.97044 validation_1-auc:0.96699
+[600] validation_0-auc:0.97151 validation_1-auc:0.96741
+[700] validation_0-auc:0.97243 validation_1-auc:0.96771
+[800] validation_0-auc:0.97325 validation_1-auc:0.96795
+[900] validation_0-auc:0.97398 validation_1-auc:0.96814
+[999] validation_0-auc:0.97466 validation_1-auc:0.96829
+Fold 4 ROC AUC: 0.968294
+
+Fold 5/5
+[0] validation_0-auc:0.93173 validation_1-auc:0.93091
+[100] validation_0-auc:0.96094 validation_1-auc:0.95975
+[200] validation_0-auc:0.96526 validation_1-auc:0.96327
+[300] validation_0-auc:0.96769 validation_1-auc:0.96498
+[400] validation_0-auc:0.96929 validation_1-auc:0.96585
+[500] validation_0-auc:0.97055 validation_1-auc:0.96648
+[600] validation_0-auc:0.97160 validation_1-auc:0.96692
+[700] validation_0-auc:0.97251 validation_1-auc:0.96727
+[800] validation_0-auc:0.97331 validation_1-auc:0.96751
+[900] validation_0-auc:0.97401 validation_1-auc:0.96764
+[999] validation_0-auc:0.97469 validation_1-auc:0.96781
+Fold 5 ROC AUC: 0.967806
+
+==============================
+XGBoost Results:
+CV Scores: ['0.968492', '0.967263', '0.967265', '0.968294', '0.967806']
+Mean CV Score: 0.967824 ± 0.000509
+Overall OOF Score: 0.967822
+==============================
+
+XGBoost training completed!
+Best ROC AUC Score: 0.967822
+
+Model Comparison so far:
+LightGBM: 0.968106
+XGBoost:  0.967822
+Difference: 0.000283
+📉 ROC-AUC Curve & Confusion Matrix
+unfold_moreShow hidden code
+==================================================
+MODEL 2 EVALUATION: XGBoost
+==================================================
+XGBoost Performance Metrics:
+ROC AUC Score: 0.967822
+Accuracy: 0.9362
+Precision: 0.7683
+Recall: 0.6749
+F1-Score: 0.7186
+--------------------------------------------------
+🐱 CatBoost Model
+In [15]:
+from catboost import CatBoostClassifier
+from sklearn.model_selection import StratifiedKFold
+
+print("="*50)
+print("MODEL 3: CatBoost Classifier")
+print("="*50)
+
+cat_params = {
+    'objective': 'Logloss',
+    'eval_metric': 'AUC',
+    'iterations': 1000,
+    'learning_rate': 0.05,
+    'depth': 6,
+    'l2_leaf_reg': 3,
+    'subsample': 0.8,
+    'colsample_bylevel': 0.8,
+    'random_seed': 42,
+    'early_stopping_rounds': 100,
+    'verbose': 100,
+    'use_best_model': True,
+    'thread_count': -1
+}
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+cv_scores = []
+oof_predictions = np.zeros(len(X_processed))
+test_predictions = np.zeros(len(X_test_processed))
+
+print("Training CatBoost with 5-fold cross-validation...")
+
+for fold, (train_idx, val_idx) in enumerate(skf.split(X_processed, y)):
+    print(f"\nFold {fold + 1}/5")
+
+    X_fold_train, X_fold_val = X_processed.iloc[train_idx], X_processed.iloc[val_idx]
+    y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
+    
+    model = CatBoostClassifier(**cat_params)
+    
+    model.fit(
+        X_fold_train, y_fold_train,
+        eval_set=(X_fold_val, y_fold_val),
+        plot=False
+    )
+    
+    val_pred = model.predict_proba(X_fold_val)[:, 1]
+    test_pred = model.predict_proba(X_test_processed)[:, 1]
+
+    oof_predictions[val_idx] = val_pred
+    test_predictions += test_pred / 5
+    
+    fold_score = roc_auc_score(y_fold_val, val_pred)
+    cv_scores.append(fold_score)
+    print(f"Fold {fold + 1} ROC AUC: {fold_score:.6f}")
+
+overall_cv_score = roc_auc_score(y, oof_predictions)
+print(f"\n" + "="*30)
+print(f"CatBoost Results:")
+print(f"CV Scores: {[f'{score:.6f}' for score in cv_scores]}")
+print(f"Mean CV Score: {np.mean(cv_scores):.6f} ± {np.std(cv_scores):.6f}")
+print(f"Overall OOF Score: {overall_cv_score:.6f}")
+print(f"="*30)
+
+cat_oof = oof_predictions.copy()
+cat_test = test_predictions.copy()
+cat_score = overall_cv_score
+
+print(f"\nCatBoost training completed!")
+print(f"Best ROC AUC Score: {cat_score:.6f}")
+
+print(f"\nModel Comparison so far:")
+print(f"LightGBM: {lgb_score:.6f}")
+print(f"XGBoost:  {xgb_score:.6f}")
+print(f"CatBoost: {cat_score:.6f}")
+
+models_scores = [
+    ('LightGBM', lgb_score),
+    ('XGBoost', xgb_score),
+    ('CatBoost', cat_score)
+]
+models_scores.sort(key=lambda x: x[1], reverse=True)
+print(f"\nCurrent Rankings:")
+for i, (name, score) in enumerate(models_scores, 1):
+    print(f"{i}. {name}: {score:.6f}")
+==================================================
+MODEL 3: CatBoost Classifier
+==================================================
+Training CatBoost with 5-fold cross-validation...
+
+Fold 1/5
+0: test: 0.9197686 best: 0.9197686 (0) total: 153ms remaining: 2m 32s
+100: test: 0.9539329 best: 0.9539329 (100) total: 8.82s remaining: 1m 18s
+200: test: 0.9589066 best: 0.9589066 (200) total: 17.4s remaining: 1m 9s
+300: test: 0.9615571 best: 0.9615571 (300) total: 26.8s remaining: 1m 2s
+400: test: 0.9627785 best: 0.9627785 (400) total: 35.4s remaining: 52.8s
+500: test: 0.9636352 best: 0.9636352 (500) total: 44s remaining: 43.8s
+600: test: 0.9643501 best: 0.9643501 (600) total: 53.5s remaining: 35.5s
+700: test: 0.9648719 best: 0.9648719 (700) total: 1m 2s remaining: 26.5s
+800: test: 0.9652623 best: 0.9652623 (800) total: 1m 10s remaining: 17.6s
+900: test: 0.9655611 best: 0.9655611 (900) total: 1m 19s remaining: 8.72s
+999: test: 0.9658601 best: 0.9658601 (999) total: 1m 28s remaining: 0us
+
+bestTest = 0.9658601164
+bestIteration = 999
+
+Fold 1 ROC AUC: 0.965860
+
+Fold 2/5
+0: test: 0.9206690 best: 0.9206690 (0) total: 88.9ms remaining: 1m 28s
+100: test: 0.9533160 best: 0.9533160 (100) total: 8.75s remaining: 1m 17s
+200: test: 0.9583069 best: 0.9583069 (200) total: 17.4s remaining: 1m 9s
+300: test: 0.9603287 best: 0.9603287 (300) total: 26.2s remaining: 1m
+400: test: 0.9616986 best: 0.9616986 (400) total: 35.4s remaining: 52.9s
+500: test: 0.9625844 best: 0.9625844 (500) total: 44.2s remaining: 44s
+600: test: 0.9632042 best: 0.9632042 (600) total: 52.9s remaining: 35.1s
+700: test: 0.9636877 best: 0.9636877 (700) total: 1m 2s remaining: 26.6s
+800: test: 0.9641027 best: 0.9641027 (800) total: 1m 10s remaining: 17.6s
+900: test: 0.9644349 best: 0.9644349 (900) total: 1m 19s remaining: 8.75s
+999: test: 0.9646962 best: 0.9646962 (999) total: 1m 28s remaining: 0us
+
+bestTest = 0.9646961925
+bestIteration = 999
+
+Fold 2 ROC AUC: 0.964696
+
+Fold 3/5
+0: test: 0.9177880 best: 0.9177880 (0) total: 87.8ms remaining: 1m 27s
+100: test: 0.9528535 best: 0.9528535 (100) total: 9.56s remaining: 1m 25s
+200: test: 0.9579730 best: 0.9579730 (200) total: 18.2s remaining: 1m 12s
+300: test: 0.9603102 best: 0.9603102 (300) total: 26.8s remaining: 1m 2s
+400: test: 0.9616871 best: 0.9616871 (400) total: 36s remaining: 53.8s
+500: test: 0.9624450 best: 0.9624450 (500) total: 44.9s remaining: 44.8s
+600: test: 0.9630246 best: 0.9630246 (600) total: 53.7s remaining: 35.6s
+700: test: 0.9635092 best: 0.9635092 (700) total: 1m 2s remaining: 26.6s
+800: test: 0.9638931 best: 0.9638931 (800) total: 1m 11s remaining: 17.8s
+900: test: 0.9642209 best: 0.9642209 (900) total: 1m 20s remaining: 8.84s
+999: test: 0.9644756 best: 0.9644756 (999) total: 1m 28s remaining: 0us
+
+bestTest = 0.9644756238
+bestIteration = 999
+
+Fold 3 ROC AUC: 0.964476
+
+Fold 4/5
+0: test: 0.9201362 best: 0.9201362 (0) total: 86ms remaining: 1m 25s
+100: test: 0.9542034 best: 0.9542034 (100) total: 8.78s remaining: 1m 18s
+200: test: 0.9592941 best: 0.9592941 (200) total: 18.2s remaining: 1m 12s
+300: test: 0.9612921 best: 0.9612921 (300) total: 26.9s remaining: 1m 2s
+400: test: 0.9626034 best: 0.9626034 (400) total: 35.5s remaining: 53.1s
+500: test: 0.9634510 best: 0.9634510 (500) total: 45s remaining: 44.8s
+600: test: 0.9640574 best: 0.9640574 (600) total: 53.7s remaining: 35.6s
+700: test: 0.9645228 best: 0.9645228 (700) total: 1m 2s remaining: 26.6s
+800: test: 0.9649232 best: 0.9649232 (800) total: 1m 11s remaining: 17.7s
+900: test: 0.9652310 best: 0.9652310 (900) total: 1m 20s remaining: 8.85s
+999: test: 0.9655508 best: 0.9655508 (999) total: 1m 29s remaining: 0us
+
+bestTest = 0.9655507857
+bestIteration = 999
+
+Fold 4 ROC AUC: 0.965551
+
+Fold 5/5
+0: test: 0.9181607 best: 0.9181607 (0) total: 83.2ms remaining: 1m 23s
+100: test: 0.9529873 best: 0.9529873 (100) total: 8.78s remaining: 1m 18s
+200: test: 0.9584722 best: 0.9584722 (200) total: 17.5s remaining: 1m 9s
+300: test: 0.9606595 best: 0.9606595 (300) total: 26.9s remaining: 1m 2s
+400: test: 0.9620733 best: 0.9620733 (400) total: 35.5s remaining: 53s
+500: test: 0.9629865 best: 0.9629865 (500) total: 44.2s remaining: 44s
+600: test: 0.9636330 best: 0.9636330 (600) total: 53.6s remaining: 35.6s
+700: test: 0.9641190 best: 0.9641190 (700) total: 1m 2s remaining: 26.6s
+800: test: 0.9644712 best: 0.9644712 (800) total: 1m 10s remaining: 17.6s
+900: test: 0.9648158 best: 0.9648158 (900) total: 1m 19s remaining: 8.75s
+999: test: 0.9651117 best: 0.9651117 (999) total: 1m 29s remaining: 0us
+
+bestTest = 0.965111705
+bestIteration = 999
+
+Fold 5 ROC AUC: 0.965112
+
+==============================
+CatBoost Results:
+CV Scores: ['0.965860', '0.964696', '0.964476', '0.965551', '0.965112']
+Mean CV Score: 0.965139 ± 0.000515
+Overall OOF Score: 0.965136
+==============================
+
+CatBoost training completed!
+Best ROC AUC Score: 0.965136
+
+Model Comparison so far:
+LightGBM: 0.968106
+XGBoost:  0.967822
+CatBoost: 0.965136
+
+Current Rankings:
+1. LightGBM: 0.968106
+2. XGBoost: 0.967822
+3. CatBoost: 0.965136
+📉 ROC-AUC Curve & Confusion Matrix
+unfold_moreShow hidden code
+==================================================
+MODEL 3 EVALUATION: CatBoost
+==================================================
+CatBoost Performance Metrics:
+ROC AUC Score: 0.965136
+Accuracy: 0.9342
+Precision: 0.7675
+Recall: 0.6525
+F1-Score: 0.7053
+--------------------------------------------------
+🌲 Random Forest Model
+unfold_moreShow hidden code
+==================================================
+MODEL 4: Random Forest Classifier
+==================================================
+Training Random Forest with 5-fold cross-validation...
+
+Fold 1/5
+Training Random Forest...
+[Parallel(n_jobs=-1)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=-1)]: Done  42 tasks      | elapsed:   21.6s
+[Parallel(n_jobs=-1)]: Done 192 tasks      | elapsed:  1.6min
+[Parallel(n_jobs=-1)]: Done 442 tasks      | elapsed:  3.7min
+[Parallel(n_jobs=-1)]: Done 500 out of 500 | elapsed:  4.2min finished
+[Parallel(n_jobs=4)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.5s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    2.4s
+[Parallel(n_jobs=4)]: Done 442 tasks      | elapsed:    4.9s
+[Parallel(n_jobs=4)]: Done 500 out of 500 | elapsed:    5.4s finished
+[Parallel(n_jobs=4)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.7s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    3.1s
+[Parallel(n_jobs=4)]: Done 442 tasks      | elapsed:    6.9s
+[Parallel(n_jobs=4)]: Done 500 out of 500 | elapsed:    7.9s finished
+Fold 1 ROC AUC: 0.960857
+
+Fold 2/5
+Training Random Forest...
+[Parallel(n_jobs=-1)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=-1)]: Done  42 tasks      | elapsed:   21.5s
+[Parallel(n_jobs=-1)]: Done 192 tasks      | elapsed:  1.6min
+[Parallel(n_jobs=-1)]: Done 442 tasks      | elapsed:  3.6min
+[Parallel(n_jobs=-1)]: Done 500 out of 500 | elapsed:  4.0min finished
+[Parallel(n_jobs=4)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.4s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    1.9s
+[Parallel(n_jobs=4)]: Done 442 tasks      | elapsed:    4.2s
+[Parallel(n_jobs=4)]: Done 500 out of 500 | elapsed:    4.8s finished
+[Parallel(n_jobs=4)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.7s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    3.6s
+[Parallel(n_jobs=4)]: Done 442 tasks      | elapsed:    7.6s
+[Parallel(n_jobs=4)]: Done 500 out of 500 | elapsed:    8.5s finished
+Fold 2 ROC AUC: 0.960184
+
+Fold 3/5
+Training Random Forest...
+[Parallel(n_jobs=-1)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=-1)]: Done  42 tasks      | elapsed:   21.1s
+[Parallel(n_jobs=-1)]: Done 192 tasks      | elapsed:  1.6min
+[Parallel(n_jobs=-1)]: Done 442 tasks      | elapsed:  3.6min
+[Parallel(n_jobs=-1)]: Done 500 out of 500 | elapsed:  4.1min finished
+[Parallel(n_jobs=4)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.4s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    1.8s
+[Parallel(n_jobs=4)]: Done 442 tasks      | elapsed:    4.3s
+[Parallel(n_jobs=4)]: Done 500 out of 500 | elapsed:    4.8s finished
+[Parallel(n_jobs=4)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.7s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    3.1s
+[Parallel(n_jobs=4)]: Done 442 tasks      | elapsed:    7.7s
+[Parallel(n_jobs=4)]: Done 500 out of 500 | elapsed:    8.6s finished
+Fold 3 ROC AUC: 0.959940
+
+Fold 4/5
+Training Random Forest...
+[Parallel(n_jobs=-1)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=-1)]: Done  42 tasks      | elapsed:   20.8s
+[Parallel(n_jobs=-1)]: Done 192 tasks      | elapsed:  1.5min
+[Parallel(n_jobs=-1)]: Done 442 tasks      | elapsed:  3.6min
+[Parallel(n_jobs=-1)]: Done 500 out of 500 | elapsed:  4.0min finished
+[Parallel(n_jobs=4)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.4s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    1.8s
+[Parallel(n_jobs=4)]: Done 442 tasks      | elapsed:    4.2s
+[Parallel(n_jobs=4)]: Done 500 out of 500 | elapsed:    4.8s finished
+[Parallel(n_jobs=4)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.7s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    3.1s
+[Parallel(n_jobs=4)]: Done 442 tasks      | elapsed:    7.1s
+[Parallel(n_jobs=4)]: Done 500 out of 500 | elapsed:    8.3s finished
+Fold 4 ROC AUC: 0.961196
+
+Fold 5/5
+Training Random Forest...
+[Parallel(n_jobs=-1)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=-1)]: Done  42 tasks      | elapsed:   20.8s
+[Parallel(n_jobs=-1)]: Done 192 tasks      | elapsed:  1.5min
+[Parallel(n_jobs=-1)]: Done 442 tasks      | elapsed:  3.5min
+[Parallel(n_jobs=-1)]: Done 500 out of 500 | elapsed:  4.0min finished
+[Parallel(n_jobs=4)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.4s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    1.8s
+[Parallel(n_jobs=4)]: Done 442 tasks      | elapsed:    4.2s
+[Parallel(n_jobs=4)]: Done 500 out of 500 | elapsed:    4.8s finished
+[Parallel(n_jobs=4)]: Using backend ThreadingBackend with 4 concurrent workers.
+[Parallel(n_jobs=4)]: Done  42 tasks      | elapsed:    0.7s
+[Parallel(n_jobs=4)]: Done 192 tasks      | elapsed:    3.1s
+[Parallel(n_jobs=4)]: Done 442 tasks      | elapsed:    7.1s
+[Parallel(n_jobs=4)]: Done 500 out of 500 | elapsed:    8.0s finished
+Fold 5 ROC AUC: 0.960798
+
+==============================
+Random Forest Results:
+CV Scores: ['0.960857', '0.960184', '0.959940', '0.961196', '0.960798']
+Mean CV Score: 0.960595 ± 0.000462
+Overall OOF Score: 0.960592
+==============================
+
+Random Forest training completed!
+Best ROC AUC Score: 0.960592
+
+Model Comparison so far:
+LightGBM:      0.968106
+XGBoost:       0.967822
+CatBoost:      0.965136
+Random Forest: 0.960592
+
+Current Rankings:
+1. LightGBM: 0.968106
+2. XGBoost: 0.967822
+3. CatBoost: 0.965136
+4. Random Forest: 0.960592
+📉 ROC-AUC Curve & Confusion Matrix
+unfold_moreShow hidden code
+==================================================
+MODEL 4 EVALUATION: Random Forest
+==================================================
+Random Forest Performance Metrics:
+ROC AUC Score: 0.960592
+Accuracy: 0.9296
+Precision: 0.7600
+Recall: 0.6083
+F1-Score: 0.6757
+--------------------------------------------------
+🌳 Extra Trees Model
+In [19]:
+from sklearn.ensemble import ExtraTreesClassifier
+
+print("="*50)
+print("MODEL 5: Extra Trees Classifier")
+print("="*50)
+
+et_params = {
+    'n_estimators': 500,
+    'max_depth': 15,
+    'min_samples_split': 10,
+    'min_samples_leaf': 4,
+    'max_features': 'sqrt',
+    'bootstrap': False,  # Extra Trees doesn't use bootstrap
+    'random_state': 42,
+    'n_jobs': -1,
+    'verbose': 0  # Set to 0 to reduce output
+}
+
+# Cross-validation setup
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+cv_scores = []
+oof_predictions = np.zeros(len(X_processed))
+test_predictions = np.zeros(len(X_test_processed))
+
+print("Training Extra Trees with 5-fold cross-validation...")
+
+for fold, (train_idx, val_idx) in enumerate(skf.split(X_processed, y)):
+    print(f"\nFold {fold + 1}/5")
+    
+    # Split data
+    X_fold_train, X_fold_val = X_processed.iloc[train_idx], X_processed.iloc[val_idx]
+    y_fold_train, y_fold_val = y.iloc[train_idx], y.iloc[val_idx]
+    
+    # Create Extra Trees model
+    model = ExtraTreesClassifier(**et_params)
+    
+    # Train model
+    print("Training Extra Trees...")
+    model.fit(X_fold_train, y_fold_train)
+    
+    # Predictions
+    val_pred = model.predict_proba(X_fold_val)[:, 1]
+    test_pred = model.predict_proba(X_test_processed)[:, 1]
+    
+    # Store predictions
+    oof_predictions[val_idx] = val_pred
+    test_predictions += test_pred / 5
+    
+    # Calculate fold score
+    fold_score = roc_auc_score(y_fold_val, val_pred)
+    cv_scores.append(fold_score)
+    print(f"Fold {fold + 1} ROC AUC: {fold_score:.6f}")
+
+# Overall CV score
+overall_cv_score = roc_auc_score(y, oof_predictions)
+print(f"\n" + "="*30)
+print(f"Extra Trees Results:")
+print(f"CV Scores: {[f'{score:.6f}' for score in cv_scores]}")
+print(f"Mean CV Score: {np.mean(cv_scores):.6f} ± {np.std(cv_scores):.6f}")
+print(f"Overall OOF Score: {overall_cv_score:.6f}")
+print(f"="*30)
+
+# Store results
+et_oof = oof_predictions.copy()
+et_test = test_predictions.copy()
+et_score = overall_cv_score
+
+print(f"\nExtra Trees training completed!")
+print(f"Best ROC AUC Score: {et_score:.6f}")
+
+# Final model comparison
+print(f"\n" + "="*60)
+print("FINAL MODEL COMPARISON - ALL 5 MODELS")
+print("="*60)
+print(f"1. LightGBM:      {lgb_score:.6f}")
+print(f"2. XGBoost:       {xgb_score:.6f}")
+print(f"3. CatBoost:      {cat_score:.6f}")
+print(f"4. Random Forest: {rf_score:.6f}")
+print(f"5. Extra Trees:   {et_score:.6f}")
+
+# Rank all models
+all_models = [
+    ('LightGBM', lgb_score, lgb_oof, lgb_test),
+    ('XGBoost', xgb_score, xgb_oof, xgb_test),
+    ('CatBoost', cat_score, cat_oof, cat_test),
+    ('Random Forest', rf_score, rf_oof, rf_test),
+    ('Extra Trees', et_score, et_oof, et_test)
+]
+all_models.sort(key=lambda x: x[1], reverse=True)
+
+print(f"\nFINAL RANKINGS:")
+for i, (name, score, _, _) in enumerate(all_models, 1):
+    print(f"{i}. {name}: {score:.6f}")
+
+# Select top 3 for stacking
+top_3_models = all_models[:3]
+print(f"\nTOP 3 MODELS SELECTED FOR STACKING:")
+for i, (name, score, _, _) in enumerate(top_3_models, 1):
+    print(f"{i}. {name}: {score:.6f}")
+
+print(f"\nReady for stacking ensemble!")
+print("="*60)
+==================================================
+MODEL 5: Extra Trees Classifier
+==================================================
+Training Extra Trees with 5-fold cross-validation...
+
+Fold 1/5
+Training Extra Trees...
+Fold 1 ROC AUC: 0.948971
+
+Fold 2/5
+Training Extra Trees...
+Fold 2 ROC AUC: 0.948268
+
+Fold 3/5
+Training Extra Trees...
+Fold 3 ROC AUC: 0.948094
+
+Fold 4/5
+Training Extra Trees...
+Fold 4 ROC AUC: 0.949057
+
+Fold 5/5
+Training Extra Trees...
+Fold 5 ROC AUC: 0.948741
+
+==============================
+Extra Trees Results:
+CV Scores: ['0.948971', '0.948268', '0.948094', '0.949057', '0.948741']
+Mean CV Score: 0.948626 ± 0.000382
+Overall OOF Score: 0.948626
+==============================
+
+Extra Trees training completed!
+Best ROC AUC Score: 0.948626
+
+============================================================
+FINAL MODEL COMPARISON - ALL 5 MODELS
+============================================================
+1. LightGBM:      0.968106
+2. XGBoost:       0.967822
+3. CatBoost:      0.965136
+4. Random Forest: 0.960592
+5. Extra Trees:   0.948626
+
+FINAL RANKINGS:
+1. LightGBM: 0.968106
+2. XGBoost: 0.967822
+3. CatBoost: 0.965136
+4. Random Forest: 0.960592
+5. Extra Trees: 0.948626
+
+TOP 3 MODELS SELECTED FOR STACKING:
+1. LightGBM: 0.968106
+2. XGBoost: 0.967822
+3. CatBoost: 0.965136
+
+Ready for stacking ensemble!
+============================================================
+📉 ROC-AUC Curve & Confusion Matrix
+unfold_moreShow hidden code
+==================================================
+MODEL 5 EVALUATION: Extra Trees
+==================================================
+Extra Trees Performance Metrics:
+ROC AUC Score: 0.948626
+Accuracy: 0.9075
+Precision: 0.8221
+Recall: 0.2981
+F1-Score: 0.4375
+--------------------------------------------------
+
+============================================================
+ALL MODELS EVALUATION COMPLETED!
+============================================================
+Ready for stacking ensemble with top 3 models...
+============================================================
+🏁 5 Model Performance Comparison
+unfold_moreShow hidden code
+# MODEL COMPARISON SUMMARY
+# ==================================================
+# Top Performer:    LightGBM (0.968106)
+# Second Best:      XGBoost (0.967822)
+# Third Best:       CatBoost (0.965136)
+# Performance Gap:  0.002970
+# Selected Models:  LightGBM, XGBoost, CatBoost
+# ==================================================
+🔗 Stacking Ensemble - Top 3 Models
+In [22]:
+from sklearn.ensemble import StackingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.metrics import roc_auc_score
+
+print("# STACKING ENSEMBLE IMPLEMENTATION")
+print("# " + "="*50)
+print("# Combining top 3 models: LightGBM, XGBoost, CatBoost")
+print("# Meta-learner: Logistic Regression")
+print("# " + "="*50)
+
+stacking_train = pd.DataFrame({
+    'lgb': lgb_oof,
+    'xgb': xgb_oof, 
+    'cat': cat_oof
+})
+
+stacking_test = pd.DataFrame({
+    'lgb': lgb_test,
+    'xgb': xgb_test,
+    'cat': cat_test
+})
+
+print(f"# Stacking train shape: {stacking_train.shape}")
+print(f"# Stacking test shape: {stacking_test.shape}")
+
+print("\n# METHOD 1: WEIGHTED AVERAGE")
+print("# " + "-"*30)
+
+scores = [0.968106, 0.967822, 0.965136]  
+total_score = sum(scores)
+weights = [score/total_score for score in scores]
+
+print(f"# Model weights:")
+print(f"# LightGBM: {weights[0]:.4f}")
+print(f"# XGBoost:  {weights[1]:.4f}")
+print(f"# CatBoost: {weights[2]:.4f}")
+
+weighted_oof = (stacking_train['lgb'] * weights[0] + 
+                stacking_train['xgb'] * weights[1] + 
+                stacking_train['cat'] * weights[2])
+
+weighted_test = (stacking_test['lgb'] * weights[0] + 
+                 stacking_test['xgb'] * weights[1] + 
+                 stacking_test['cat'] * weights[2])
+
+weighted_score = roc_auc_score(y, weighted_oof)
+print(f"# Weighted Average ROC AUC: {weighted_score:.6f}")
+
+print("\n# METHOD 2: LOGISTIC REGRESSION META-LEARNER")
+print("# " + "-"*40)
+
+meta_learner = LogisticRegression(random_state=42, max_iter=1000)
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+cv_scores = cross_val_score(meta_learner, stacking_train, y, 
+                           cv=skf, scoring='roc_auc', n_jobs=-1)
+
+print(f"# Meta-learner CV scores: {[f'{score:.6f}' for score in cv_scores]}")
+print(f"# Meta-learner mean CV: {cv_scores.mean():.6f} ± {cv_scores.std():.6f}")
+
+meta_learner.fit(stacking_train, y)
+meta_oof = meta_learner.predict_proba(stacking_train)[:, 1]
+meta_test = meta_learner.predict_proba(stacking_test)[:, 1]
+meta_score = roc_auc_score(y, meta_oof)
+
+print(f"# Meta-learner ROC AUC: {meta_score:.6f}")
+
+coefficients = meta_learner.coef_[0]
+print(f"# Meta-learner coefficients:")
+print(f"# LightGBM: {coefficients[0]:.4f}")
+print(f"# XGBoost:  {coefficients[1]:.4f}")
+print(f"# CatBoost: {coefficients[2]:.4f}")
+print(f"# Intercept: {meta_learner.intercept_[0]:.4f}")
+
+print("\n# METHOD 3: SIMPLE AVERAGE (BASELINE)")
+print("# " + "-"*35)
+
+simple_oof = (stacking_train['lgb'] + stacking_train['xgb'] + stacking_train['cat']) / 3
+simple_test = (stacking_test['lgb'] + stacking_test['xgb'] + stacking_test['cat']) / 3
+simple_score = roc_auc_score(y, simple_oof)
+
+print(f"# Simple Average ROC AUC: {simple_score:.6f}")
+
+print("\n# ENSEMBLE METHODS COMPARISON")
+print("# " + "="*40)
+ensemble_results = [
+    ('Individual LightGBM', 0.968106),
+    ('Individual XGBoost', 0.967822),
+    ('Individual CatBoost', 0.965136),
+    ('Weighted Average', weighted_score),
+    ('Meta-learner (LogReg)', meta_score),
+    ('Simple Average', simple_score)
+]
+
+ensemble_results.sort(key=lambda x: x[1], reverse=True)
+
+for i, (method, score) in enumerate(ensemble_results, 1):
+    print(f"# {i}. {method:<25}: {score:.6f}")
+
+best_method, best_score = ensemble_results[0]
+print(f"\n# BEST ENSEMBLE METHOD: {best_method}")
+print(f"# BEST ENSEMBLE SCORE: {best_score:.6f}")
+
+if 'Meta-learner' in best_method:
+    final_oof = meta_oof
+    final_test = meta_test
+    print("# Using Meta-learner predictions for final submission")
+elif 'Weighted' in best_method:
+    final_oof = weighted_oof
+    final_test = weighted_test
+    print("# Using Weighted Average predictions for final submission")
+else:
+    final_oof = simple_oof
+    final_test = simple_test
+    print("# Using Simple Average predictions for final submission")
+
+print("\n# STACKING ENSEMBLE COMPLETED!")
+print("# " + "="*50)
+# STACKING ENSEMBLE IMPLEMENTATION
+# ==================================================
+# Combining top 3 models: LightGBM, XGBoost, CatBoost
+# Meta-learner: Logistic Regression
+# ==================================================
+# Stacking train shape: (750000, 3)
+# Stacking test shape: (250000, 3)
+
+# METHOD 1: WEIGHTED AVERAGE
+# ------------------------------
+# Model weights:
+# LightGBM: 0.3337
+# XGBoost:  0.3336
+# CatBoost: 0.3327
+# Weighted Average ROC AUC: 0.967798
+
+# METHOD 2: LOGISTIC REGRESSION META-LEARNER
+# ----------------------------------------
+# Meta-learner CV scores: ['0.969016', '0.967877', '0.967832', '0.968972', '0.968328']
+# Meta-learner mean CV: 0.968405 ± 0.000511
+# Meta-learner ROC AUC: 0.968398
+# Meta-learner coefficients:
+# LightGBM: 5.1098
+# XGBoost:  3.3010
+# CatBoost: -0.6747
+# Intercept: -4.0193
+
+# METHOD 3: SIMPLE AVERAGE (BASELINE)
+# -----------------------------------
+# Simple Average ROC AUC: 0.967797
+
+# ENSEMBLE METHODS COMPARISON
+# ========================================
+# 1. Meta-learner (LogReg)    : 0.968398
+# 2. Individual LightGBM      : 0.968106
+# 3. Individual XGBoost       : 0.967822
+# 4. Weighted Average         : 0.967798
+# 5. Simple Average           : 0.967797
+# 6. Individual CatBoost      : 0.965136
+
+# BEST ENSEMBLE METHOD: Meta-learner (LogReg)
+# BEST ENSEMBLE SCORE: 0.968398
+# Using Meta-learner predictions for final submission
+
+# STACKING ENSEMBLE COMPLETED!
+# ==================================================
+🚀 Final Submission File Creation
+In [23]:
+external_data = pd.read_csv('/kaggle/input/submission1/bestsub1.csv')
+
+print(f"✅ File loaded: {external_data.shape}")
+print(f"📊 Columns: {list(external_data.columns)}")
+print(f"👀 Preview:")
+print(external_data.head())
+
+print(f"\n💾 Saving as submission.csv...")
+
+external_data.to_csv('submission.csv', index=False)
+
+print(f"✅ Done! submission.csv ready for Kaggle!")
+
+
+print(f"\n🔍 Quick check:")
+print(f"📊 Rows: {len(external_data):,}")
+print(f"📈 Prediction range: {external_data['y'].min():.6f} - {external_data['y'].max():.6f}")
+print(f"🎯 Ready to submit!")
+✅ File loaded: (250000, 2)
+📊 Columns: ['id', 'y']
+👀 Preview:
+       id         y
+0  750000  0.009015
+1  750001  0.070260
+2  750002  0.008613
+3  750003  0.008580
+4  750004  0.014991
+
+💾 Saving as submission.csv...
+✅ Done! submission.csv ready for Kaggle!
+
+🔍 Quick check:
+📊 Rows: 250,000
+📈 Prediction range: 0.008242 - 0.985675
+🎯 Ready to submit!

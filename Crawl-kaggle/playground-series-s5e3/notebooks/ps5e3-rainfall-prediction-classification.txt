@@ -1,0 +1,1485 @@
+1. INTRODUCTION
+Rainfall Prediction Using Machine Learning
+Problem Statement
+This project focuses on developing a machine learning model to predict rainfall based on meteorological data. The model aims to accurately forecast whether rain will occur on a given day, representing a binary classification problem where the target variable 'rainfall' is coded as 1 (rain) or 0 (no rain).
+Dataset Overview
+The dataset contains various meteorological measurements recorded daily, including:
+Day: Sequential identifier for each observation
+Pressure: Atmospheric pressure measurement (in hPa)
+Maxtemp: Maximum temperature for the day (in °C)
+Temperature: Average temperature for the day (in °C)
+Mintemp: Minimum temperature for the day (in °C)
+Dewpoint: Dewpoint temperature (in °C)
+Humidity: Relative humidity percentage
+Cloud: Cloud cover percentage
+Sunshine: Hours of sunshine
+Winddirection: Wind direction (in degrees)
+Windspeed: Wind speed (in km/h)
+Rainfall: Target variable indicating whether rain occurred (1) or not (0)
+Original: An additional identifier column
+Evaluation Metric
+The model's performance will be evaluated using the ROC-AUC
+This evaluation approach is particularly suitable for binary classification problems and provides a comprehensive assessment of the model's ability to distinguish between rainy and non-rainy days across various probability thresholds. The ROC-AUC metric is especially valuable when dealing with potentially imbalanced class distributions in weather prediction scenarios.
+unfold_moreShow hidden cell
+2.1 DATA
+In [2]:
+global device
+
+gpus = tensorflow.config.list_physical_devices('GPU')
+if gpus:
+    print("GPU is available")
+    device = 'gpu'
+else:
+    print("GPU is not available")
+    device = 'cpu'
+
+train=pd.read_csv('/kaggle/input/playground-series-s5e3/train.csv').rename(columns={'temparature':'temperature'})
+test=pd.read_csv('/kaggle/input/playground-series-s5e3/test.csv').rename(columns={'temparature':'temperature'})
+original=pd.read_csv("/kaggle/input/rainfall-prediction-using-machine-learning/Rainfall.csv").rename(columns={'temparature':'temperature'})
+submission=pd.read_csv("/kaggle/input/playground-series-s5e3/sample_submission.csv")
+
+train.drop(columns=["id"],inplace=True)
+test.drop(columns=["id"],inplace=True)
+original['rainfall'] = original['rainfall'].map({'yes': 1, 'no': 0})
+original.columns=[f.strip() for f in original.columns]
+
+train_copy=train.copy()
+test_copy=test.copy()
+original_copy=original.copy()
+
+original["original"]=1
+
+train["original"]=0
+test["original"]=0
+
+train=pd.concat([train,original],axis=0)
+train.reset_index(inplace=True,drop=True)
+
+target='rainfall'
+
+train.head()
+GPU is not available
+Out[2]:
+day pressure maxtemp temperature mintemp dewpoint humidity cloud sunshine winddirection windspeed rainfall original
+0 1 1017.4 21.2 20.6 19.9 19.4 87.0 88.0 1.1 60.0 17.2 1 0
+1 2 1019.5 16.2 16.9 15.8 15.4 95.0 91.0 0.0 50.0 21.9 1 0
+2 3 1024.1 19.4 16.1 14.6 9.3 75.0 47.0 8.3 70.0 18.1 1 0
+3 4 1013.4 18.1 17.8 16.9 16.8 95.0 95.0 0.0 60.0 35.6 1 0
+4 5 1021.8 21.3 18.4 15.2 9.6 52.0 45.0 3.6 40.0 24.8 0 0
+2.2 Missing Value Check
+In [3]:
+table = PrettyTable()
+table.field_names = ['Feature', 'Data Type', 'Train Missing %', 'Test Missing %', "Original Missing%", "Discrete Ratio (Train)"]
+
+for column in train_copy.columns:
+    data_type = str(train_copy[column].dtype)
+    
+    # Calculate missing percentages
+    non_null_count_train = np.round(100-train_copy[column].count()/train_copy.shape[0]*100, 1)
+    
+    if column != target:
+        non_null_count_test = np.round(100-test_copy[column].count()/test_copy.shape[0]*100, 1)
+    else:
+        non_null_count_test = "NA"
+        
+    non_null_count_orig = np.round(100-original_copy[column].count()/original_copy.shape[0]*100, 1)
+    
+    # Calculate discrete nature ratio (unique values / total values)
+    discrete_ratio = np.round(train_copy[column].nunique() / train_copy.shape[0], 4)
+    
+    table.add_row([column, data_type, non_null_count_train, non_null_count_test, non_null_count_orig, discrete_ratio])
+
+print(table)
++---------------+-----------+-----------------+----------------+-------------------+------------------------+
+|    Feature    | Data Type | Train Missing % | Test Missing % | Original Missing% | Discrete Ratio (Train) |
++---------------+-----------+-----------------+----------------+-------------------+------------------------+
+|      day      |   int64   |       0.0       |      0.0       |        0.0        |         0.1667         |
+|    pressure   |  float64  |       0.0       |      0.0       |        0.0        |         0.1078         |
+|    maxtemp    |  float64  |       0.0       |      0.0       |        0.0        |          0.1           |
+|  temperature  |  float64  |       0.0       |      0.0       |        0.0        |         0.0904         |
+|    mintemp    |  float64  |       0.0       |      0.0       |        0.0        |         0.0909         |
+|    dewpoint   |  float64  |       0.0       |      0.0       |        0.0        |         0.0995         |
+|    humidity   |  float64  |       0.0       |      0.0       |        0.0        |         0.0224         |
+|     cloud     |  float64  |       0.0       |      0.0       |        0.0        |         0.0356         |
+|    sunshine   |  float64  |       0.0       |      0.0       |        0.0        |         0.0548         |
+| winddirection |  float64  |       0.0       |      0.1       |        0.3        |         0.016          |
+|   windspeed   |  float64  |       0.0       |      0.0       |        0.3        |         0.1018         |
+|    rainfall   |   int64   |       0.0       |       NA       |        0.0        |         0.0009         |
++---------------+-----------+-----------------+----------------+-------------------+------------------------+
+Few Missing Values winddirection, windspeed
+3. EXPLORATORY DATA ANALYSIS
+3.1 Target Distributions
+unfold_moreShow hidden code
+3.2 Numerical Feature Distributions
+unfold_moreShow hidden code
+4. FEATURE ENGINEERING
+Utility
+In [6]:
+def min_max_scaler(train, test, column):
+    '''
+    Min Max just based on train might have an issue if test has extreme values, hence changing the denominator uding overall min and max
+    '''
+    sc=MinMaxScaler()
+    
+    max_val=max(train[column].max(),test[column].max())
+    min_val=min(train[column].min(),test[column].min())
+
+    train[column]=(train[column]-min_val)/(max_val-min_val)
+    test[column]=(test[column]-min_val)/(max_val-min_val)
+    
+    return train,test  
+
+def OHE(train_df,test_df,cols,target):
+    '''
+    Function for one hot encoding, it first combines the data so that no category is missed and
+    the category with least frequency can be dropped because of redundancy
+    '''
+    combined = pd.concat([train_df, test_df], axis=0)
+    for col in cols:
+        one_hot = pd.get_dummies(combined[col])
+        counts = combined[col].value_counts()
+        min_count_category = counts.idxmin()
+        one_hot = one_hot.drop(min_count_category, axis=1)
+        one_hot.columns=[str(f)+col+"_OHE" for f in one_hot.columns]
+        combined = pd.concat([combined, one_hot], axis="columns")
+        combined = combined.loc[:, ~combined.columns.duplicated()]
+    
+    # split back to train and test dataframes
+    train_ohe = combined[:len(train_df)]
+    test_ohe = combined[len(train_df):]
+    test_ohe.reset_index(inplace=True,drop=True)
+    test_ohe.drop(columns=[target],inplace=True)
+    return train_ohe, test_ohe
+4.1 Impute Missing Values & Anomalies
+In [7]:
+def fix_day_sequence_with_month_year(df, day_column='day', cycle_length=365):
+    """
+    Fixes day sequence anomalies and adds month and year columns.
+    
+    Parameters:
+    df (pandas.DataFrame): Input DataFrame with day column
+    day_column (str): Name of column containing day values (default: 'day')
+    cycle_length (int): Length of the cycle (default: 365 for year)
+    
+    Returns:
+    pandas.DataFrame: DataFrame with corrected day sequence, month, and year columns
+    """
+    # Create a copy of the DataFrame
+    df_fixed = df.copy()
+    days = df_fixed[day_column].values
+    
+    # Initialize arrays for corrected days, months, and years
+    fixed_days = np.zeros_like(days)
+    months = np.zeros_like(days)
+    years = np.ones_like(days)  # Start with year 1
+    
+    # Days in each month (non-leap year)
+    days_per_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    
+    # Set first day
+    current_day = 1
+    current_month = 1
+    current_year = 1
+    day_of_year = 1
+    
+    fixed_days[0] = current_day
+    months[0] = current_month
+    years[0] = current_year
+    
+    # Process each day
+    for i in range(1, len(days)):
+        # Calculate expected next day
+        expected_next = current_day + 1 if current_day < cycle_length else 1
+        
+        # Current value from data
+        current_value = days[i]
+        
+        # Check if current value follows the sequence
+        if (current_value == expected_next) or \
+           (abs(current_value - expected_next) <= 5 and current_value <= cycle_length) or \
+           (current_day == cycle_length and current_value == 1):
+            current_day = current_value
+        else:
+            current_day = expected_next
+            
+        day_of_year = current_day if current_day != 1 else 1
+        if current_day == 1 and i > 0:
+            current_year += 1
+        
+        # Calculate month based on day of year
+        cumulative_days = 0
+        for month, days_in_month in enumerate(days_per_month, 1):
+            if day_of_year <= cumulative_days + days_in_month:
+                current_month = month
+                break
+            cumulative_days += days_in_month
+        
+        fixed_days[i] = current_day
+        months[i] = current_month
+        years[i] = current_year
+    
+    # Assign corrected values to DataFrame
+    df_fixed[day_column] = fixed_days
+    df_fixed['month'] = months
+    df_fixed['year'] = years
+    
+    return df_fixed
+
+train = fix_day_sequence_with_month_year(train)
+test = fix_day_sequence_with_month_year(test)
+In [8]:
+def handle_missing_values(train_df, test_df, target="rainfall", n_components=1):
+    """
+    Process numerical datasets with missing values by:
+    1. Imputing missing values using median
+    2. Creating missing value indicators
+    3. Applying SVD to combine indicator columns
+    
+    Parameters:
+    -----------
+    train_df : pandas DataFrame
+        Training dataset with missing values (numerical only)
+    test_df : pandas DataFrame
+        Testing dataset with missing values (numerical only)
+    target : str, default="rainfall"
+        Name of the target variable (will be excluded from imputation and processing)
+    n_components : int, default=1
+        Number of components to keep after SVD
+        
+    Returns:
+    --------
+    train_processed : pandas DataFrame
+        Processed training data with imputed values and SVD features
+    test_processed : pandas DataFrame
+        Processed testing data with imputed values and SVD features
+    """
+    # Create copies to avoid modifying the original datasets
+    train_processed = train_df.copy()
+    test_processed = test_df.copy()
+    
+    # Handle the target column
+    y_train = None
+    if target in train_df.columns:
+        y_train = train_processed[target].copy()
+        train_processed = train_processed.drop(columns=[target])
+    
+    # Get feature columns (excluding target)
+    train_features = train_processed.columns.tolist()
+    
+    # Get common features between train and test
+    common_features = [col for col in train_features if col in test_df.columns]
+    
+    # Only use common features for imputation to ensure consistency
+    train_subset = train_processed[common_features]
+    test_subset = test_processed[common_features]
+    
+    # Step 1: Imputation - Create simple imputer for numeric columns
+    numeric_imputer = SimpleImputer(strategy='median')
+    
+    # Fit imputer only on common features
+    numeric_imputer.fit(train_subset)
+    
+    # Transform both datasets
+    train_imputed_values = numeric_imputer.transform(train_subset)
+    test_imputed_values = numeric_imputer.transform(test_subset)
+    
+    # Create DataFrames from imputed values
+    train_imputed = pd.DataFrame(
+        train_imputed_values,
+        columns=common_features,
+        index=train_processed.index
+    )
+    
+    test_imputed = pd.DataFrame(
+        test_imputed_values,
+        columns=common_features,
+        index=test_processed.index
+    )
+    
+    # Add back non-common features to train (not imputed)
+    non_common_features = [col for col in train_features if col not in common_features]
+    for col in non_common_features:
+        train_imputed[col] = train_processed[col]
+    
+    # Step 2: Create missing value indicators for common features
+    indicator_cols = []
+    for col in common_features:
+        indicator_name = f'{col}_missing'
+        train_imputed[indicator_name] = train_df[col].isna().astype(int)
+        test_imputed[indicator_name] = test_df[col].isna().astype(int)
+        indicator_cols.append(indicator_name)
+    
+    # Step 3: Apply SVD to combine indicator columns into fewer dimensions
+    if indicator_cols and len(indicator_cols) > 1:  # Only apply SVD if we have multiple indicators
+        # Initialize SVD with specified number of components
+        svd = TruncatedSVD(n_components=min(n_components, len(indicator_cols)))
+        
+        # Fit SVD on training data indicators and transform both datasets
+        missing_indicators_train = train_imputed[indicator_cols].values
+        missing_indicators_test = test_imputed[indicator_cols].values
+        
+        # Only proceed with SVD if we have missing values
+        if np.any(missing_indicators_train):
+            # Fit and transform
+            missing_svd_train = svd.fit_transform(missing_indicators_train)
+            missing_svd_test = svd.transform(missing_indicators_test)
+            
+            # Add SVD components to the datasets
+            for i in range(n_components):
+                train_imputed[f'missing_svd_{i}'] = missing_svd_train[:, i]
+                test_imputed[f'missing_svd_{i}'] = missing_svd_test[:, i]
+            
+            # Optionally drop the original indicator columns if they're no longer needed
+            train_imputed.drop(columns=indicator_cols, inplace=True)
+            test_imputed.drop(columns=indicator_cols, inplace=True)
+    
+    # Add back the target column to the training data if it existed
+    if y_train is not None:
+        train_imputed[target] = y_train
+    
+    return train_imputed, test_imputed
+    
+train_imputed, test_imputed = handle_missing_values(train, test, n_components=1)
+In [9]:
+def min_max_scaler(train, test, column):
+    '''
+    Min Max just based on train might have an issue if test has extreme values, hence changing the denominator uding overall min and max
+    '''
+    sc=MinMaxScaler()
+    
+    max_val=max(train[column].max(),test[column].max())
+    min_val=min(train[column].min(),test[column].min())
+
+    train[column]=(train[column]-min_val)/(max_val-min_val)
+    test[column]=(test[column]-min_val)/(max_val-min_val)
+    
+    return train,test  
+
+def OHE(train_df,test_df,cols,target):
+    '''
+    Function for one hot encoding, it first combines the data so that no category is missed and
+    the category with least frequency can be dropped because of redundancy
+    '''
+    combined = pd.concat([train_df, test_df], axis=0)
+    for col in cols:
+        one_hot = pd.get_dummies(combined[col])
+        counts = combined[col].value_counts()
+        min_count_category = counts.idxmin()
+        one_hot = one_hot.drop(min_count_category, axis=1)
+        one_hot.columns=[str(f)+col+"_OHE" for f in one_hot.columns]
+        combined = pd.concat([combined, one_hot], axis="columns")
+        combined = combined.loc[:, ~combined.columns.duplicated()]
+    
+    # split back to train and test dataframes
+    train_ohe = combined[:len(train_df)]
+    test_ohe = combined[len(train_df):]
+    test_ohe.reset_index(inplace=True,drop=True)
+    test_ohe.drop(columns=[target],inplace=True)
+    return train_ohe, test_ohe
+4.2 Derived Features
+In [10]:
+def engineer_features(df):
+    """
+    Create new features based on meteorological understanding and data analysis,
+    with 'day' representing day of the year (1-365).
+    Ensures no data leakage by avoiding use of the target variable (rainfall).
+    """
+    # Make a copy to avoid modifying the original dataframe
+    enhanced_df = df.copy()
+    
+    # 1. Temperature range (difference between max and min temperatures)
+    enhanced_df['temp_range'] = enhanced_df['maxtemp'] - enhanced_df['mintemp']
+    
+    # 2. Dew point depression (difference between temperature and dew point)
+    enhanced_df['dewpoint_depression'] = enhanced_df['temperature'] - enhanced_df['dewpoint']
+    
+    # 3. Pressure change from previous day
+    enhanced_df['pressure_change'] = enhanced_df['pressure'].diff().fillna(0)
+    
+    # 4. Humidity to dew point ratio
+    enhanced_df['humidity_dewpoint_ratio'] = enhanced_df['humidity'] / enhanced_df['dewpoint'].clip(lower=0.1)
+    
+    # 5. Cloud coverage to sunshine ratio (inverse relationship)
+    enhanced_df['cloud_sunshine_ratio'] = enhanced_df['cloud'] / enhanced_df['sunshine'].clip(lower=0.1)
+    
+    # 6. Wind intensity factor (combination of speed and humidity)
+    enhanced_df['wind_humidity_factor'] = enhanced_df['windspeed'] * (enhanced_df['humidity'] / 100)
+    
+    # 7. Temperature-humidity index (simple version of heat index)
+    enhanced_df['temp_humidity_index'] = (0.8 * enhanced_df['temperature']) + \
+                                        ((enhanced_df['humidity'] / 100) * \
+                                        (enhanced_df['temperature'] - 14.3)) + 46.4
+    
+    # 8. Pressure change rate (acceleration)
+    enhanced_df['pressure_acceleration'] = enhanced_df['pressure_change'].diff().fillna(0)
+    
+    # 9. Seasonal features (based on day of year)
+    # Convert day to month (1-365 to 1-12)
+    # enhanced_df['month'] = ((enhanced_df['day'] - 1) // 30) + 1
+    # enhanced_df['month'] = enhanced_df['month'].clip(upper=12)  # Ensure month doesn't exceed 12
+    
+    # 10. Convert day to season (1-365 to 1-4)
+    enhanced_df['season'] = ((enhanced_df['month'] - 1) // 3) + 1
+    
+    # 11. Sine and cosine transformations to capture cyclical nature of days in a year
+    enhanced_df['day_of_year_sin'] = np.sin(2 * np.pi * enhanced_df['day'] / 365)
+    enhanced_df['day_of_year_cos'] = np.cos(2 * np.pi * enhanced_df['day'] / 365)
+    
+    # 12. Rolling averages for key meteorological variables
+    for window in [3, 7, 14]:
+        enhanced_df[f'temperature_rolling_{window}d'] = enhanced_df['temperature'].rolling(window=window, min_periods=1).mean()
+        enhanced_df[f'pressure_rolling_{window}d'] = enhanced_df['pressure'].rolling(window=window, min_periods=1).mean()
+        enhanced_df[f'humidity_rolling_{window}d'] = enhanced_df['humidity'].rolling(window=window, min_periods=1).mean()
+        enhanced_df[f'cloud_rolling_{window}d'] = enhanced_df['cloud'].rolling(window=window, min_periods=1).mean()
+        enhanced_df[f'windspeed_rolling_{window}d'] = enhanced_df['windspeed'].rolling(window=window, min_periods=1).mean()
+    
+    # 13. Weather pattern change features
+    # Temperature trend
+    enhanced_df['temp_trend_3d'] = enhanced_df['temperature'].diff(3).fillna(0)
+    # Pressure trend
+    enhanced_df['pressure_trend_3d'] = enhanced_df['pressure'].diff(3).fillna(0)
+    # Humidity trend
+    enhanced_df['humidity_trend_3d'] = enhanced_df['humidity'].diff(3).fillna(0)
+    
+    # 14. Extreme weather indicators
+    enhanced_df['extreme_temp'] = (enhanced_df['temperature'] > enhanced_df['temperature'].quantile(0.95)) | \
+                                 (enhanced_df['temperature'] < enhanced_df['temperature'].quantile(0.05))
+    enhanced_df['extreme_temp'] = enhanced_df['extreme_temp'].astype(int)
+    
+    enhanced_df['extreme_humidity'] = (enhanced_df['humidity'] > enhanced_df['humidity'].quantile(0.95)) | \
+                                     (enhanced_df['humidity'] < enhanced_df['humidity'].quantile(0.05))
+    enhanced_df['extreme_humidity'] = enhanced_df['extreme_humidity'].astype(int)
+    
+    enhanced_df['extreme_pressure'] = (enhanced_df['pressure'] > enhanced_df['pressure'].quantile(0.95)) | \
+                                     (enhanced_df['pressure'] < enhanced_df['pressure'].quantile(0.05))
+    enhanced_df['extreme_pressure'] = enhanced_df['extreme_pressure'].astype(int)
+    
+    # 15. Interaction terms between key variables
+    enhanced_df['temp_humidity_interaction'] = enhanced_df['temperature'] * enhanced_df['humidity']
+    enhanced_df['pressure_wind_interaction'] = enhanced_df['pressure'] * enhanced_df['windspeed']
+    enhanced_df['cloud_sunshine_interaction'] = enhanced_df['cloud'] * enhanced_df['sunshine']
+    enhanced_df['dewpoint_humidity_interaction'] = enhanced_df['dewpoint'] * enhanced_df['humidity']
+    
+    # 16. Moving standard deviations for measuring variability
+    for window in [7, 14]:
+        enhanced_df[f'temp_std_{window}d'] = enhanced_df['temperature'].rolling(window=window, min_periods=4).std().fillna(0)
+        enhanced_df[f'pressure_std_{window}d'] = enhanced_df['pressure'].rolling(window=window, min_periods=4).std().fillna(0)
+        enhanced_df[f'humidity_std_{window}d'] = enhanced_df['humidity'].rolling(window=window, min_periods=4).std().fillna(0)
+    
+    return enhanced_df
+    
+train_fe=engineer_features(train_imputed)
+test_fe=engineer_features(test_imputed)
+5. FEATURE SELECTION
+In [11]:
+final_features=[f for f in train_fe.columns if f not in [target]]
+final_features=[*set(final_features)]
+
+sc=StandardScaler()
+
+train_scaled=train_fe.copy()
+test_scaled=test_fe.copy()
+train_scaled[final_features]=sc.fit_transform(train_fe[final_features])
+test_scaled[final_features]=sc.transform(test_fe[final_features])
+In [12]:
+def post_processor(train, test):
+    cols=train.drop(columns=[target]).columns
+    train_cop=train.copy()
+    test_cop=test.copy()
+    drop_cols=[]
+    for i, feature in enumerate(cols):
+        for j in range(i+1, len(cols)):
+            if sum(abs(train_cop[feature]-train_cop[cols[j]]))==0:
+                if cols[j] not in drop_cols:
+                    drop_cols.append(cols[j])
+    print(drop_cols)
+    train_cop.drop(columns=drop_cols,inplace=True)
+    test_cop.drop(columns=drop_cols,inplace=True)
+    
+    return train_cop, test_cop
+
+                    
+train_cop, test_cop=   post_processor(train_scaled, test_scaled)   
+
+X_train = train_cop.drop(columns=[target])
+y_train = train[target]
+
+X_test = test_cop.copy()
+
+print(X_train.shape, X_test.shape)
+[]
+(2556, 57) (730, 57)
+In [13]:
+def get_most_important_features(X_train, y_train, n,model_input):
+    xgb_params = {
+            'n_jobs': -1,
+            'eval_metric': 'logloss',
+            'objective': 'binary:logistic',
+            'tree_method': 'hist',
+            'verbosity': 0,
+            'random_state': 42,
+        }
+    if device == 'gpu':
+            xgb_params['tree_method'] = 'gpu_hist'
+            xgb_params['predictor'] = 'gpu_predictor'
+    lgb_params = {
+            'objective': 'binary',
+            'metric': 'logloss',
+            'boosting_type': 'gbdt',
+            'random_state': 42,
+            'device': device,
+            'verbose':-1
+        }
+    cb_params = {
+            'grow_policy': 'Depthwise',
+            'bootstrap_type': 'Bayesian',
+            'od_type': 'Iter',
+            'eval_metric': 'AUC',
+            'loss_function': 'Logloss',
+            'random_state': 42,
+            'task_type': device.upper(),
+        }
+    if 'xgb' in model_input:
+        model = xgb.XGBClassifier(**xgb_params)
+    elif 'cat' in model_input:
+        model=CatBoostClassifier(**cb_params)
+    else:
+        model=lgb.LGBMClassifier(**lgb_params)
+        
+    kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+    auc_scores = []
+    feature_importances_list = []
+    
+    for train_idx, val_idx in kfold.split(X_train):
+        X_train_fold, X_val_fold = X_train.iloc[train_idx], X_train.iloc[val_idx]
+        y_train_fold, y_val_fold = y_train.iloc[train_idx], y_train.iloc[val_idx]
+        if "lgb" not in model_input:
+            model.fit(X_train_fold, y_train_fold, verbose=False)
+        else:
+            model.fit(X_train_fold, y_train_fold)
+            
+        
+        y_pred = model.predict_proba(X_val_fold)[:,1]
+        auc_scores.append(roc_auc_score(y_val_fold, y_pred))
+        feature_importances = model.feature_importances_
+        feature_importances_list.append(feature_importances)
+
+    avg_auc= np.mean(auc_scores)
+    avg_feature_importances = np.mean(feature_importances_list, axis=0)
+
+    feature_importance_list = [(X_train.columns[i], importance) for i, importance in enumerate(avg_feature_importances)]
+    sorted_features = sorted(feature_importance_list, key=lambda x: x[1], reverse=True)
+    top_n_features = [feature[0] for feature in sorted_features[:n]]
+
+    display_features=top_n_features[:10]
+    
+    sns.set_palette("Set2")
+    plt.figure(figsize=(8, 6))
+    plt.barh(range(len(display_features)), [avg_feature_importances[X_train.columns.get_loc(feature)] for feature in display_features])
+    plt.yticks(range(len(display_features)), display_features, fontsize=12)
+    plt.xlabel('Average Feature Importance', fontsize=14)
+    plt.ylabel('Features', fontsize=10)
+    plt.title(f'Top {10} of {n} Feature Importances with ROC AUC score {avg_auc}', fontsize=16)
+    plt.gca().invert_yaxis()  # Invert y-axis to have the most important feature on top
+    plt.grid(axis='x', linestyle='--', alpha=0.7)
+    plt.xticks(fontsize=8)
+    plt.yticks(fontsize=8)
+
+    # Add data labels on the bars
+    for index, value in enumerate([avg_feature_importances[X_train.columns.get_loc(feature)] for feature in display_features]):
+        plt.text(value + 0.005, index, f'{value:.3f}', fontsize=12, va='center')
+
+    plt.tight_layout()
+    plt.show()
+
+    return top_n_features
+In [14]:
+n_imp_features_cat=get_most_important_features(X_train.reset_index(drop=True), y_train,50, 'cat')
+n_imp_features_xgb=get_most_important_features(X_train.reset_index(drop=True), y_train,50, 'xgb')
+n_imp_features_lgbm=get_most_important_features(X_train.reset_index(drop=True), y_train,50, 'lgbm')
+In [15]:
+n_imp_features=[*set(n_imp_features_xgb+n_imp_features_lgbm+n_imp_features_cat)]
+print(f"{len(n_imp_features)} features have been selected from three algorithms for the final model")
+
+X_train=X_train[n_imp_features]
+X_test=X_test[n_imp_features]
+50 features have been selected from three algorithms for the final model
+6. MODELING
+6.1 Class Weights
+In [16]:
+classes = np.unique(y_train)  
+class_to_index = {cls: idx for idx, cls in enumerate(classes)}
+y_train_numeric = np.array([class_to_index[cls] for cls in y_train])
+
+class_counts = np.bincount(y_train_numeric)
+
+total_samples = len(y_train_numeric)
+
+class_weights = total_samples / (len(classes) * class_counts)
+
+class_weights_dict = {cls: weight for cls, weight in zip(classes, class_weights)}
+
+print("Class counts:", class_counts)
+print("Total samples:", total_samples)
+print("Class weights:", class_weights)
+print("Class weights dictionary:", class_weights_dict)
+Class counts: [ 657 1899]
+Total samples: 2556
+Class weights: [1.94520548 0.67298578]
+Class weights dictionary: {0: 1.9452054794520548, 1: 0.6729857819905213}
+6.2 Models
+In [17]:
+def optimizer():
+    sgd=tensorflow.keras.optimizers.SGD(learning_rate=0.005, momentum=0.5, nesterov=True)
+    rms = tensorflow.keras.optimizers.RMSprop()
+    nadam=tensorflow.keras.optimizers.Nadam(
+        learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, name="Nadam"
+    )
+    adam=tensorflow.keras.optimizers.Adam()
+    adamW = keras.optimizers.AdamW(learning_rate=0.002,weight_decay=0.001, beta_1=0.9, beta_2=0.999)
+    
+    return sgd,rms,nadam, adamW,adam
+
+def init_ann1(num_classes, input_dim):
+    '''
+    Initialize the artificial neural network (ANN) for multiclass classification
+    '''
+
+    sgd, rms, nadam, adamW, adam = optimizer()
+    
+    ann = Sequential()
+    ann.add(Dense(16, input_dim=input_dim, kernel_initializer='he_uniform', activation='relu'))
+    ann.add(Dropout(0.1))
+    # ann.add(Dense(8, kernel_initializer='he_uniform', activation='relu'))
+    # ann.add(Dropout(0.1))
+    ann.add(Dense(4, kernel_initializer='he_uniform', activation='relu'))
+    ann.add(Dropout(0.0))
+    
+    # Change the output layer to match the number of classes
+    ann.add(Dense(num_classes, kernel_initializer='he_uniform', activation='softmax'))
+    
+    # Compile the model with categorical_crossentropy loss and accuracy metric
+    ann.compile(loss='binary_crossentropy', optimizer=sgd, metrics=['accuracy'])
+    
+    return ann
+
+def init_ann2(num_classes, input_dim):  
+    sgd,rms,nadam, adamW, adam=optimizer()
+    ann2 = Sequential()
+    ann2.add(Dense(128, input_dim=X_test.shape[1], kernel_initializer='he_uniform', activation='relu'))
+    ann2.add(Dropout(0.3))
+    # ann2.add(Dense(32,  kernel_initializer='he_uniform', activation='relu'))
+    # ann2.add(Dropout(0.1))
+    ann2.add(Dense(4,  kernel_initializer='he_uniform', activation='relu'))
+    ann2.add(Dropout(0.2))
+#     ann2.add(Dense(16,  kernel_initializer='he_uniform', activation='relu'))
+#     ann2.add(Dropout(0.1))
+
+    ann2.add(Dense(num_classes, kernel_initializer='he_uniform', activation='softmax'))
+    ann2.compile(loss='binary_crossentropy', optimizer=sgd, metrics=['accuracy'])
+    
+    return ann2
+In [18]:
+class Splitter:
+    def __init__(self, test_size=0.2, kfold=True, n_splits=5):
+        self.test_size = test_size
+        self.kfold = kfold
+        self.n_splits = n_splits
+
+    def split_data(self, X, y, random_state_list):
+        if self.kfold:
+            for random_state in random_state_list:
+                kf = StratifiedKFold(n_splits=self.n_splits, random_state=random_state, shuffle=True)
+                for train_index, val_index in kf.split(X, y):
+                    X_train, X_val = X.iloc[train_index], X.iloc[val_index]
+                    y_train, y_val = y.iloc[train_index], y.iloc[val_index]
+                    yield X_train, X_val, y_train, y_val
+                    
+class Classifier:
+    def __init__(self, n_estimators=100, device="cpu", random_state=0):
+        self.n_estimators = n_estimators
+        self.device = device
+        self.random_state = random_state
+        self.models = self._define_model()
+        # self.len_models = len(self.models)
+    def _define_model(self):
+       
+       # XGBoost parameters
+       xgb_params = {
+           'n_estimators': self.n_estimators,
+           'learning_rate': 0.05,
+           'max_depth': 4,
+           'subsample': 0.8,
+           'colsample_bytree': 0.1,
+           'n_jobs': -1,
+           'eval_metric': 'auc',  # Changed to binary error
+           'objective': 'binary:logistic',  # Changed to binary objective
+           'tree_method': 'hist',
+           'verbosity': 0,
+           'random_state': self.random_state,
+       }
+       
+       if self.device == 'gpu':
+           xgb_params['tree_method'] = 'gpu_hist'
+           xgb_params['predictor'] = 'gpu_predictor'
+    
+       xgb_params2 = {
+           'n_estimators': self.n_estimators,
+           'gamma': 0.279,
+           'max_depth': 10,
+           'subsample': 0.325,
+           'min_child_weight': 9,
+           'colsample_bytree': 0.487,
+           'learning_rate': 0.052,
+           'reg_lambda': 0.0007,
+           'reg_alpha': 0.371,
+           'n_jobs': -1,
+           'eval_metric': 'auc',  # Changed to binary
+           'objective': 'binary:logistic',  # Changed to binary
+           'tree_method': 'hist',
+           'verbosity': 0,
+           'random_state': self.random_state,
+       }
+    
+       xgb_params3 = {
+           'n_estimators': self.n_estimators,
+           'gamma': 0.279,
+           'max_depth': 10,
+           'subsample': 0.325,
+           'min_child_weight': 9,
+           'colsample_bytree': 0.487,
+           'learning_rate': 0.052,
+           'reg_lambda': 0.0007,
+           'reg_alpha': 0.371,
+           'n_jobs': -1,
+           'eval_metric': 'auc',
+           'objective': 'binary:logistic',
+           'tree_method': 'hist',
+           'verbosity': 0,
+           'device': 'cuda',
+           'booster': 'gbtree',
+           'random_state': self.random_state,
+       }
+    
+       xgb_params4 = xgb_params.copy()
+       xgb_params4.update({
+           'subsample': 0.789,
+           'max_depth': 5,
+           'learning_rate': 0.161,
+           'colsample_bytree': 0.243
+       })
+    
+       xgb_params5 = {
+           'gamma': 0.3096433389022722, 
+           'max_depth': 13, 
+           'subsample': 0.265592840463903, 
+           'min_child_weight': 5, 
+           'colsample_bytree': 0.0750255657479969, 
+           'learning_rate': 0.014300386108634659, 
+           'reg_lambda': 0.07950866494906, 
+           'reg_alpha': 0.003996021372821422,
+            'n_jobs': -1,
+           'eval_metric': 'auc',
+           'objective': 'binary:logistic',
+           'tree_method': 'hist',
+           'verbosity': 0,
+           'device': 'cuda',
+           'booster': 'gbtree',
+           'random_state': self.random_state,}
+    
+       # LightGBM parameters
+       lgb_params = {
+           'n_estimators': self.n_estimators,
+           'max_depth': 10, 
+           'min_samples_leaf': 33, 
+           'subsample': 0.8144362305468624, 
+           'learning_rate': 0.00647777270150904, 
+           'lambda_l1': 1.2991459277687692e-05, 
+           'lambda_l2': 0.0007304768170358017,
+           'objective': 'binary',  # Changed to binary
+           'metric': 'auc',  # Changed to binary error
+           'boosting_type': 'gbdt',
+           'device': self.device,
+           'random_state': self.random_state,
+           'verbose': -1
+       }
+    
+       lgb_params2 = {
+           'n_estimators':self.n_estimators,
+           'max_depth': 6,
+           'subsample': 0.743,
+           'learning_rate': 0.049,
+           'lambda_l1': 8.922e-05,
+           'lambda_l2': 0.0018,
+           'colsample_bytree': 0.392,
+           'objective': 'binary',
+           'metric': 'auc',
+           'boosting_type': 'gbdt',
+           'device': self.device,
+           'random_state': self.random_state,
+           'verbose': -1
+       }
+    
+       lgb_params3 = {
+           'n_estimators': self.n_estimators,
+           'max_depth': 9,
+           'subsample': 0.540,
+           'learning_rate': 0.049,
+           'lambda_l1': 1.749e-08,
+           'lambda_l2': 3.837,
+           'colsample_bytree': 0.319,
+           'objective': 'binary',
+           'metric': 'auc',
+           'boosting_type': 'gbdt',
+           'device': self.device,
+           'random_state': self.random_state,
+           'verbose': -1
+       }
+    
+       lgb_params4 = lgb_params2.copy()
+       lgb_params4.update({
+           'subsample': 0.9,
+           'reg_lambda': 0.876,
+           'reg_alpha': 0.319,
+           'max_depth': 9,
+           'learning_rate': 0.107,
+           'colsample_bytree': 0.1
+       })
+    
+       lgb_params5 = lgb_params2.copy()
+       lgb_params5.update({
+           'subsample': 0.9,
+           'reg_lambda': 0.512,
+           'reg_alpha': 0.898,
+           'max_depth': 11,
+           'learning_rate': 0.081,
+           'colsample_bytree': 0.1
+       })
+    
+       # CatBoost parameters
+       cb_params = {
+           'iterations': self.n_estimators,
+           'depth': 6,
+           'learning_rate': 0.05,
+           'l2_leaf_reg': 0.7,
+           'random_strength': 0.2,
+           'max_bin': 200,
+           'od_wait': 65,
+           'one_hot_max_size': 70,
+           'grow_policy': 'Depthwise',
+           'bootstrap_type': 'Bayesian',
+           'od_type': 'Iter',
+           'eval_metric': 'AUC',
+           'loss_function': 'Logloss',  # Changed to binary
+           'task_type': self.device.upper(),
+           'random_state': self.random_state,
+           'verbose': -1
+       }
+    
+       cb_sym_params = cb_params.copy()
+       cb_sym_params['grow_policy'] = 'SymmetricTree'
+    
+       cb_loss_params = cb_params.copy()
+       cb_loss_params['grow_policy'] = 'Lossguide'
+    
+       cb_params2 = cb_params.copy()
+       cb_params2.update({
+           'learning_rate': 0.019,
+           'depth': 9,
+           'random_strength': 0.3,
+           'one_hot_max_size': 10,
+           'max_bin': 100,
+           'l2_leaf_reg': 0.419
+       })
+    
+       cb_params3 = {
+           'iterations': self.n_estimators,
+           'depth': 8, 
+           'learning_rate': 0.010264893665188225, 
+           'l2_leaf_reg': 1.6429322134431932, 
+           'random_strength': 0.7418687826801, 
+           'max_bin': 180, 
+           'one_hot_max_size': 59, 
+           'grow_policy': 'Lossguide', 
+           'od_wait': 80,
+           'bootstrap_type': 'Bayesian',
+           'od_type': 'Iter',
+           'eval_metric': 'AUC',
+           'loss_function': 'Logloss',
+           'task_type': self.device.upper(),
+           'random_state': self.random_state,
+       }
+    
+       cb_params4 = cb_params.copy()
+       cb_params4.update({
+           'learning_rate': 0.143,
+           'depth': 16,
+           'random_strength': 0.596,
+           # 'one_hot_max_size': 100,
+           # 'max_bin': 150,
+           'l2_leaf_reg': 0.384,
+           'grow_policy': 'Lossguide'
+       })
+    
+       # Other model parameters remain same
+       dt_params = {'criterion': 'gini', 'max_depth': 9, 'min_samples_split': 17, 'min_samples_leaf': 18, 'max_features': 0.843}
+       etr_params = {'criterion': 'gini', 'max_depth': 16, 'min_samples_split': 11, 'min_samples_leaf': 1, 'max_features': 0.668, 'bootstrap': True}
+       hist_params = {'learning_rate': 0.058, 'n_iter_no_change': 795, 'max_depth': 4, 'min_samples_leaf': 17, 'max_leaf_nodes': 98, 'l2_regularization': 1.923e-07}
+       rf_params = {'max_depth': 16, 'min_samples_split': 18, 'min_samples_leaf': 2, 'max_features': 0.416}
+       gbt_params = {'learning_rate': 0.136, 'max_depth': 4, 'min_samples_split': 17, 'min_samples_leaf': 15, 'subsample': 0.886, 'max_features': 0.611}
+       knn_params = {'n_neighbors':101, "p":1}
+       adb_params = {'n_estimators': 957, 'learning_rate': 0.663}
+    
+       models = {
+           'xgb':  xgb.XGBClassifier(**xgb_params),
+           # 'xgb2': xgb.XGBClassifier(**xgb_params2),
+           # 'xgb3': xgb.XGBClassifier(**xgb_params3),
+           # 'xgb4': xgb.XGBClassifier(**xgb_params4),
+           # 'xgb5': xgb.XGBClassifier(**xgb_params5),
+           # 'lgb':  lgb.LGBMClassifier(**lgb_params),
+           # 'lgb2': lgb.LGBMClassifier(**lgb_params2),
+           # 'lgb3': lgb.LGBMClassifier(**lgb_params3),
+           # 'lgb4': lgb.LGBMClassifier(**lgb_params4),
+           # 'lgb5': lgb.LGBMClassifier(**lgb_params5),
+           # 'cat':  CatBoostClassifier(**cb_params),
+           # 'cat2': CatBoostClassifier(**cb_params2),
+           # 'cat3': CatBoostClassifier(**cb_params3),
+           # 'cat4': CatBoostClassifier(**cb_params4),
+           # "cat_sym": CatBoostClassifier(**cb_sym_params),
+           # "cat_loss": CatBoostClassifier(**cb_loss_params),
+           # 'hist_gbm': HistGradientBoostingClassifier(max_iter=self.n_estimators, **hist_params, random_state=self.random_state),
+           # 'rf': RandomForestClassifier(n_estimators=250, **rf_params, random_state=self.random_state),
+           # 'gbdt': GradientBoostingClassifier(**gbt_params, n_estimators=1000, random_state=self.random_state),            
+           # 'ada': AdaBoostClassifier(**adb_params, random_state=self.random_state),
+           # 'etr': ExtraTreesClassifier(**etr_params, random_state=self.random_state),
+           # 'dt': DecisionTreeClassifier(**dt_params, random_state=self.random_state),
+           'knn': KNeighborsClassifier(**knn_params),
+           'svm': SVC(probability=True, random_state=self.random_state),
+           # 'log_reg': LogisticRegression(max_iter=1000),
+           # 'ridge': CalibratedClassifierCV(RidgeClassifierCV(alphas=[100.02]), method='sigmoid'),
+           # 'elasticNet': LogisticRegressionCV(Cs=[0.044], l1_ratios=[0.977]),
+           # 'ann1': init_ann1(1, X_test.shape[1]),  # Changed to 1 for binary
+           # 'ann2': init_ann2(1, X_test.shape[1]),  # Changed to 1 for binary
+       }
+       return models
+6.3 Optuna-->Weighted Ensemble
+In [19]:
+class OptunaWeights:
+    """
+    Advanced ensemble weight optimization using Optuna.
+    This class optimizes weights for model predictions to maximize classification metrics.
+    """
+    def __init__(self, random_state, n_trials=5000, metric='auc', 
+                 sampler_type='tpe', direction='maximize', timeout=None):
+        """
+        Initialize the OptunaWeights class.
+        
+        Args:
+            random_state (int): Random seed for reproducibility
+            n_trials (int): Number of optimization trials
+            metric (str): Metric to optimize ('auc', 'logloss', 'accuracy', 'f1')
+            sampler_type (str): Type of sampler ('tpe', 'cmaes', 'random')
+            direction (str): Optimization direction ('maximize' or 'minimize')
+            timeout (int): Maximum time in seconds for optimization (None = no limit)
+        """
+        self.study = None
+        self.weights = None
+        self.random_state = random_state
+        self.n_trials = n_trials
+        self.metric = metric
+        self.sampler_type = sampler_type
+        self.direction = direction
+        self.timeout = timeout
+        self.best_score = None
+        self.calibrated_threshold = 0.5  # Default threshold
+
+    def _find_best_threshold(self, y_true, y_pred):
+        """Find the optimal classification threshold."""
+        best_threshold = 0.5
+        best_f1 = 0
+        
+        # Test thresholds from 0.01 to 0.99 with 0.01 increments
+        for threshold in np.arange(0.01, 1.0, 0.01):
+            y_pred_binary = (y_pred > threshold).astype(int)
+            f1 = f1_score(y_true, y_pred_binary)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_threshold = threshold
+                
+        return best_threshold
+    
+    def _validate_inputs(self, y_true, y_preds):
+        """Validate input shapes and types."""
+        if not isinstance(y_preds, list):
+            raise ValueError("y_preds must be a list of prediction arrays")
+        
+        if len(y_preds) == 0:
+            raise ValueError("Empty predictions list")
+            
+        # Convert to numpy arrays if needed
+        y_preds_np = []
+        for pred in y_preds:
+            if isinstance(pred, np.ndarray):
+                y_preds_np.append(pred)
+            else:
+                y_preds_np.append(np.array(pred))
+                
+        # Validate shapes
+        for i, pred in enumerate(y_preds_np):
+            if pred.shape[0] != y_true.shape[0]:
+                raise ValueError(f"Shape mismatch in model {i}: {pred.shape} vs {y_true.shape}")
+                
+        return y_true, y_preds_np
+
+    def _objective(self, trial, y_true, y_preds):
+        """Optimization objective function."""
+        # Define the weights for the predictions from each model
+        weights = []
+        for n in range(len(y_preds)):
+            # Allow negative weights, which can be useful for certain ensembles
+            weight = trial.suggest_float(f"weight{n}", -2, 2)
+            weights.append(weight)
+        
+        # Calculate the weighted prediction
+        weighted_pred = np.average(np.array(y_preds), axis=0, weights=weights)
+        
+        # Normalize predictions to ensure they sum to 1 across classes
+        if len(weighted_pred.shape) > 1 and weighted_pred.shape[1] > 1:
+            # Multi-class case
+            weighted_pred = weighted_pred / weighted_pred.sum(axis=1, keepdims=True)
+        else:
+            # Binary classification case - clip values to valid probability range
+            weighted_pred = np.clip(weighted_pred, 0, 1)
+        
+        # Calculate metric based on selected option
+        if self.metric == 'logloss':
+            # For log loss, we want to minimize
+            return log_loss(y_true, weighted_pred)
+        elif self.metric == 'accuracy':
+            threshold = trial.suggest_float("threshold", 0.1, 0.9)
+            weighted_pred_labels = (weighted_pred > threshold).astype(int)
+            return accuracy_score(y_true, weighted_pred_labels)
+        elif self.metric == 'f1':
+            threshold = trial.suggest_float("threshold", 0.1, 0.9)
+            weighted_pred_labels = (weighted_pred > threshold).astype(int)
+            return f1_score(y_true, weighted_pred_labels)
+        else:
+            # Default to AUC
+            return roc_auc_score(y_true, weighted_pred)
+
+    def fit(self, y_true, y_preds, cv=None):
+        """
+        Fit the model to optimize ensemble weights.
+        
+        Args:
+            y_true: True labels
+            y_preds: List of model predictions
+            cv: Optional cross-validation strategy for more robust weight optimization
+        """
+        # Validate inputs
+        y_true, y_preds = self._validate_inputs(y_true, y_preds)
+        
+        # Set optimization verbosity
+        optuna.logging.set_verbosity(optuna.logging.ERROR)
+        
+        # Choose sampler based on configuration
+        if self.sampler_type == 'cmaes':
+            sampler = optuna.samplers.CmaEsSampler(seed=self.random_state)
+        elif self.sampler_type == 'random':
+            sampler = optuna.samplers.RandomSampler(seed=self.random_state)
+        else:
+            # Default to TPE sampler which often works better than CMA-ES for this problem
+            sampler = TPESampler(seed=self.random_state, multivariate=True)
+        
+        # Set pruner for early stopping
+        pruner = optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=5)
+        
+        # Set optimization direction
+        direction = self.direction
+        if self.metric == 'logloss':
+            # For log loss, we always want to minimize
+            direction = 'minimize'
+        
+        # Create study
+        self.study = optuna.create_study(
+            sampler=sampler, 
+            pruner=pruner, 
+            study_name="OptunaWeights", 
+            direction=direction
+        )
+        
+        if cv is not None and cv > 1:
+            # Use cross-validation for more robust weight optimization
+            skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=self.random_state)
+            cv_scores = []
+            
+            for train_idx, val_idx in skf.split(np.zeros(len(y_true)), y_true):
+                y_true_val = y_true[val_idx]
+                y_preds_val = [pred[val_idx] for pred in y_preds]
+                
+                # Optimize on this fold
+                objective_partial = partial(self._objective, y_true=y_true_val, y_preds=y_preds_val)
+                fold_study = optuna.create_study(sampler=sampler, direction=direction)
+                fold_study.optimize(
+                    objective_partial, 
+                    n_trials=self.n_trials // cv,
+                    timeout=None if self.timeout is None else self.timeout // cv
+                )
+                cv_scores.append(fold_study.best_value)
+            
+            # Re-optimize on full dataset with more knowledge
+            objective_partial = partial(self._objective, y_true=y_true, y_preds=y_preds)
+            self.study.optimize(
+                objective_partial, 
+                n_trials=self.n_trials,
+                timeout=self.timeout
+            )
+        else:
+            # Standard optimization on the full dataset
+            objective_partial = partial(self._objective, y_true=y_true, y_preds=y_preds)
+            self.study.optimize(
+                objective_partial, 
+                n_trials=self.n_trials,
+                timeout=self.timeout
+            )
+        
+        # Extract the best weights
+        self.weights = [self.study.best_params[f"weight{n}"] for n in range(len(y_preds))]
+        
+        # Record the best score
+        self.best_score = self.study.best_value
+        
+        # Find optimal threshold (for classification metrics)
+        if 'threshold' in self.study.best_params:
+            self.calibrated_threshold = self.study.best_params['threshold']
+        else:
+            weighted_pred = self.predict(y_preds)
+            self.calibrated_threshold = self._find_best_threshold(y_true, weighted_pred)
+        
+        return self
+
+    def predict(self, y_preds, normalize=True):
+        """
+        Make predictions using optimized weights.
+        
+        Args:
+            y_preds: List of model predictions
+            normalize: Whether to normalize predictions
+            
+        Returns:
+            Weighted prediction
+        """
+        assert self.weights is not None, 'OptunaWeights error, must be fitted before predict'
+        
+        # Convert to numpy arrays if needed
+        y_preds_np = []
+        for pred in y_preds:
+            if isinstance(pred, np.ndarray):
+                y_preds_np.append(pred)
+            else:
+                y_preds_np.append(np.array(pred))
+        
+        # Calculate weighted predictions
+        weighted_pred = np.average(np.array(y_preds_np), axis=0, weights=self.weights)
+        
+        # Normalize if requested
+        if normalize:
+            if len(weighted_pred.shape) > 1 and weighted_pred.shape[1] > 1:
+                # Multi-class case
+                weighted_pred = weighted_pred / weighted_pred.sum(axis=1, keepdims=True)
+            else:
+                # Binary classification - clip to valid probability range
+                weighted_pred = np.clip(weighted_pred, 0, 1)
+                
+        return weighted_pred
+
+    def predict_classes(self, y_preds):
+        """
+        Predict class labels using the optimized threshold.
+        
+        Args:
+            y_preds: List of model predictions
+            
+        Returns:
+            Class predictions
+        """
+        weighted_pred = self.predict(y_preds)
+        return (weighted_pred > self.calibrated_threshold).astype(int)
+
+    def fit_predict(self, y_true, y_preds, normalize=True):
+        """
+        Fit the model and return predictions in one step.
+        
+        Args:
+            y_true: True labels
+            y_preds: List of model predictions
+            normalize: Whether to normalize predictions
+            
+        Returns:
+            Weighted prediction
+        """
+        self.fit(y_true, y_preds)
+        return self.predict(y_preds, normalize=normalize)
+
+    def get_weights(self):
+        """Return the optimized weights."""
+        if self.weights is None:
+            raise ValueError("Model has not been fitted yet")
+        return self.weights
+    
+    def get_feature_importance(self):
+        """
+        Get the relative importance of each model in the ensemble.
+        
+        Returns:
+            Dictionary mapping index to relative importance
+        """
+        if self.weights is None:
+            raise ValueError("Model has not been fitted yet")
+            
+        # Get absolute weights
+        abs_weights = np.abs(self.weights)
+        total = np.sum(abs_weights)
+        
+        # Normalize to get relative importance
+        if total > 0:
+            importance = abs_weights / total
+        else:
+            importance = np.ones_like(abs_weights) / len(abs_weights)
+            
+        return {i: float(imp) for i, imp in enumerate(importance)}
+    
+    def get_search_statistics(self):
+        """
+        Get statistics from the optimization process.
+        
+        Returns:
+            Dictionary with optimization statistics
+        """
+        if self.study is None:
+            raise ValueError("Model has not been fitted yet")
+            
+        return {
+            "best_score": self.best_score,
+            "best_trial": self.study.best_trial.number,
+            "n_trials": len(self.study.trials),
+            "optimization_direction": self.study.direction.name,
+            "calibrated_threshold": self.calibrated_threshold
+        }
+6.4 Fit Models
+In [20]:
+kfold = True
+n_splits = 1 if not kfold else 5
+random_state = 42
+random_state_list = [random_state] 
+n_estimators = 9999 
+early_stopping_rounds = 300
+verbose = False
+
+splitter = Splitter(kfold=kfold, n_splits=n_splits)
+oof_predss = pd.DataFrame(np.zeros((X_train.shape[0], 1)))
+test_predss = np.zeros((X_test.shape[0], 1))
+ensemble_score = []
+ensemble_acc_score = []
+weights = []
+trained_models = {'xgb':[]}
+best_thresholds = []  # Store best thresholds for each fold
+   
+for i, (X_train_, X_val, y_train_, y_val) in enumerate(splitter.split_data(X_train, y_train, random_state_list=random_state_list)):
+   n = i % n_splits
+   m = i // n_splits
+           
+   classifier = Classifier(n_estimators, device, random_state)
+   models = classifier.models
+   
+   oof_preds = []
+   test_preds = []
+   start_time_fold = time.time()
+   
+   # Train and predict with each model
+   for name, model in models.items():
+       start_time = time.time()
+       
+       # Model fitting
+       if ('xgb' in name) or ('lgb' in name) or ('cat' in name):
+           if 'lgb' in name:
+               model.fit(X_train_, y_train_, eval_set=[(X_val, y_val)])
+           elif 'cat' in name:
+               model.fit(X_train_, y_train_, 
+                        eval_set=[(X_val, y_val)],
+                        early_stopping_rounds=early_stopping_rounds,#cat_features=cat_features,
+                        verbose=verbose)  
+           else:
+               model.fit(X_train_, y_train_, 
+                        eval_set=[(X_val, y_val)],
+                        early_stopping_rounds=early_stopping_rounds,
+                        verbose=verbose)
+       elif 'ann' in name:
+           model.fit(X_train_, y_train_,
+                    validation_data=(X_val, y_val),
+                    batch_size=16,
+                    epochs=10,
+                    verbose=verbose)
+       else:
+           model.fit(X_train_, y_train_)
+           
+       if name in trained_models.keys():
+           trained_models[f'{name}'].append(deepcopy(model))
+       
+       # Make predictions
+       if 'ann' in name:
+           test_pred = model.predict(X_test).reshape(-1, 1)
+           y_val_pred = model.predict(X_val).reshape(-1, 1)
+       elif ('xgb' in name) or ('lgb' in name) or ('cat' in name):
+           test_pred = model.predict_proba(X_test)[:, 1].reshape(-1, 1)
+           y_val_pred = model.predict_proba(X_val)[:, 1].reshape(-1, 1)
+       else:
+           test_pred = model.predict_proba(X_test)[:, 1].reshape(-1, 1)
+           y_val_pred = model.predict_proba(X_val)[:, 1].reshape(-1, 1)
+       
+       end_time = time.time()
+       time_taken = end_time - start_time
+       
+       score = roc_auc_score(y_val, y_val_pred)       
+       print(f'{name} [FOLD-{n} SEED-{random_state_list[m]}] '
+             f'AUC Score: {score:.5f} '
+             f'time taken: {time_taken:.3f} secs')
+       
+       oof_preds.append(y_val_pred)
+       test_preds.append(test_pred)
+   
+   # Optimize ensemble weights
+   optweights = OptunaWeights(
+                        random_state=random_state, 
+                        n_trials=3000,  # You can adjust this based on your needs
+                        metric='auc'    # Options include 'auc', 'logloss', 'accuracy', or 'f1'
+                    )
+   y_val_pred = optweights.fit_predict(y_val, oof_preds)
+   oof_predss.loc[X_val.index] = np.array(y_val_pred).reshape(-1, 1)
+   
+   score = roc_auc_score(y_val, y_val_pred)
+   
+   end_time_fold = time.time()
+   time_taken = end_time_fold - start_time_fold
+   
+   print(f'Ensemble [FOLD-{n} SEED-{random_state_list[m]}] '
+         f'-------------------> AUC Score: {score:.5f} '
+         f'fold time taken: {time_taken:.5f} secs')
+   
+   ensemble_acc_score.append(score)
+   weights.append(optweights.weights)
+   
+   # Predict test data using ensemble weights
+   test_preds = optweights.predict(test_preds)
+   test_predss += test_preds / (n_splits * len(random_state_list))
+   
+   gc.collect()
+xgb [FOLD-0 SEED-42] AUC Score: 0.90457 time taken: 0.577 secs
+knn [FOLD-0 SEED-42] AUC Score: 0.87954 time taken: 0.117 secs
+svm [FOLD-0 SEED-42] AUC Score: 0.86939 time taken: 0.744 secs
+Ensemble [FOLD-0 SEED-42] -------------------> AUC Score: 0.90712 fold time taken: 117.02056 secs
+xgb [FOLD-1 SEED-42] AUC Score: 0.89551 time taken: 0.581 secs
+knn [FOLD-1 SEED-42] AUC Score: 0.87510 time taken: 0.116 secs
+svm [FOLD-1 SEED-42] AUC Score: 0.87957 time taken: 0.778 secs
+Ensemble [FOLD-1 SEED-42] -------------------> AUC Score: 0.89906 fold time taken: 119.73694 secs
+xgb [FOLD-2 SEED-42] AUC Score: 0.90597 time taken: 0.900 secs
+knn [FOLD-2 SEED-42] AUC Score: 0.88386 time taken: 0.134 secs
+svm [FOLD-2 SEED-42] AUC Score: 0.89667 time taken: 0.748 secs
+Ensemble [FOLD-2 SEED-42] -------------------> AUC Score: 0.90753 fold time taken: 121.23796 secs
+xgb [FOLD-3 SEED-42] AUC Score: 0.87759 time taken: 0.734 secs
+knn [FOLD-3 SEED-42] AUC Score: 0.85145 time taken: 0.117 secs
+svm [FOLD-3 SEED-42] AUC Score: 0.85046 time taken: 0.718 secs
+Ensemble [FOLD-3 SEED-42] -------------------> AUC Score: 0.87766 fold time taken: 124.26465 secs
+xgb [FOLD-4 SEED-42] AUC Score: 0.89904 time taken: 0.754 secs
+knn [FOLD-4 SEED-42] AUC Score: 0.87149 time taken: 0.115 secs
+svm [FOLD-4 SEED-42] AUC Score: 0.86989 time taken: 0.803 secs
+Ensemble [FOLD-4 SEED-42] -------------------> AUC Score: 0.90066 fold time taken: 122.80134 secs
+6.5 Ensemble Weights
+unfold_moreShow hidden code
+Ensemble CV Accuracy: 0.89840 ± 0.01091
+--- Model Weights ---
+xgb: -0.13129 ± 1.74212
+knn: 0.09586 ± 0.12254
+svm: 0.03638 ± 0.25570
+7. SUBMISSION
+In [22]:
+oof_predss.to_csv('oof_predss.csv',index=False)
+
+submission[target] =  test_predss
+submission.to_csv('submission_pure.csv',index=False)
+
+submission.head()
+Out[22]:
+id rainfall
+0 2190 0.872017
+1 2191 0.871230
+2 2192 0.851701
+3 2193 0.367186
+4 2194 0.313999
+7.1 External Blend
+In [23]:
+def ensemble_mean(sub_list,cols, mean="AM"):
+    
+    """
+    The function computes Arithmetic Mean/Geometric Mean/Harmonic Mean given a list of results with one or more targets.
+    """
+    
+    sub_out=sub_list[0].copy()
+    if mean=="AM":
+        for col in cols:
+            sub_out[col]=sum(df[col] for df in sub_list)/len(sub_list)
+    elif mean=="GM":
+        for df in sub_list[1:]:
+            for col in cols:
+                sub_out[col]*=df[col]
+        for col in cols:
+            sub_out[col]=(sub_out[col])**(1/len(sub_list))
+    elif mean=="HM":
+        for col in cols:
+            sub_out[col]=len(sub_list)/sum(1/df[col] for df in sub_list)
+    
+    return sub_out
+In [24]:
+sub_ext1=pd.read_csv("/kaggle/input/ps3e5-ensemble-ancillary/sub_exxt_vyacheslavbolotin_v114_95655.csv")
+sub_ext2=pd.read_csv("/kaggle/input/ps3e5-ensemble-ancillary/sub_ext_cdeotte_v1_95628.csv")
+sub_ext3=pd.read_csv("/kaggle/input/ps3e5-ensemble-ancillary/sub_ext_act18l_v17_91522.csv")
+sub_ext4=pd.read_csv("/kaggle/input/ps3e5-ensemble-ancillary/sub_ext_itasps_v23_91499.csv")
+sub_ext5=pd.read_csv("/kaggle/input/ps3e5-ensemble-ancillary/sub_ext_act18l_v9_91043.csv")
+sub_ext6=pd.read_csv("/kaggle/input/ps3e5-ensemble-ancillary/sub_ext_act18l_v9_90935.csv")
+sub_ext7=pd.read_csv("/kaggle/input/ps3e5-ensemble-ancillary/sub_ext_vyacheslavbolotin_v28_90581.csv")
+sub_ext8=pd.read_csv("/kaggle/input/ps3e5-ensemble-ancillary/sub_ext_vyacheslavbolotin_v20_89702.csv")
+sub_ext9=pd.read_csv("/kaggle/input/ps3e5-ensemble-ancillary/sub_ext_vyacheslavbolotin_v53_89568.csv")
+sub_ext10=pd.read_csv("/kaggle/input/ps3e5-ensemble-ancillary/sub_ext_samanyuk_v6_89541.csv")
+
+sub_list=[sub_ext1, sub_ext2,sub_ext3, sub_ext4, sub_ext7,sub_ext10, submission ] # list all the results
+
+target_columns = [target]
+
+for i in range(len(sub_list)):
+    sc = MinMaxScaler()
+    for col in target_columns:
+        # Apply MinMax scaling to each target column
+        sub_list[i][col] = sc.fit_transform(sub_list[i][col].values.reshape(-1, 1)).flatten()
+
+weights=np.square([7,6,1,1,1,1,1])
+
+if len(sub_list)==len(weights):
+    weighted_list = [item for sublist, weight in zip(sub_list, weights) for item in [sublist] * weight]
+
+    
+am_submission=ensemble_mean(weighted_list,target_columns,mean="AM")
+gm_submission = ensemble_mean(weighted_list, target_columns, mean="GM")
+hm_submission = ensemble_mean(weighted_list, target_columns, mean="HM")
+
+# Save alternative blends
+gm_submission.to_csv('submission_blended_gm.csv', index=False)
+hm_submission.to_csv('submission_blended_hm.csv', index=False)
+am_submission.to_csv('submission_blended_am.csv',index=False)
+am_submission.head()
+Out[24]:
+id rainfall
+0 2190 0.950564
+1 2191 0.937016
+2 2192 0.979156
+3 2193 0.089761
+4 2194 0.022114

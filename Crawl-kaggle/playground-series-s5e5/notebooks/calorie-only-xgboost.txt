@@ -1,0 +1,698 @@
+In [1]:
+import pandas as pd 
+import numpy as np 
+import os 
+import time
+import logging 
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.model_selection import KFold
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import mean_squared_error
+
+from lightgbm import LGBMRegressor
+from catboost import CatBoostRegressor
+from xgboost import XGBRegressor
+
+from category_encoders import TargetEncoder
+
+from tqdm.auto import tqdm
+from itertools import combinations
+import warnings
+warnings.simplefilter('ignore')
+In [2]:
+train = pd.read_csv("/kaggle/input/playground-series-s5e5/train.csv")
+test = pd.read_csv("/kaggle/input/playground-series-s5e5/test.csv")
+submission = pd.read_csv("/kaggle/input/playground-series-s5e5/sample_submission.csv")
+EDA and Preprocessing
+In [3]:
+numerical_features = ["Age","Height","Weight","Duration","Heart_Rate","Body_Temp"]
+
+def add_feature_cross_terms(df, numerical_features):
+    df_new = df.copy()
+    #df_new['BMI'] = df_new['Weight'] / ((df_new['Height'] / 100) ** 2)
+    
+    for i in range(len(numerical_features)):
+        for j in range(i + 1, len(numerical_features)):  
+            feature1 = numerical_features[i]
+            feature2 = numerical_features[j]
+            cross_term_name = f"{feature1}_x_{feature2}"
+            df_new[cross_term_name] = df_new[feature1] * df_new[feature2]
+            #cross_term_name = f"{feature1}_add_{feature2}"
+            #df_new[cross_term_name] = df_new[feature1] + df_new[feature2]
+            #cross_term_name = f"{feature1}_divided_{feature2}"
+            #df_new[cross_term_name] = df_new[feature1] / df_new[feature2]
+
+    return df_new
+
+train = add_feature_cross_terms(train, numerical_features)
+test = add_feature_cross_terms(test, numerical_features)
+In [4]:
+num_features = train.select_dtypes(include='number')
+In [5]:
+le = LabelEncoder()
+train['Sex'] = le.fit_transform(train['Sex'])
+test['Sex'] = le.transform(test['Sex'])
+
+train["Sex"] = train["Sex"].astype("category")
+test["Sex"] = test["Sex"].astype("category")
+
+X = train.drop(columns=["id", "Calories"])
+y = np.log1p(train["Calories"])
+X_test = test.drop(columns=["id"])
+In [6]:
+train.describe()
+Out[6]:
+id Age Height Weight Duration Heart_Rate Body_Temp Calories Age_x_Height Age_x_Weight ... Height_x_Weight Height_x_Duration Height_x_Heart_Rate Height_x_Body_Temp Weight_x_Duration Weight_x_Heart_Rate Weight_x_Body_Temp Duration_x_Heart_Rate Duration_x_Body_Temp Heart_Rate_x_Body_Temp
+count 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 ... 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000 750000.000000
+mean 374999.500000 41.420404 174.697685 75.145668 15.421015 95.483995 40.036253 88.282781 7238.379235 3128.200032 ... 13299.557672 2690.808300 16679.229017 6993.894303 1156.387451 7174.893501 3008.292357 1541.562606 623.283247 3828.687447
+std 216506.495284 15.175049 12.824496 13.982704 8.354095 9.449845 0.779875 62.395349 2712.869502 1334.431304 ... 3407.211385 1473.626587 2047.188593 526.939776 672.877571 1517.486807 561.697333 932.453480 343.646487 437.967454
+min 0.000000 20.000000 126.000000 36.000000 1.000000 67.000000 37.100000 1.000000 2700.000000 860.000000 ... 5289.000000 135.000000 9983.000000 5027.400000 45.000000 3000.000000 1450.800000 67.000000 37.100000 2485.700000
+25% 187499.750000 28.000000 164.000000 63.000000 8.000000 88.000000 39.600000 34.000000 4914.000000 2046.000000 ... 10354.000000 1440.000000 15219.000000 6568.900000 600.000000 5980.000000 2526.300000 728.000000 317.600000 3497.400000
+50% 374999.500000 40.000000 174.000000 74.000000 15.000000 95.000000 40.300000 77.000000 6920.000000 2912.000000 ... 12900.000000 2669.000000 16587.000000 6987.200000 1105.000000 7029.000000 2960.000000 1455.000000 606.000000 3838.000000
+75% 562499.250000 52.000000 185.000000 87.000000 23.000000 103.000000 40.700000 136.000000 9168.000000 3978.000000 ... 16016.000000 3933.000000 18050.000000 7402.900000 1633.000000 8272.000000 3468.000000 2323.000000 931.500000 4171.500000
+max 749999.000000 79.000000 222.000000 132.000000 30.000000 128.000000 41.500000 314.000000 16748.000000 9401.000000 ... 28776.000000 6540.000000 26199.000000 9168.600000 3780.000000 15129.000000 5412.000000 3840.000000 1245.000000 5286.400000
+8 rows × 23 columns
+In [7]:
+FOLDS = 50
+FEATURES = X.columns.tolist()
+
+# KFold setup
+kf = KFold(n_splits=FOLDS, shuffle=True, random_state=42)
+
+# Arrays to store predictions
+oof = np.zeros(len(train))
+pred = np.zeros(len(test))
+
+# Start CV loop
+for i, (train_idx, valid_idx) in enumerate(kf.split(X, y)):
+    print(f"\n{'#'*10} Fold {i+1} {'#'*10}")
+    
+    x_train = X.iloc[train_idx].copy()
+    y_train = y.iloc[train_idx]
+    x_valid = X.iloc[valid_idx].copy()
+    y_valid = y.iloc[valid_idx]
+    x_test = X_test.copy()
+
+    # No categorical target encoding in this dataset, but you can add if needed
+    
+    start = time.time()
+
+    # Train model
+    model = XGBRegressor(
+        device="cuda" if XGBRegressor().get_params().get("device") == "cuda" else "cpu",
+        max_depth=10,
+        #min_child_weight=2,
+        colsample_bytree=0.75,
+        subsample=0.9,
+        n_estimators=2000,
+        learning_rate=0.02,
+        gamma=0.01, 
+        max_delta_step=2,
+        early_stopping_rounds=100,
+        eval_metric="rmse",
+        enable_categorical=True
+    )
+
+    model.fit(
+        x_train, y_train,
+        eval_set=[(x_valid, y_valid)],
+        verbose=100
+    )
+
+    # Predict OOF and test
+    oof[valid_idx] = model.predict(x_valid)
+    pred += model.predict(x_test)
+
+    rmse = np.sqrt(mean_squared_error(y_valid, oof[valid_idx]))
+    print(f"Fold {i+1} RMSE: {rmse:.4f}")
+    print(f"Feature engineering & training time: {time.time() - start:.1f} sec")
+
+# Average test predictions
+pred /= FOLDS
+
+# Final RMSE
+full_rmse = np.sqrt(mean_squared_error(y, oof))
+print(f"\nFinal CV RMSE: {full_rmse:.4f}")
+########## Fold 1 ##########
+[0] validation_0-rmse:0.95092
+[100] validation_0-rmse:0.14288
+[200] validation_0-rmse:0.06494
+[300] validation_0-rmse:0.06259
+[400] validation_0-rmse:0.06250
+[471] validation_0-rmse:0.06255
+Fold 1 RMSE: 0.0625
+Feature engineering & training time: 35.9 sec
+
+########## Fold 2 ##########
+[0] validation_0-rmse:0.94322
+[100] validation_0-rmse:0.14194
+[200] validation_0-rmse:0.06349
+[300] validation_0-rmse:0.06096
+[400] validation_0-rmse:0.06091
+[482] validation_0-rmse:0.06091
+Fold 2 RMSE: 0.0609
+Feature engineering & training time: 36.7 sec
+
+########## Fold 3 ##########
+[0] validation_0-rmse:0.95575
+[100] validation_0-rmse:0.14379
+[200] validation_0-rmse:0.06205
+[300] validation_0-rmse:0.05895
+[400] validation_0-rmse:0.05883
+[500] validation_0-rmse:0.05880
+[600] validation_0-rmse:0.05880
+[612] validation_0-rmse:0.05880
+Fold 3 RMSE: 0.0588
+Feature engineering & training time: 41.0 sec
+
+########## Fold 4 ##########
+[0] validation_0-rmse:0.93257
+[100] validation_0-rmse:0.13983
+[200] validation_0-rmse:0.06169
+[300] validation_0-rmse:0.05906
+[400] validation_0-rmse:0.05897
+[462] validation_0-rmse:0.05896
+Fold 4 RMSE: 0.0589
+Feature engineering & training time: 35.4 sec
+
+########## Fold 5 ##########
+[0] validation_0-rmse:0.94867
+[100] validation_0-rmse:0.14241
+[200] validation_0-rmse:0.06206
+[300] validation_0-rmse:0.05909
+[400] validation_0-rmse:0.05890
+[500] validation_0-rmse:0.05885
+[600] validation_0-rmse:0.05882
+[700] validation_0-rmse:0.05882
+[768] validation_0-rmse:0.05883
+Fold 5 RMSE: 0.0588
+Feature engineering & training time: 42.7 sec
+
+########## Fold 6 ##########
+[0] validation_0-rmse:0.93951
+[100] validation_0-rmse:0.14042
+[200] validation_0-rmse:0.06152
+[300] validation_0-rmse:0.05891
+[400] validation_0-rmse:0.05889
+[462] validation_0-rmse:0.05892
+Fold 6 RMSE: 0.0589
+Feature engineering & training time: 35.9 sec
+
+########## Fold 7 ##########
+[0] validation_0-rmse:0.93992
+[100] validation_0-rmse:0.13992
+[200] validation_0-rmse:0.06107
+[300] validation_0-rmse:0.05868
+[400] validation_0-rmse:0.05860
+[500] validation_0-rmse:0.05865
+[502] validation_0-rmse:0.05865
+Fold 7 RMSE: 0.0586
+Feature engineering & training time: 37.0 sec
+
+########## Fold 8 ##########
+[0] validation_0-rmse:0.95048
+[100] validation_0-rmse:0.14295
+[200] validation_0-rmse:0.06238
+[300] validation_0-rmse:0.05952
+[400] validation_0-rmse:0.05942
+[500] validation_0-rmse:0.05941
+[517] validation_0-rmse:0.05941
+Fold 8 RMSE: 0.0594
+Feature engineering & training time: 38.7 sec
+
+########## Fold 9 ##########
+[0] validation_0-rmse:0.93967
+[100] validation_0-rmse:0.13961
+[200] validation_0-rmse:0.06094
+[300] validation_0-rmse:0.05846
+[400] validation_0-rmse:0.05837
+[468] validation_0-rmse:0.05838
+Fold 9 RMSE: 0.0584
+Feature engineering & training time: 36.1 sec
+
+########## Fold 10 ##########
+[0] validation_0-rmse:0.94271
+[100] validation_0-rmse:0.14092
+[200] validation_0-rmse:0.06143
+[300] validation_0-rmse:0.05872
+[400] validation_0-rmse:0.05864
+[479] validation_0-rmse:0.05865
+Fold 10 RMSE: 0.0586
+Feature engineering & training time: 36.2 sec
+
+########## Fold 11 ##########
+[0] validation_0-rmse:0.95324
+[100] validation_0-rmse:0.14186
+[200] validation_0-rmse:0.06053
+[300] validation_0-rmse:0.05778
+[400] validation_0-rmse:0.05769
+[500] validation_0-rmse:0.05778
+[502] validation_0-rmse:0.05779
+Fold 11 RMSE: 0.0577
+Feature engineering & training time: 36.9 sec
+
+########## Fold 12 ##########
+[0] validation_0-rmse:0.94463
+[100] validation_0-rmse:0.14537
+[200] validation_0-rmse:0.06959
+[300] validation_0-rmse:0.06689
+[400] validation_0-rmse:0.06671
+[500] validation_0-rmse:0.06672
+[600] validation_0-rmse:0.06668
+[688] validation_0-rmse:0.06670
+Fold 12 RMSE: 0.0667
+Feature engineering & training time: 41.6 sec
+
+########## Fold 13 ##########
+[0] validation_0-rmse:0.95572
+[100] validation_0-rmse:0.14424
+[200] validation_0-rmse:0.06530
+[300] validation_0-rmse:0.06277
+[400] validation_0-rmse:0.06262
+[497] validation_0-rmse:0.06265
+Fold 13 RMSE: 0.0626
+Feature engineering & training time: 37.2 sec
+
+########## Fold 14 ##########
+[0] validation_0-rmse:0.95195
+[100] validation_0-rmse:0.14288
+[200] validation_0-rmse:0.06291
+[300] validation_0-rmse:0.06018
+[400] validation_0-rmse:0.06007
+[480] validation_0-rmse:0.06011
+Fold 14 RMSE: 0.0600
+Feature engineering & training time: 35.6 sec
+
+########## Fold 15 ##########
+[0] validation_0-rmse:0.95268
+[100] validation_0-rmse:0.14390
+[200] validation_0-rmse:0.06494
+[300] validation_0-rmse:0.06235
+[400] validation_0-rmse:0.06227
+[487] validation_0-rmse:0.06235
+Fold 15 RMSE: 0.0623
+Feature engineering & training time: 35.7 sec
+
+########## Fold 16 ##########
+[0] validation_0-rmse:0.94205
+[100] validation_0-rmse:0.14296
+[200] validation_0-rmse:0.06551
+[300] validation_0-rmse:0.06302
+[400] validation_0-rmse:0.06288
+[500] validation_0-rmse:0.06285
+[600] validation_0-rmse:0.06280
+[700] validation_0-rmse:0.06281
+[800] validation_0-rmse:0.06279
+[900] validation_0-rmse:0.06279
+[908] validation_0-rmse:0.06279
+Fold 16 RMSE: 0.0628
+Feature engineering & training time: 45.5 sec
+
+########## Fold 17 ##########
+[0] validation_0-rmse:0.94429
+[100] validation_0-rmse:0.14203
+[200] validation_0-rmse:0.06141
+[300] validation_0-rmse:0.05835
+[400] validation_0-rmse:0.05818
+[500] validation_0-rmse:0.05817
+[565] validation_0-rmse:0.05820
+Fold 17 RMSE: 0.0582
+Feature engineering & training time: 39.6 sec
+
+########## Fold 18 ##########
+[0] validation_0-rmse:0.94019
+[100] validation_0-rmse:0.14043
+[200] validation_0-rmse:0.06061
+[300] validation_0-rmse:0.05766
+[400] validation_0-rmse:0.05747
+[500] validation_0-rmse:0.05746
+[543] validation_0-rmse:0.05748
+Fold 18 RMSE: 0.0574
+Feature engineering & training time: 37.7 sec
+
+########## Fold 19 ##########
+[0] validation_0-rmse:0.94215
+[100] validation_0-rmse:0.14030
+[200] validation_0-rmse:0.06107
+[300] validation_0-rmse:0.05858
+[400] validation_0-rmse:0.05852
+[500] validation_0-rmse:0.05853
+[513] validation_0-rmse:0.05853
+Fold 19 RMSE: 0.0585
+Feature engineering & training time: 36.2 sec
+
+########## Fold 20 ##########
+[0] validation_0-rmse:0.94098
+[100] validation_0-rmse:0.13996
+[200] validation_0-rmse:0.06039
+[300] validation_0-rmse:0.05773
+[400] validation_0-rmse:0.05763
+[500] validation_0-rmse:0.05762
+[523] validation_0-rmse:0.05763
+Fold 20 RMSE: 0.0576
+Feature engineering & training time: 37.3 sec
+
+########## Fold 21 ##########
+[0] validation_0-rmse:0.94837
+[100] validation_0-rmse:0.14517
+[200] validation_0-rmse:0.06777
+[300] validation_0-rmse:0.06505
+[400] validation_0-rmse:0.06484
+[500] validation_0-rmse:0.06482
+[539] validation_0-rmse:0.06481
+Fold 21 RMSE: 0.0648
+Feature engineering & training time: 37.0 sec
+
+########## Fold 22 ##########
+[0] validation_0-rmse:0.94379
+[100] validation_0-rmse:0.14187
+[200] validation_0-rmse:0.06093
+[300] validation_0-rmse:0.05791
+[400] validation_0-rmse:0.05777
+[490] validation_0-rmse:0.05779
+Fold 22 RMSE: 0.0578
+Feature engineering & training time: 35.5 sec
+
+########## Fold 23 ##########
+[0] validation_0-rmse:0.95062
+[100] validation_0-rmse:0.13958
+[200] validation_0-rmse:0.05811
+[300] validation_0-rmse:0.05560
+[400] validation_0-rmse:0.05562
+[409] validation_0-rmse:0.05562
+Fold 23 RMSE: 0.0556
+Feature engineering & training time: 32.8 sec
+
+########## Fold 24 ##########
+[0] validation_0-rmse:0.94521
+[100] validation_0-rmse:0.14187
+[200] validation_0-rmse:0.06346
+[300] validation_0-rmse:0.06091
+[400] validation_0-rmse:0.06087
+[500] validation_0-rmse:0.06090
+[508] validation_0-rmse:0.06090
+Fold 24 RMSE: 0.0609
+Feature engineering & training time: 38.0 sec
+
+########## Fold 25 ##########
+[0] validation_0-rmse:0.94318
+[100] validation_0-rmse:0.13967
+[200] validation_0-rmse:0.05974
+[300] validation_0-rmse:0.05737
+[400] validation_0-rmse:0.05734
+[445] validation_0-rmse:0.05735
+Fold 25 RMSE: 0.0573
+Feature engineering & training time: 35.3 sec
+
+########## Fold 26 ##########
+[0] validation_0-rmse:0.94769
+[100] validation_0-rmse:0.14252
+[200] validation_0-rmse:0.06349
+[300] validation_0-rmse:0.06081
+[400] validation_0-rmse:0.06073
+[500] validation_0-rmse:0.06075
+[522] validation_0-rmse:0.06075
+Fold 26 RMSE: 0.0607
+Feature engineering & training time: 37.6 sec
+
+########## Fold 27 ##########
+[0] validation_0-rmse:0.93958
+[100] validation_0-rmse:0.13926
+[200] validation_0-rmse:0.05801
+[300] validation_0-rmse:0.05511
+[400] validation_0-rmse:0.05495
+[500] validation_0-rmse:0.05497
+[538] validation_0-rmse:0.05496
+Fold 27 RMSE: 0.0549
+Feature engineering & training time: 37.7 sec
+
+########## Fold 28 ##########
+[0] validation_0-rmse:0.93879
+[100] validation_0-rmse:0.14025
+[200] validation_0-rmse:0.06136
+[300] validation_0-rmse:0.05854
+[400] validation_0-rmse:0.05840
+[500] validation_0-rmse:0.05837
+[556] validation_0-rmse:0.05838
+Fold 28 RMSE: 0.0584
+Feature engineering & training time: 38.3 sec
+
+########## Fold 29 ##########
+[0] validation_0-rmse:0.94571
+[100] validation_0-rmse:0.14430
+[200] validation_0-rmse:0.06751
+[300] validation_0-rmse:0.06481
+[400] validation_0-rmse:0.06469
+[500] validation_0-rmse:0.06469
+[519] validation_0-rmse:0.06468
+Fold 29 RMSE: 0.0647
+Feature engineering & training time: 38.0 sec
+
+########## Fold 30 ##########
+[0] validation_0-rmse:0.95111
+[100] validation_0-rmse:0.14154
+[200] validation_0-rmse:0.06290
+[300] validation_0-rmse:0.06069
+[400] validation_0-rmse:0.06069
+[447] validation_0-rmse:0.06070
+Fold 30 RMSE: 0.0607
+Feature engineering & training time: 35.2 sec
+
+########## Fold 31 ##########
+[0] validation_0-rmse:0.95379
+[100] validation_0-rmse:0.14317
+[200] validation_0-rmse:0.06328
+[300] validation_0-rmse:0.06061
+[400] validation_0-rmse:0.06052
+[461] validation_0-rmse:0.06054
+Fold 31 RMSE: 0.0605
+Feature engineering & training time: 35.2 sec
+
+########## Fold 32 ##########
+[0] validation_0-rmse:0.93310
+[100] validation_0-rmse:0.13767
+[200] validation_0-rmse:0.05814
+[300] validation_0-rmse:0.05553
+[400] validation_0-rmse:0.05550
+[451] validation_0-rmse:0.05551
+Fold 32 RMSE: 0.0555
+Feature engineering & training time: 35.0 sec
+
+########## Fold 33 ##########
+[0] validation_0-rmse:0.94170
+[100] validation_0-rmse:0.14166
+[200] validation_0-rmse:0.06229
+[300] validation_0-rmse:0.05934
+[400] validation_0-rmse:0.05922
+[500] validation_0-rmse:0.05916
+[592] validation_0-rmse:0.05918
+Fold 33 RMSE: 0.0592
+Feature engineering & training time: 40.8 sec
+
+########## Fold 34 ##########
+[0] validation_0-rmse:0.94188
+[100] validation_0-rmse:0.13963
+[200] validation_0-rmse:0.06181
+[300] validation_0-rmse:0.05962
+[400] validation_0-rmse:0.05961
+[416] validation_0-rmse:0.05961
+Fold 34 RMSE: 0.0596
+Feature engineering & training time: 34.2 sec
+
+########## Fold 35 ##########
+[0] validation_0-rmse:0.94608
+[100] validation_0-rmse:0.14044
+[200] validation_0-rmse:0.06199
+[300] validation_0-rmse:0.05967
+[400] validation_0-rmse:0.05961
+[492] validation_0-rmse:0.05963
+Fold 35 RMSE: 0.0596
+Feature engineering & training time: 37.3 sec
+
+########## Fold 36 ##########
+[0] validation_0-rmse:0.94939
+[100] validation_0-rmse:0.14063
+[200] validation_0-rmse:0.06256
+[300] validation_0-rmse:0.06059
+[400] validation_0-rmse:0.06062
+[416] validation_0-rmse:0.06062
+Fold 36 RMSE: 0.0606
+Feature engineering & training time: 33.4 sec
+
+########## Fold 37 ##########
+[0] validation_0-rmse:0.93763
+[100] validation_0-rmse:0.14073
+[200] validation_0-rmse:0.06094
+[300] validation_0-rmse:0.05798
+[400] validation_0-rmse:0.05782
+[500] validation_0-rmse:0.05783
+[530] validation_0-rmse:0.05784
+Fold 37 RMSE: 0.0578
+Feature engineering & training time: 37.4 sec
+
+########## Fold 38 ##########
+[0] validation_0-rmse:0.94929
+[100] validation_0-rmse:0.14250
+[200] validation_0-rmse:0.06350
+[300] validation_0-rmse:0.06093
+[400] validation_0-rmse:0.06089
+[500] validation_0-rmse:0.06086
+[599] validation_0-rmse:0.06091
+Fold 38 RMSE: 0.0609
+Feature engineering & training time: 40.1 sec
+
+########## Fold 39 ##########
+[0] validation_0-rmse:0.93369
+[100] validation_0-rmse:0.13949
+[200] validation_0-rmse:0.06181
+[300] validation_0-rmse:0.05936
+[400] validation_0-rmse:0.05931
+[500] validation_0-rmse:0.05936
+[560] validation_0-rmse:0.05937
+Fold 39 RMSE: 0.0593
+Feature engineering & training time: 38.8 sec
+
+########## Fold 40 ##########
+[0] validation_0-rmse:0.95242
+[100] validation_0-rmse:0.14572
+[200] validation_0-rmse:0.06856
+[300] validation_0-rmse:0.06583
+[400] validation_0-rmse:0.06562
+[500] validation_0-rmse:0.06563
+[506] validation_0-rmse:0.06563
+Fold 40 RMSE: 0.0656
+Feature engineering & training time: 37.4 sec
+
+########## Fold 41 ##########
+[0] validation_0-rmse:0.93504
+[100] validation_0-rmse:0.14037
+[200] validation_0-rmse:0.06172
+[300] validation_0-rmse:0.05895
+[400] validation_0-rmse:0.05890
+[488] validation_0-rmse:0.05891
+Fold 41 RMSE: 0.0589
+Feature engineering & training time: 37.2 sec
+
+########## Fold 42 ##########
+[0] validation_0-rmse:0.93863
+[100] validation_0-rmse:0.13791
+[200] validation_0-rmse:0.05938
+[300] validation_0-rmse:0.05727
+[400] validation_0-rmse:0.05726
+[444] validation_0-rmse:0.05725
+Fold 42 RMSE: 0.0572
+Feature engineering & training time: 35.1 sec
+
+########## Fold 43 ##########
+[0] validation_0-rmse:0.94369
+[100] validation_0-rmse:0.14042
+[200] validation_0-rmse:0.06151
+[300] validation_0-rmse:0.05903
+[400] validation_0-rmse:0.05895
+[500] validation_0-rmse:0.05895
+[509] validation_0-rmse:0.05895
+Fold 43 RMSE: 0.0589
+Feature engineering & training time: 37.7 sec
+
+########## Fold 44 ##########
+[0] validation_0-rmse:0.94007
+[100] validation_0-rmse:0.14194
+[200] validation_0-rmse:0.06337
+[300] validation_0-rmse:0.06052
+[400] validation_0-rmse:0.06034
+[500] validation_0-rmse:0.06035
+[515] validation_0-rmse:0.06035
+Fold 44 RMSE: 0.0603
+Feature engineering & training time: 37.4 sec
+
+########## Fold 45 ##########
+[0] validation_0-rmse:0.94588
+[100] validation_0-rmse:0.14225
+[200] validation_0-rmse:0.06463
+[300] validation_0-rmse:0.06213
+[400] validation_0-rmse:0.06200
+[500] validation_0-rmse:0.06198
+[583] validation_0-rmse:0.06201
+Fold 45 RMSE: 0.0620
+Feature engineering & training time: 39.0 sec
+
+########## Fold 46 ##########
+[0] validation_0-rmse:0.95547
+[100] validation_0-rmse:0.14067
+[200] validation_0-rmse:0.05968
+[300] validation_0-rmse:0.05745
+[400] validation_0-rmse:0.05747
+[401] validation_0-rmse:0.05747
+Fold 46 RMSE: 0.0574
+Feature engineering & training time: 32.8 sec
+
+########## Fold 47 ##########
+[0] validation_0-rmse:0.94530
+[100] validation_0-rmse:0.14350
+[200] validation_0-rmse:0.06386
+[300] validation_0-rmse:0.06079
+[400] validation_0-rmse:0.06061
+[500] validation_0-rmse:0.06059
+[582] validation_0-rmse:0.06059
+Fold 47 RMSE: 0.0606
+Feature engineering & training time: 39.0 sec
+
+########## Fold 48 ##########
+[0] validation_0-rmse:0.94224
+[100] validation_0-rmse:0.14175
+[200] validation_0-rmse:0.06322
+[300] validation_0-rmse:0.06056
+[400] validation_0-rmse:0.06045
+[500] validation_0-rmse:0.06040
+[600] validation_0-rmse:0.06040
+[635] validation_0-rmse:0.06041
+Fold 48 RMSE: 0.0604
+Feature engineering & training time: 40.1 sec
+
+########## Fold 49 ##########
+[0] validation_0-rmse:0.95342
+[100] validation_0-rmse:0.14222
+[200] validation_0-rmse:0.06155
+[300] validation_0-rmse:0.05884
+[400] validation_0-rmse:0.05872
+[500] validation_0-rmse:0.05873
+[520] validation_0-rmse:0.05873
+Fold 49 RMSE: 0.0587
+Feature engineering & training time: 38.2 sec
+
+########## Fold 50 ##########
+[0] validation_0-rmse:0.94666
+[100] validation_0-rmse:0.14173
+[200] validation_0-rmse:0.06077
+[300] validation_0-rmse:0.05772
+[400] validation_0-rmse:0.05759
+[490] validation_0-rmse:0.05761
+Fold 50 RMSE: 0.0576
+Feature engineering & training time: 36.8 sec
+
+Final CV RMSE: 0.0597
+In [8]:
+y_preds = np.expm1(pred)
+print('predict mean :',y_preds.mean())
+print('predict median :',np.median(y_preds))
+
+y_preds = np.clip(y_preds,1,314)
+print('predict mean after clip:',y_preds.mean())
+print('predict median after clip:',np.median(y_preds))
+
+submission["Calories"] = y_preds
+submission.to_csv("submission.csv", index=False)
+submission.head()
+predict mean : 88.14926996350052
+predict median : 76.39205115564113
+predict mean after clip: 88.14926996350052
+predict median after clip: 76.39205115564113
+Out[8]:
+id Calories
+0 750000 27.476409
+1 750001 107.811517
+2 750002 87.782623
+3 750003 125.934348
+4 750004 75.873318

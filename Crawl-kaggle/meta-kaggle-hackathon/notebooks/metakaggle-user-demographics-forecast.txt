@@ -1,0 +1,1218 @@
+⚡ MetaKaggle|User 🏰 Demographics & Forecast ⚡
+Monitoring Kaggle| Analytical Intelligence | Reasoning
+📘 Table of Contents
+1. Overview
+2. Environment Setup, Importing Libraries and Loading Dataset
+2.1 Installing Dependencies
+2.2 Importing Required Libraries
+2.3 Loading Datasets
+3. Data Overview and Relationship
+3.1 Data Overview
+3.2 Data Relationships
+4. Geographical Breakdown of Users
+4.1 Loading Users
+4.2 Country Diversity in Users
+4.3 Mapping Dataset Country Names to GeoJSON Standards
+4.4 Mapping the Globe
+5. Tracking the Surge: User Growth Year by Year
+5.1 User Growth
+5.2 What’s Next? Forecasting Kaggle’s User Growth
+6. Meta-Kaggle-Dataset-Navigator
+1. 🌐 Overview
+This notebook dives into the MetaKaggle dataset, offering insights on user demographics, growth trends, and geographical spread. It explores how Kaggle's global user base is evolving and makes predictions about its future trajectory. Visualizations, geospatial mapping, and forecasts provide a deeper understanding of Kaggle’s expanding data science community.
+2. 🧰 Environment Setup, Importing Libraries and Loading Dataset
+2.1 Installing Dependencies
+In [1]:
+%%capture
+!pip install gradio
+2.2 Importing Required Libraries
+unfold_moreShow hidden code
+2.3 Loading Datasets
+In [3]:
+MK_PATH = kagglehub.dataset_download("kaggle/meta-kaggle")
+MKC_PATH = kagglehub.dataset_download("kaggle/meta-kaggle-code")
+
+print("✅ Downloaded Meta-Kaggle data.")
+print("📂 MK_PATH =", MK_PATH)
+print("📂 MKC_PATH =", MKC_PATH)
+✅ Downloaded Meta-Kaggle data.
+📂 MK_PATH = /kaggle/input/meta-kaggle
+📂 MKC_PATH = /kaggle/input/meta-kaggle-code
+3. 🔐 Data Overview and Relationship
+3.1 Data Overview
+unfold_moreShow hidden code
+3.2 Data Relationships
+In [5]:
+relationships = [
+    ("Competitions", "CompetitionTags", "Id", "CompetitionId"),
+    ("Tags", "CompetitionTags", "Id", "TagId"),
+    ("Datasets", "DatasetTags", "Id", "DatasetId"),
+    ("Tags", "DatasetTags", "Id", "TagId"),
+    ("Datasets", "DatasetTasks", "Id", "DatasetId"),
+    ("Users", "DatasetTasks", "Id", "OwnerUserId"),
+    ("DatasetTasks", "DatasetTaskSubmissions", "Id", "DatasetTaskId"),
+    ("Users", "DatasetTaskSubmissions", "Id", "SubmittedUserId"),
+    ("Datasets", "DatasetTaskSubmissions", "Id", "DatasetId"),
+    ("Kernels", "KernelTags", "Id", "KernelId"),
+    ("Tags", "KernelTags", "Id", "TagId"),
+    ("Kernels", "KernelVersions", "Id", "ScriptId"),
+    ("KernelVersions", "KernelVersionDatasetSources", "Id", "KernelVersionId"),
+    ("KernelVersions", "KernelVersionCompetitionSources", "Id", "KernelVersionId"),
+    ("KernelVersions", "KernelVersionModelSources", "Id", "KernelVersionId"),
+    ("KernelVersions", "KernelVersionKernelSources", "Id", "KernelVersionId"),
+    ("KernelLanguages", "KernelVersions", "Id", "ScriptLanguageId"),
+    ("Users", "KernelVersions", "Id", "AuthorUserId"),
+    ("Models", "ModelVersions", "Id", "ModelId"),
+    ("ModelVariations", "ModelVariationVersions", "Id", "ModelVariationId"),
+    ("Users", "ModelVersions", "Id", "CreatorUserId"),
+    ("ModelVersions", "ModelVotes", "Id", "ModelVersionId"),
+    ("Users", "ModelVotes", "Id", "UserId"),
+    ("DatasetVersions", "DatasetVotes", "Id", "DatasetVersionId"),
+    ("Users", "DatasetVotes", "Id", "UserId"),
+    ("Forums", "ForumTopics", "Id", "ForumId"),
+    ("ForumTopics", "ForumMessages", "Id", "ForumTopicId"),
+    ("Users", "ForumMessages", "Id", "PostUserId"),
+    ("ForumMessages", "ForumMessageVotes", "Id", "ForumMessageId"),
+    ("Users", "ForumMessageVotes", "Id", "FromUserId"),
+    ("ForumMessages", "ForumMessageReactions", "Id", "ForumMessageId"),
+    ("Users", "ForumMessageReactions", "Id", "FromUserId"),
+    ("Competitions", "Episodes", "Id", "CompetitionId"),
+    ("DatasetVersions", "Datasets", "DatasetId", "Id"),
+    ("Datasets", "DatasetVersions", "Id", "DatasetId"),
+    ("Users", "DatasetVersions", "Id", "CreatorUserId"),
+    ("Users", "Datasets", "Id", "OwnerUserId"),
+    ("Users", "Datasets", "Id", "CreatorUserId"),
+]
+In [6]:
+dot = graphviz.Digraph(comment="Meta Kaggle ER Diagram")
+dot.attr(rankdir="LR", size="12,10")
+entities = set()
+for src, dst, src_key, dst_key in relationships:
+    entities.update([src, dst])
+    dot.node(src, src, shape="box")
+    dot.node(dst, dst, shape="box")
+    dot.edge(src, dst, label=f"{src_key} → {dst_key}")
+In [7]:
+dot.render('meta_kaggle_er_diagram', format='png', cleanup=False)
+Image("meta_kaggle_er_diagram.png")
+Out[7]:
+4. 📄 Geographical Breakdown of Users
+4.1 Loading Users
+In [8]:
+users = pl.read_csv(f"{MK_PATH}/Users.csv")
+print(f"Shape: {users.shape}")
+users.head()
+Shape: (25153985, 7)
+Out[8]:
+shape: (5, 7)
+Id UserName DisplayName RegisterDate PerformanceTier Country LocationSharingOptOut
+i64 str str str i64 str bool
+1 "kaggleteam" "Kaggle Team" "03/24/2011" 5 "" false
+368 "antgoldbloom" "Anthony Goldbloom" "01/20/2010" 2 "United States" false
+381 "iguyon" "Isabelle" "01/29/2010" 2 "United States" false
+383 "davidstephan" "David Stephan" "02/01/2010" 1 "Australia" false
+384 "gabewarren" "Gabe Warren" "02/02/2010" 1 "Australia" false
+4.2 Country Diversity in Users
+In [9]:
+users.select([
+    (
+        pl.col(col).is_null() | 
+        (pl.col(col) == "") if users.schema[col] == pl.Utf8 else pl.col(col).is_null()
+    ).sum().alias(col)
+    for col in users.columns
+])
+Out[9]:
+shape: (1, 7)
+Id UserName DisplayName RegisterDate PerformanceTier Country LocationSharingOptOut
+u32 u32 u32 u32 u32 u32 u32
+0 1 147 0 0 23812805 0
+As there are may nulls present in Country there are only 1336822 values are present
+In [10]:
+unique_countries = (
+    users
+    .filter(pl.col("Country").is_not_null() & (pl.col("Country").str.strip_chars() != ""))
+    .select("Country")
+    .unique()
+    .sort("Country")
+)
+country_list = unique_countries["Country"].to_list()
+print(f"🌍 Total Unique Countries: {len(country_list)}\n")
+for country in country_list:
+    print(country)
+🌍 Total Unique Countries: 275
+
+</script>
+Afghanistan
+Albania
+Algeria
+American Samoa
+Andorra
+Angola
+Anguilla
+Antarctica
+Antigua and Barbuda
+Aragon
+Argentina
+Armenia
+Aruba
+Australia
+Austria
+Azerbaijan
+Bahrain
+Bangladesh
+Barbados
+Belarus
+Belgium
+Belize
+Benin
+Bermuda
+Bhutan
+Bolivia
+Bosnia and Herzegovina
+Botswana
+Bouvet Island
+Brazil
+British Indian Ocean Territory
+British Virgin Islands
+Brunei
+Bulgaria
+Burkina Faso
+Burundi
+Cabo Verde
+Calabria
+Caldas
+Cambodia
+Cameroon
+Canada
+Canary Islands
+Cape Verde
+Cayman Islands
+Central African Republic
+Chad
+Chile
+China
+Christmas Island
+Cocos (Keeling) Islands
+Colombia
+Comoros
+Cook Islands
+Costa Rica
+Croatia
+Cuba
+Curaçao
+Cyprus
+Czechia
+Côte d'Ivoire
+Democratic Republic of the Congo
+Denmark
+District of Columbia
+Djibouti
+Dominica
+Dominican Republic
+East Java
+Ecuador
+Egypt
+El Salvador
+Equatorial Guinea
+Eritrea
+Estonia
+Eswatini
+Ethiopia
+Falkland Islands (Islas Malvinas)
+Faroe Islands
+Federated States of Micronesia
+Fiji
+Finland
+France
+French Guiana
+French Polynesia
+Gabon
+Georgia
+Germany
+Ghana
+Gibraltar
+Greece
+Greenland
+Grenada
+Guadeloupe
+Guam
+Guatemala
+Guernsey
+Guinea
+Guyana
+Haiti
+Honduras
+Hong Kong
+Hungary
+Iceland
+India
+India'
+Indonesia
+Iran
+Iraq
+Ireland
+Isle of Man
+Israel
+Italy
+Jamaica
+Japan
+Jersey
+Jordan
+Kazakhstan
+Kenya
+Kiribati
+Kuwait
+Kyrgyzstan
+Laos
+Latvia
+Lazio
+Lebanon
+Leiria District
+Lesotho
+Liaoning
+Liberia
+Libya
+Liechtenstein
+Lithuania
+Lombardy
+Luxembourg
+Macao
+Madagascar
+Malawi
+Malaysia
+Maldives
+Mali
+Malta
+Marshall Islands
+Martinique
+Mauritania
+Mauritius
+Mayotte
+Mexico
+Moldova
+Monaco
+Mongolia
+Montenegro
+Montserrat
+Morocco
+Mozambique
+Myanmar (Burma)
+Namibia
+Nationalities
+Nationalities and Peoples
+Nauru
+Nepal
+Netherlands
+New Caledonia
+New Zealand
+Nicaragua
+Niger
+Nigeria
+Norfolk Island
+North Korea
+North Macedonia
+Northern Mariana Islands
+Norway
+Oman
+Pakistan
+Palau
+Palestinian Territories
+Panama
+Papua New Guinea
+Paraguay
+Peru
+Philippines
+Piedmont
+Pitcairn Islands
+Poland
+Portalegre District
+Porto District
+Portugal
+Puerto Rico
+Qatar
+Quebec
+Rajasthan
+Region of Murcia
+Republic of the Congo
+Romania
+Russia
+Rwanda
+Réunion
+Saint Helena
+Saint Lucia
+Saint Martin
+Saint Pierre and Miquelon
+Saint Vincent and the Grenadines
+Saint-Paul
+Samoa
+San José Province
+San Marino
+Saudi Arabia
+Senegal
+Serbia
+Seychelles
+Sierra Leone
+Singapore
+Sint Maarten
+Slovakia
+Slovenia
+Solomon Islands
+Somalia
+South Africa
+South East Sulawesi
+South Korea
+South Sudan
+South Sulawesi
+Spain
+Sri Lanka
+State of Mato Grosso
+State of Minas Gerais
+State of Rio Grande do Sul
+State of Santa Catarina
+State of São Paulo
+Sudan
+Suriname
+Svalbard and Jan Mayen
+Sweden
+Switzerland
+Syria
+São Tomé and Príncipe
+Taiwan
+Tajikistan
+Tanzania
+Thailand
+The Bahamas
+The Gambia
+Timor-Leste
+Togo
+Tokelau
+Tonga
+Trinidad and Tobago
+Tunisia
+Turkey
+Turkmenistan
+Turks and Caicos Islands
+Tuvalu
+Türkiye
+U.S. Virgin Islands
+Uganda
+Ukraine
+United Arab Emirates
+United Kingdom
+United States
+Uruguay
+Uzbekistan
+Vanuatu
+Vatican City
+Venezuela
+Vietnam
+Wallis and Futuna
+Washington
+Western Sahara
+Yemen
+Zadar County
+Zambia
+Zimbabwe
+usa
+Åland
+Åland Islands
+In [11]:
+country_counts = (
+    users
+    .filter(pl.col("Country").is_not_null() & (pl.col("Country").str.strip_chars() != ""))
+    .group_by("Country")
+    .agg(pl.len().alias("UserCount"))
+    .sort("UserCount", descending=True)
+)
+print(country_counts)
+shape: (275, 2)
+┌───────────────────┬───────────┐
+│ Country           ┆ UserCount │
+│ ---               ┆ ---       │
+│ str               ┆ u32       │
+╞═══════════════════╪═══════════╡
+│ United States     ┆ 391402    │
+│ India             ┆ 266395    │
+│ China             ┆ 51100     │
+│ United Kingdom    ┆ 39821     │
+│ Brazil            ┆ 35163     │
+│ …                 ┆ …         │
+│ Piedmont          ┆ 1         │
+│ Nauru             ┆ 1         │
+│ Lombardy          ┆ 1         │
+│ Washington        ┆ 1         │
+│ San José Province ┆ 1         │
+└───────────────────┴───────────┘
+In [12]:
+df_country_counts = country_counts.to_pandas()
+print("Countries in your dataset:")
+print(df_country_counts["Country"].tolist())
+print(f"\nTotal unique 🌍 countries in dataset: {len(df_country_counts)}")
+Countries in your dataset:
+['United States', 'India', 'China', 'United Kingdom', 'Brazil', 'Canada', 'Russia', 'Japan', 'Germany', 'France', 'Pakistan', 'Australia', 'South Korea', 'Indonesia', 'Spain', 'Taiwan', 'Bangladesh', 'Turkey', 'Nigeria', 'Egypt', 'Italy', 'Netherlands', 'Singapore', 'Mexico', 'Vietnam', 'Poland', 'Thailand', 'Ukraine', 'Colombia', 'Argentina', 'Philippines', 'South Africa', 'Malaysia', 'Ireland', 'Iran', 'Portugal', 'Switzerland', 'Hong Kong', 'Israel', 'Kenya', 'Türkiye', 'Sweden', 'Belgium', 'United Arab Emirates', 'Peru', 'Sri Lanka', 'Chile', 'Romania', 'Morocco', 'Greece', 'Denmark', 'Saudi Arabia', 'Finland', 'New Zealand', 'Norway', 'Czechia', 'Tunisia', 'Hungary', 'Austria', 'Nepal', 'Ghana', 'Belarus', 'Algeria', 'Kazakhstan', 'Serbia', 'Ecuador', 'Jordan', 'Croatia', 'Bulgaria', 'Lithuania', 'Estonia', 'Venezuela', 'Uganda', 'Slovakia', 'Ethiopia', 'Costa Rica', 'Uzbekistan', 'Azerbaijan', 'Slovenia', 'Iraq', 'Uruguay', 'Cameroon', 'Georgia', 'Zimbabwe', 'Dominican Republic', 'Bolivia', 'Latvia', 'Qatar', 'Rwanda', 'Guatemala', 'Tanzania', 'Myanmar (Burma)', 'Cyprus', 'Lebanon', 'Luxembourg', 'Mongolia', 'Armenia', 'North Macedonia', 'Senegal', 'Iceland', "Côte d'Ivoire", 'Sudan', 'Syria', 'El Salvador', 'Madagascar', 'Bosnia and Herzegovina', 'Panama', 'Zambia', 'Oman', 'Malta', 'Cambodia', 'Afghanistan', 'Kyrgyzstan', 'Kuwait', 'Yemen', 'Jamaica', 'Trinidad and Tobago', 'Paraguay', 'Mauritius', 'Moldova', 'Honduras', 'Botswana', 'Bahrain', 'Puerto Rico', 'Albania', 'Democratic Republic of the Congo', 'Somalia', 'Benin', 'Macao', 'Mozambique', 'Malawi', 'North Korea', 'Angola', 'Nicaragua', 'Namibia', 'Libya', 'Cuba', 'Antarctica', 'Togo', 'Montenegro', 'Palestinian Territories', 'Fiji', 'Burkina Faso', 'Haiti', 'Sierra Leone', 'Bhutan', 'Mali', 'Eswatini', 'Tajikistan', 'The Bahamas', 'Lesotho', 'Andorra', 'Barbados', 'Papua New Guinea', 'Belize', 'Liberia', 'Maldives', 'Republic of the Congo', 'Turkmenistan', 'Laos', 'Brunei', 'Liechtenstein', 'Burundi', 'Bermuda', 'Nationalities', 'New Caledonia', 'Saint Lucia', 'The Gambia', 'Réunion', 'South Sudan', 'Djibouti', 'U.S. Virgin Islands', 'Niger', 'American Samoa', 'Nationalities and Peoples', 'Guinea', 'Guyana', 'Gibraltar', 'Cape Verde', 'Suriname', 'Chad', 'Gabon', 'Mauritania', 'Curaçao', 'State of São Paulo', 'Isle of Man', 'Antigua and Barbuda', 'Aruba', 'Cayman Islands', 'Monaco', 'French Polynesia', 'Greenland', 'District of Columbia', 'Timor-Leste', 'Vatican City', 'Anguilla', 'Seychelles', 'Guernsey', 'Saint Vincent and the Grenadines', 'Jersey', 'Faroe Islands', 'State of Santa Catarina', 'Grenada', 'Equatorial Guinea', 'Guadeloupe', 'Cabo Verde', 'Guam', 'Christmas Island', 'Central African Republic', 'Martinique', 'Kiribati', 'Eritrea', 'State of Rio Grande do Sul', 'Tonga', 'Vanuatu', 'Tokelau', 'British Indian Ocean Territory', 'Turks and Caicos Islands', 'State of Mato Grosso', 'Federated States of Micronesia', 'Marshall Islands', 'Northern Mariana Islands', 'Western Sahara', 'French Guiana', 'Leiria District', 'Åland Islands', 'Porto District', 'Comoros', 'Tuvalu', 'São Tomé and Príncipe', 'Palau', 'Svalbard and Jan Mayen', 'Sint Maarten', 'British Virgin Islands', 'Samoa', 'Mayotte', 'Quebec', 'Saint Helena', 'San Marino', 'Canary Islands', 'Portalegre District', 'Dominica', 'Saint Martin', 'Caldas', 'Region of Murcia', 'Lazio', 'South Sulawesi', 'Montserrat', "India'", 'Bouvet Island', 'Calabria', 'Wallis and Futuna', 'South East Sulawesi', 'Rajasthan', 'Falkland Islands (Islas Malvinas)', '</script>', 'Zadar County', 'State of Minas Gerais', 'Cook Islands', 'Saint-Paul', 'Åland', 'usa', 'Liaoning', 'Solomon Islands', 'Saint Pierre and Miquelon', 'Norfolk Island', 'East Java', 'Cocos (Keeling) Islands', 'Pitcairn Islands', 'Aragon', 'Piedmont', 'Nauru', 'Lombardy', 'Washington', 'San José Province']
+
+Total unique 🌍 countries in dataset: 275
+In this you can observe that there are different country names of the one country like United States, usa and etc.
+4.3 Mapping Dataset Country Names to GeoJSON Standards
+In [13]:
+geo_url = "https://raw.githubusercontent.com/python-visualization/folium/master/examples/data/world-countries.json"
+geo_json_data = requests.get(geo_url).json()
+geojson_countries = [feature["properties"]["name"] for feature in geo_json_data["features"]]
+print(f"\nCountries in GeoJSON: {len(geojson_countries)}")
+Countries in GeoJSON: 177
+In [14]:
+country_mapping = {
+    "United States": "United States of America",
+    "USA": "United States of America", 
+    "usa": "United States of America",
+    "US": "United States of America",
+    "United Kingdom": "United Kingdom",
+    "UK": "United Kingdom",
+    "Russia": "Russia",
+    "South Korea": "South Korea",
+    "North Korea": "North Korea",
+    "Vietnam": "Vietnam",
+    "Iran": "Iran",
+    "Syria": "Syria",
+    "Venezuela": "Venezuela",
+    "Bolivia": "Bolivia",
+    "Tanzania": "Tanzania",
+    "Democratic Republic of the Congo": "Democratic Republic of the Congo",
+    "Republic of the Congo": "Republic of the Congo",
+    "Czechia": "Czech Republic",
+    "Myanmar (Burma)": "Myanmar",
+    "The Bahamas": "Bahamas",
+    "The Gambia": "Gambia",
+    "Cape Verde": "Cape Verde",
+    "Cabo Verde": "Cape Verde",
+    "Côte d'Ivoire": "Ivory Coast",
+    "Eswatini": "Swaziland",
+    "North Macedonia": "Macedonia",
+    "Türkiye": "Turkey",
+    "Turkey": "Turkey",
+    "Hong Kong": "Hong Kong S.A.R.",
+    "Macao": "Macao S.A.R",
+    "Taiwan": "Taiwan",
+    "Puerto Rico": "Puerto Rico",
+    "Palestine": "Palestine",
+    "Palestinian Territories": "Palestine",
+    "Greenland": "Greenland",
+    "French Guiana": "French Guiana",
+    "Faroe Islands": "Faeroe Islands",
+    
+    # Sub-national regions mapped to their countries
+    # United States
+    "California": "United States of America",
+    "Texas": "United States of America",
+    "Florida": "United States of America",
+    "Washington": "United States of America",
+    "District of Columbia": "United States of America",
+    
+    # Canada
+    "Quebec": "Canada",
+    
+    # Spain
+    "Aragon": "Spain",
+    "Region of Murcia": "Spain",
+    "Canary Islands": "Spain",
+    
+    # Italy
+    "Calabria": "Italy",
+    "Lombardy": "Italy",
+    "Piedmont": "Italy",
+    "Lazio": "Italy",
+    
+    # China
+    "Liaoning": "China",
+    
+    # India
+    "Rajasthan": "India",
+    
+    # Indonesia
+    "East Java": "Indonesia",
+    "South Sulawesi": "Indonesia",
+    "South East Sulawesi": "Indonesia",
+    
+    # Brazil
+    "State of São Paulo": "Brazil",
+    "State of Minas Gerais": "Brazil",
+    "State of Rio Grande do Sul": "Brazil",
+    "State of Santa Catarina": "Brazil",
+    "State of Mato Grosso": "Brazil",
+    
+    # Colombia
+    "Caldas": "Colombia",
+    
+    # Costa Rica
+    "San José Province": "Costa Rica",
+    
+    # Portugal
+    "Leiria District": "Portugal",
+    "Portalegre District": "Portugal",
+    "Porto District": "Portugal",
+    
+    # Croatia
+    "Zadar County": "Croatia",
+    
+    # France (overseas territory)
+    "Saint-Paul": "France",
+    
+    # These are not geographic locations, so we'll filter them out
+    "Nationalities": None,
+    "Nationalities and Peoples": None,
+}
+In [15]:
+# Function to normalize country names for better matching
+def normalize_name(name):
+    """Normalize country names for better matching"""
+    if pd.isna(name):
+        return name
+    
+    # Convert to string and strip
+    name = str(name).strip()
+    
+    # Remove common prefixes/suffixes
+    name = re.sub(r'^(The\s+)', '', name, flags=re.IGNORECASE)
+    name = re.sub(r'\s+(Republic|State|Province|District|County|Islands?)$', '', name, flags=re.IGNORECASE)
+    
+    return name
+In [16]:
+df_country_counts['MappedCountry'] = df_country_counts['Country'].map(
+    lambda x: country_mapping.get(x, x)
+)
+df_country_counts = df_country_counts[df_country_counts['MappedCountry'].notna()]
+df_country_counts
+Out[16]:
+       
+      Country 
+      UserCount 
+      MappedCountry 
+    
+      0 
+      United States 
+      391402 
+      United States of America 
+    
+      1 
+      India 
+      266395 
+      India 
+    
+      2 
+      China 
+      51100 
+      China 
+    
+      3 
+      United Kingdom 
+      39821 
+      United Kingdom 
+    
+      4 
+      Brazil 
+      35163 
+      Brazil 
+    
+      ... 
+      ... 
+      ... 
+      ... 
+    
+      270 
+      Piedmont 
+      1 
+      Italy 
+    
+      271 
+      Nauru 
+      1 
+      Nauru 
+    
+      272 
+      Lombardy 
+      1 
+      Italy 
+    
+      273 
+      Washington 
+      1 
+      United States of America 
+    
+      274 
+      San José Province 
+      1 
+      Costa Rica 
+    
+273 rows × 3 columns
+In [17]:
+unmapped_countries = []
+mapped_count = 0
+
+for idx, row in df_country_counts.iterrows():
+    mapped_name = row['MappedCountry']
+    if mapped_name not in geojson_countries:
+        matches = get_close_matches(mapped_name, geojson_countries, n=1, cutoff=0.8)
+        if matches:
+            df_country_counts.at[idx, 'MappedCountry'] = matches[0]
+            mapped_count += 1
+            print(f"Fuzzy matched: '{mapped_name}' -> '{matches[0]}'")
+        else:
+            unmapped_countries.append((row['Country'], mapped_name, row['UserCount']))
+print(f"\nFuzzy matching results: {mapped_count} additional mappings")
+print(f"Unmapped countries: {len(unmapped_countries)}")
+Fuzzy matched: 'Åland Islands' -> 'Falkland Islands'
+Fuzzy matched: 'India'' -> 'India'
+
+Fuzzy matching results: 2 additional mappings
+Unmapped countries: 76
+In [18]:
+if unmapped_countries:
+    print("\nUnmapped countries (Original -> Mapped -> User Count):")
+    for orig, mapped, count in sorted(unmapped_countries, key=lambda x: x[2], reverse=True):
+        print(f"  {orig} -> {mapped} ({count} users)")
+Unmapped countries (Original -> Mapped -> User Count):
+  Singapore -> Singapore (11304 users)
+  Hong Kong -> Hong Kong S.A.R. (4977 users)
+  Serbia -> Serbia (1264 users)
+  Tanzania -> Tanzania (451 users)
+  Malta -> Malta (261 users)
+  Mauritius -> Mauritius (194 users)
+  Bahrain -> Bahrain (184 users)
+  Macao -> Macao S.A.R (163 users)
+  Palestinian Territories -> Palestine (80 users)
+  The Bahamas -> Bahamas (53 users)
+  Andorra -> Andorra (52 users)
+  Barbados -> Barbados (52 users)
+  Maldives -> Maldives (46 users)
+  Liechtenstein -> Liechtenstein (34 users)
+  Bermuda -> Bermuda (32 users)
+  Saint Lucia -> Saint Lucia (25 users)
+  Réunion -> Réunion (24 users)
+  U.S. Virgin Islands -> U.S. Virgin Islands (23 users)
+  American Samoa -> American Samoa (20 users)
+  Gibraltar -> Gibraltar (19 users)
+  Cape Verde -> Cape Verde (17 users)
+  Curaçao -> Curaçao (16 users)
+  Isle of Man -> Isle of Man (15 users)
+  Antigua and Barbuda -> Antigua and Barbuda (14 users)
+  Aruba -> Aruba (14 users)
+  Cayman Islands -> Cayman Islands (13 users)
+  Monaco -> Monaco (13 users)
+  French Polynesia -> French Polynesia (13 users)
+  Timor-Leste -> Timor-Leste (12 users)
+  Vatican City -> Vatican City (11 users)
+  Anguilla -> Anguilla (11 users)
+  Seychelles -> Seychelles (11 users)
+  Guernsey -> Guernsey (10 users)
+  Saint Vincent and the Grenadines -> Saint Vincent and the Grenadines (10 users)
+  Jersey -> Jersey (10 users)
+  Faroe Islands -> Faeroe Islands (10 users)
+  Grenada -> Grenada (9 users)
+  Guadeloupe -> Guadeloupe (7 users)
+  Cabo Verde -> Cape Verde (7 users)
+  Guam -> Guam (7 users)
+  Christmas Island -> Christmas Island (6 users)
+  Martinique -> Martinique (6 users)
+  Kiribati -> Kiribati (5 users)
+  Tonga -> Tonga (5 users)
+  Tokelau -> Tokelau (4 users)
+  British Indian Ocean Territory -> British Indian Ocean Territory (4 users)
+  Turks and Caicos Islands -> Turks and Caicos Islands (4 users)
+  Federated States of Micronesia -> Federated States of Micronesia (3 users)
+  Marshall Islands -> Marshall Islands (3 users)
+  Northern Mariana Islands -> Northern Mariana Islands (3 users)
+  French Guiana -> French Guiana (3 users)
+  Comoros -> Comoros (3 users)
+  Tuvalu -> Tuvalu (3 users)
+  São Tomé and Príncipe -> São Tomé and Príncipe (3 users)
+  Palau -> Palau (3 users)
+  Svalbard and Jan Mayen -> Svalbard and Jan Mayen (2 users)
+  Sint Maarten -> Sint Maarten (2 users)
+  British Virgin Islands -> British Virgin Islands (2 users)
+  Samoa -> Samoa (2 users)
+  Mayotte -> Mayotte (2 users)
+  Saint Helena -> Saint Helena (2 users)
+  San Marino -> San Marino (2 users)
+  Dominica -> Dominica (2 users)
+  Saint Martin -> Saint Martin (1 users)
+  Montserrat -> Montserrat (1 users)
+  Bouvet Island -> Bouvet Island (1 users)
+  Wallis and Futuna -> Wallis and Futuna (1 users)
+  Falkland Islands (Islas Malvinas) -> Falkland Islands (Islas Malvinas) (1 users)
+  </script> -> </script> (1 users)
+  Cook Islands -> Cook Islands (1 users)
+  Åland -> Åland (1 users)
+  Saint Pierre and Miquelon -> Saint Pierre and Miquelon (1 users)
+  Norfolk Island -> Norfolk Island (1 users)
+  Cocos (Keeling) Islands -> Cocos (Keeling) Islands (1 users)
+  Pitcairn Islands -> Pitcairn Islands (1 users)
+  Nauru -> Nauru (1 users)
+In [19]:
+country_user_counts = df_country_counts.groupby('MappedCountry')['UserCount'].sum().reset_index()
+country_lookup = dict(zip(country_user_counts['MappedCountry'], country_user_counts['UserCount']))
+In [20]:
+for feature in geo_json_data["features"]:
+    country_name = feature["properties"]["name"]
+    user_count = country_lookup.get(country_name, 0)
+    feature["properties"]["UserCount"] = user_count
+In [21]:
+m = folium.Map(location=[20, 0], zoom_start=2, tiles="CartoDB positron")
+def get_color(user_count):
+    if user_count == 0:
+        return "#f7f7f7"  # Very light gray for no users
+    elif user_count < 10000:
+        return "#c6dbef"  # Light blue
+    elif user_count < 35000:
+        return "#6baed6"  # Medium blue
+    elif user_count < 100000:
+        return "#2171b5"  # Dark blue
+    else:
+        return "#08306b"  # Very dark blue
+In [22]:
+folium.GeoJson(
+    geo_json_data,
+    name="Users by Country",
+    style_function=lambda x: {
+        "fillColor": get_color(x["properties"]["UserCount"]),
+        "color": "black",
+        "weight": 0.5,
+        "fillOpacity": 0.8,
+        "dashArray": "3" if x["properties"]["UserCount"] == 0 else "0"
+    },
+    tooltip=folium.GeoJsonTooltip(
+        fields=["name", "UserCount"],
+        aliases=["Country", "Users"],
+        localize=True,
+        sticky=False,
+        labels=True,
+        style="background-color: white; color: #333; font-family: Arial; font-size: 12px; padding: 10px; border-radius: 5px;"
+    ),
+    popup=folium.GeoJsonPopup(
+        fields=["name", "UserCount"],
+        aliases=["Country:", "Total Users:"],
+        localize=True,
+        labels=True,
+        style="font-size: 14px; font-weight: bold;"
+    )
+).add_to(m)
+Out[22]:
+<folium.features.GeoJson at 0x7e8155362cd0>
+In [23]:
+legend_html = '''
+<div style="position: fixed; 
+     top: 20px; right: 20px; width: 160px; height: 110px; 
+     background-color: white; border:2px solid grey; z-index:9999; 
+     font-size:12px; padding: 10px; border-radius: 5px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);">
+<p style="margin: 0 0 8px 0; font-weight: bold;">Users by Country</p>
+<p style="margin: 2px 0;"><i class="fa fa-square" style="color:#08306b"></i> 100,000+</p>
+<p style="margin: 2px 0;"><i class="fa fa-square" style="color:#2171b5"></i> 35,000-99,999</p>
+<p style="margin: 2px 0;"><i class="fa fa-square" style="color:#6baed6"></i> 10,000-34,999</p>
+<p style="margin: 2px 0;"><i class="fa fa-square" style="color:#c6dbef"></i> 1-9,999</p>
+<p style="margin: 2px 0;"><i class="fa fa-square" style="color:#f7f7f7; border: 1px solid #ccc;"></i> 0</p>
+</div>
+'''
+m.get_root().html.add_child(folium.Element(legend_html))
+Out[23]:
+<branca.element.Element at 0x7e8153da07d0>
+In [24]:
+folium.LayerControl().add_to(m)
+Out[24]:
+<folium.map.LayerControl at 0x7e8155363450>
+In [25]:
+total_users = country_user_counts['UserCount'].sum()
+countries_with_users = len(country_user_counts[country_user_counts['UserCount'] > 0])
+print(f"Total users mapped: {total_users:,}")
+print(f"Countries with users: {countries_with_users}")
+print(f"Top 10 countries by user count:")
+top_countries = country_user_counts.sort_values('UserCount', ascending=False).head(10)
+for _, row in top_countries.iterrows():
+    print(f"  {row['MappedCountry']}: {row['UserCount']:,} users")
+Total users mapped: 1,341,129
+Countries with users: 242
+Top 10 countries by user count:
+  United States of America: 391,417 users
+  India: 266,397 users
+  China: 51,101 users
+  United Kingdom: 39,821 users
+  Brazil: 35,197 users
+  Canada: 33,836 users
+  Russia: 31,923 users
+  Japan: 25,229 users
+  Germany: 25,176 users
+  France: 23,768 users
+4.4 Mapping the Globe
+In [26]:
+m.save('users_by_country_map.html')
+print(f"\nMap saved as 'users_by_country_map.html'")
+m
+Map saved as 'users_by_country_map.html'
+Out[26]:
+Make this Notebook Trusted to load map: File -> Trust Notebook
+5. 📊 Tracking the Surge: User Growth Year by Year
+In [27]:
+users = users.with_columns([
+    pl.col("RegisterDate").str.strptime(pl.Date, "%m/%d/%Y").alias("RegisterDateParsed"),
+    pl.col("RegisterDate").str.strptime(pl.Date, "%m/%d/%Y").dt.year().alias("RegisterYear")
+])
+# Group by year and count users
+user_growth_per_year = (
+    users
+    .group_by("RegisterYear")
+    .agg(pl.len().alias("UserCount"))
+    .sort("RegisterYear")
+)
+In [28]:
+users
+Out[28]:
+shape: (25_153_985, 9)
+Id UserName DisplayName RegisterDate PerformanceTier Country LocationSharingOptOut RegisterDateParsed RegisterYear
+i64 str str str i64 str bool date i32
+1 "kaggleteam" "Kaggle Team" "03/24/2011" 5 "" false 2011-03-24 2011
+368 "antgoldbloom" "Anthony Goldbloom" "01/20/2010" 2 "United States" false 2010-01-20 2010
+381 "iguyon" "Isabelle" "01/29/2010" 2 "United States" false 2010-01-29 2010
+383 "davidstephan" "David Stephan" "02/01/2010" 1 "Australia" false 2010-02-01 2010
+384 "gabewarren" "Gabe Warren" "02/02/2010" 1 "Australia" false 2010-02-02 2010
+… … … … … … … … …
+27936245 "realalex1379" "realalex1379" "07/19/2025" 1 "" false 2025-07-19 2025
+27936246 "muhammadshayaan1" "MUHAMMAD SHAYAAN E SUBAH" "07/19/2025" 1 "" false 2025-07-19 2025
+27936248 "drbrain0620" "DrBrain0620" "07/19/2025" 1 "" false 2025-07-19 2025
+27936249 "bhaikkbk" "Krishna Verma" "07/19/2025" 1 "" false 2025-07-19 2025
+27936250 "joicea" "Joice Conceição de Almeida" "07/19/2025" 1 "" false 2025-07-19 2025
+In [29]:
+df_plot = user_growth_per_year.to_pandas()
+df_plot.head()
+Out[29]:
+       
+      RegisterYear 
+      UserCount 
+    
+      0 
+      2010 
+      4498 
+    
+      1 
+      2011 
+      20788 
+    
+      2 
+      2012 
+      45869 
+    
+      3 
+      2013 
+      65548 
+    
+      4 
+      2014 
+      100889 
+    
+5.1 User Growth
+In [30]:
+fig1 = go.Figure()
+fig1.add_trace(go.Scatter(
+    x=df_plot["RegisterYear"],
+    y=df_plot["UserCount"],
+    mode="lines+markers",
+    line=dict(color="royalblue", width=2),
+    marker=dict(size=6),
+    name="Users"
+))
+fig1.update_layout(
+    title="📈 User Growth Over the Years",
+    xaxis_title="Year",
+    yaxis_title="Number of Users",
+    template="plotly_white",
+    width=1000,
+    height=600
+)
+plot(fig1, filename="eduexp1.html", auto_open=False)
+IFrame("eduexp1.html", width=1200, height=600)
+Out[30]:
+In [31]:
+users = users.with_columns(
+    pl.col("RegisterDate").str.strptime(pl.Date, "%m/%d/%Y", strict=False)
+)
+earliest_date = users.select(pl.col("RegisterDate").min()).item()
+latest_date = users.select(pl.col("RegisterDate").max()).item()
+print(f"🕰️ Earliest Kaggle registration date: {earliest_date}")
+print(f"🕓 Latest Kaggle registration date: {latest_date}")
+🕰️ Earliest Kaggle registration date: 2010-01-20
+🕓 Latest Kaggle registration date: 2025-07-19
+In [32]:
+df_plot = df_plot.sort_values('RegisterYear')
+years = df_plot['RegisterYear'].values
+user_counts = df_plot['UserCount'].values
+In [33]:
+print(years)
+print(user_counts)
+[2010 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023
+ 2024 2025]
+[   4498   20788   45869   65548  100889  192958  324317  616711 1064858
+ 1462466 2043227 2588485 3304520 4526347 5334303 3458201]
+5.2 What’s Next? Forecasting Kaggle’s User Growth
+In [34]:
+forecast_years = [2025, 2026]
+In [35]:
+# Method 1: Linear Regression Forecasting
+def linear_forecast(x, y, future_years):
+    """Simple linear regression forecast"""
+    slope, intercept, r_value, p_value, std_err = stats.linregress(x, y)
+    forecast = []
+    for year in future_years:
+        predicted_users = slope * year + intercept
+        forecast.append(max(0, int(predicted_users))) 
+    return forecast, r_value**2
+linear_pred, linear_r2 = linear_forecast(years, user_counts, forecast_years)
+In [36]:
+# Method 2: Exponential Growth Forecasting
+def exponential_forecast(x, y, future_years):
+    """Exponential growth forecast using log transformation"""
+    try:
+        log_y = np.log(y + 1)
+        slope, intercept, r_value, p_value, std_err = stats.linregress(x, log_y)
+        
+        forecast = []
+        for year in future_years:
+            log_predicted = slope * year + intercept
+            predicted_users = int(np.exp(log_predicted) - 1)
+            forecast.append(max(0, predicted_users))
+        
+        return forecast, r_value**2
+    except:
+        # Fallback to linear if exponential fails
+        return linear_forecast(x, y, future_years)
+exp_pred, exp_r2 = exponential_forecast(years, user_counts, forecast_years)
+In [37]:
+# Method 3: Polynomial Forecasting (degree 2)
+def polynomial_forecast(x, y, future_years, degree=2):
+    """Polynomial regression forecast"""
+    coeffs = np.polyfit(x, y, degree)      
+    poly_func = np.poly1d(coeffs)           
+
+    forecast = []
+    for year in future_years:
+        predicted_users = int(poly_func(year))
+        forecast.append(max(0, predicted_users))    
+    y_pred = poly_func(x)
+    ss_res = np.sum((y - y_pred) ** 2)
+    ss_tot = np.sum((y - np.mean(y)) ** 2)
+    r_squared = 1 - (ss_res / ss_tot)
+
+    return forecast, r_squared
+poly_pred, poly_r2 = polynomial_forecast(years, user_counts, forecast_years)
+In [38]:
+models = {
+    'Linear': (linear_pred, linear_r2),
+    'Exponential': (exp_pred, exp_r2),
+    'Polynomial': (poly_pred, poly_r2)
+}
+In [39]:
+best_model = max(models.items(), key=lambda x: x[1][1])
+best_predictions = best_model[1][0]
+best_r2 = best_model[1][1]
+In [40]:
+print(f"Model Performance:")
+print(f"Linear R²: {linear_r2:.4f}")
+print(f"Exponential R²: {exp_r2:.4f}")
+print(f"Polynomial R²: {poly_r2:.4f}")
+Model Performance:
+Linear R²: 0.8271
+Exponential R²: 0.9301
+Polynomial R²: 0.9049
+In [41]:
+def create_model_chart(model_name, predictions, r_squared, color, filename):
+    """Create individual chart for each model"""
+    fig_model = go.Figure()
+    fig_model.add_trace(go.Scatter(
+        x=df_plot["RegisterYear"],
+        y=df_plot["UserCount"],
+        mode="lines+markers",
+        line=dict(color="royalblue", width=3),
+        marker=dict(size=8, color="royalblue"),
+        name="Historical Data",
+        hovertemplate="<b>Year:</b> %{x}<br><b>Users:</b> %{y:,}<extra></extra>"
+    ))
+    fig_model.add_trace(go.Scatter(
+        x=forecast_years,
+        y=predictions,
+        mode="lines+markers",
+        line=dict(color=color, width=3, dash="dash"),
+        marker=dict(size=10, color=color, symbol="diamond"),
+        name=f"{model_name} Forecast",
+        hovertemplate="<b>Year:</b> %{x}<br><b>Predicted Users:</b> %{y:,}<extra></extra>"
+    ))
+    fig_model.add_trace(go.Scatter(
+        x=[years[-1], forecast_years[0]],
+        y=[user_counts[-1], predictions[0]],
+        mode="lines",
+        line=dict(color="orange", width=2, dash="dot"),
+        name="Transition",
+        showlegend=False,
+        hoverinfo='skip'
+    ))
+    for i, (year, pred) in enumerate(zip(forecast_years, predictions)):
+        fig_model.add_annotation(
+            x=year,
+            y=pred,
+            text=f"{pred:,}",
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=1,
+            arrowwidth=2,
+            arrowcolor=color,
+            font=dict(size=12, color=color),
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor=color,
+            borderwidth=1
+        )
+    fig_model.update_layout(
+        title={
+            'text': f"📈 {model_name} Model Forecast<br><sub>R² = {r_squared:.4f} | 2025: {predictions[0]:,} | 2026: {predictions[1]:,}</sub>",
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 18}
+        },
+        xaxis_title="Year",
+        yaxis_title="Number of Users",
+        template="plotly_white",
+        width=1000,
+        height=600,
+        legend=dict(
+            x=0.02,
+            y=0.98,
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="black",
+            borderwidth=1
+        ),
+        hovermode='x unified'
+    )
+    fig_model.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+    fig_model.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+    fig_model.update_yaxes(tickformat=',')
+    plot(fig_model, filename=filename, auto_open=False)
+    return fig_model
+In [42]:
+linear_fig = create_model_chart("Linear", linear_pred, linear_r2, "green", "linear_forecast.html")
+exp_fig = create_model_chart("Exponential", exp_pred, exp_r2, "purple", "exponential_forecast.html")
+poly_fig = create_model_chart("Polynomial", poly_pred, poly_r2, "orange", "polynomial_forecast.html")
+In [43]:
+print(f"\n All Model Predictions:")
+print(f"{'Model':<12} {'2025':<12} {'2026':<12} {'R²':<8}")
+print("-" * 45)
+print(f"{'Linear':<12} {linear_pred[0]:<12,} {linear_pred[1]:<12,} {linear_r2:<8.4f}")
+print(f"{'Exponential':<12} {exp_pred[0]:<12,} {exp_pred[1]:<12,} {exp_r2:<8.4f}")
+print(f"{'Polynomial':<12} {poly_pred[0]:<12,} {poly_pred[1]:<12,} {poly_r2:<8.4f}")
+ All Model Predictions:
+Model        2025         2026         R²      
+---------------------------------------------
+Linear       4,107,172    4,445,178    0.8271  
+Exponential  11,834,016   18,319,643   0.9301  
+Polynomial   4,992,112    5,734,663    0.9049  
+In [44]:
+print("1. linear_forecast.html - Linear model only")
+display(IFrame("linear_forecast.html", width=1000, height=600))
+1. linear_forecast.html - Linear model only
+In [45]:
+print("2. exponential_forecast.html - Exponential model only") 
+display(IFrame("exponential_forecast.html", width=1000, height=600))
+2. exponential_forecast.html - Exponential model only
+In [46]:
+print("3. polynomial_forecast.html - Polynomial model only")
+display(IFrame("polynomial_forecast.html", width=1000, height=600))
+3. polynomial_forecast.html - Polynomial model only
+In [47]:
+fig_comparison = go.Figure()
+fig_comparison.add_trace(go.Scatter(
+    x=df_plot["RegisterYear"],
+    y=df_plot["UserCount"],
+    mode="lines+markers",
+    line=dict(color="royalblue", width=4),
+    marker=dict(size=10, color="royalblue"),
+    name="Historical Data",
+    hovertemplate="<b>Year:</b> %{x}<br><b>Users:</b> %{y:,}<extra></extra>"
+))
+models_data = [
+    ("Linear", linear_pred, "green", "circle"),
+    ("Exponential", exp_pred, "purple", "square"),
+    ("Polynomial", poly_pred, "orange", "diamond")
+]
+
+for model_name, predictions, color, symbol in models_data:
+    fig_comparison.add_trace(go.Scatter(
+        x=forecast_years,
+        y=predictions,
+        mode="lines+markers",
+        line=dict(color=color, width=3, dash="dash"),
+        marker=dict(size=12, color=color, symbol=symbol),
+        name=f"{model_name} Forecast",
+        hovertemplate=f"<b>{model_name}</b><br><b>Year:</b> %{{x}}<br><b>Predicted Users:</b> %{{y:,}}<extra></extra>"
+    ))
+fig_comparison.update_layout(
+    title={
+        'text': "📊 All Models Comparison<br><sub>Linear vs Exponential vs Polynomial Forecasts</sub>",
+        'x': 0.5,
+        'xanchor': 'center',
+        'font': {'size': 20}
+    },
+    xaxis_title="Year",
+    yaxis_title="Number of Users",
+    template="plotly_white",
+    width=1200,
+    height=700,
+    legend=dict(
+        x=0.02,
+        y=0.98,
+        bgcolor="rgba(255,255,255,0.9)",
+        bordercolor="black",
+        borderwidth=1,
+        font=dict(size=12)
+    ),
+    hovermode='x unified'
+)
+
+fig_comparison.update_xaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+fig_comparison.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgray')
+fig_comparison.update_yaxes(tickformat=',')
+plot(fig_comparison, filename="all_models_comparison.html", auto_open=False)
+Out[47]:
+'all_models_comparison.html'
+In [48]:
+print("4. all_models_comparison.html - All models on one chart")
+display(IFrame("all_models_comparison.html", width=1200, height=700))
+4. all_models_comparison.html - All models on one chart
+6. 🗺️ Meta-Kaggle-Dataset-Navigator
+In [49]:
+import gradio as gr
+demo = gr.load("spaces/Asura05/Meta-Kaggle-Dataset-Navigator")
+demo.launch()
+Fetching Space from: https://huggingface.co/spaces/Asura05/Meta-Kaggle-Dataset-Navigator
+Loaded as API: https://asura05-meta-kaggle-dataset-navigator.hf.space ✔
+* Running on local URL:  http://127.0.0.1:7860
+It looks like you are running Gradio on a hosted Jupyter notebook, which requires `share=True`. Automatically setting `share=True` (you can turn this off by setting `share=False` in `launch()` explicitly).
+
+* Running on public URL: https://6ce53998b604fe3cd6.gradio.live
+
+This share link expires in 1 week. For free permanent hosting and GPU upgrades, run `gradio deploy` from the terminal in the working directory to deploy to Hugging Face Spaces (https://huggingface.co/spaces)
+Out[49]:
+My MetaKaggle's Notebook Series
+Explore a series of notebooks by dnkumars that dive deep into the MetaKaggle and MetaKaggle Code datasets. Each notebook uncovers different facets of the Kaggle ecosystem, from user demographics to code patterns.
+User Demographics Forecast 📊
+Delve into trends and forecasts related to the Kaggle user base.
+Decrypting Datasets 📁
+Analyze the landscape and metadata of datasets available on Kaggle.
+Kernels' Crux 🧠
+Examine kernel (notebook) best practices, popularity, and patterns.
+Enigmatic Episodes 📅
+Explore significant events which have episodes in competitions that have shaped Kaggle (reinforcement learning usage) .
+Labels of Recognition 🏷️
+Investigate Tags mechanisms and mechanics within Kaggle.
+Demystifying Code 🧑‍💻
+Understand trends, favorite libraries, and patterns in Kaggle code notebooks.
+Contests & Rewards 🏆
+Break down reward structures, competition formats, and highlights from Kaggle contests.
+Citation
+[@meta-kaggle-hackathon] www.kaggle.com/competitions/meta-kaggle-hackathon/overview/citation
+Citation: Paul Mooney, Meg Risdal, Maria Cruz, and Addison Howard. Meta Kaggle Hackathon. Kaggle. Kaggle
+Thank You 🙇‍♂️ for Visiting My Notebook!
+
+Your feedback is greatly appreciated and motivates me to continue developing more valuable and informative notebooks

@@ -1,0 +1,188 @@
+Gemma3n Vision Might Not Work Properly
+If you're using Gemma3n for vision tasks, you might encounter poor performance. This may be due to the following:
+Gemma3n's raw activations may overflow in half precision (FP16, Kaggle T4 GPUs).
+In the original checkpoints, the width and height axes of the MobileNetV5 vision tower are mixed up.
+As of July 10, the Unsloth version has fixed both issues. Let’s test it.
+Installation
+In [1]:
+%%capture
+import os
+if "COLAB_" not in "".join(os.environ.keys()):
+    !pip install unsloth
+else:
+    # Do this only in Colab notebooks! Otherwise use pip install unsloth
+    !pip install --no-deps bitsandbytes accelerate xformers==0.0.29.post3 peft trl triton cut_cross_entropy unsloth_zoo
+    !pip install sentencepiece protobuf "datasets>=3.4.1" huggingface_hub hf_transfer
+    !pip install --no-deps unsloth
+In [2]:
+%%capture
+
+!pip install --no-deps git+https://github.com/huggingface/transformers.git@6b09c8eab05820d480f4da97d23456428d410082
+!pip install --no-deps --upgrade timm
+In [3]:
+!pip show transformers
+Name: transformers
+Version: 4.54.0.dev0
+Summary: State-of-the-art Machine Learning for JAX, PyTorch and TensorFlow
+Home-page: https://github.com/huggingface/transformers
+Author: The Hugging Face team (past and future) with the help of all our contributors (https://github.com/huggingface/transformers/graphs/contributors)
+Author-email: transformers@huggingface.co
+License: Apache 2.0 License
+Location: /usr/local/lib/python3.11/dist-packages
+Requires: filelock, huggingface-hub, numpy, packaging, pyyaml, regex, requests, safetensors, tokenizers, tqdm
+Required-by: kaggle-environments, peft, sentence-transformers, trl, unsloth, unsloth_zoo
+Unsloth works reliably
+In [4]:
+%%capture
+
+from unsloth import FastModel
+import torch
+
+
+model, tokenizer = FastModel.from_pretrained(
+    model_name = "unsloth/gemma-3n-E2B-it-unsloth-bnb-4bit",
+    dtype = None, # fp16
+    max_seq_length = 1024,
+    load_in_4bit = True,
+    full_finetuning = False,
+)
+2025-07-10 17:19:02.612311: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:477] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1752167942.959347      19 cuda_dnn.cc:8310] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1752167943.057775      19 cuda_blas.cc:1418] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+In [5]:
+from transformers import TextStreamer
+# Helper function for inference
+def do_gemma_3n_inference(messages, max_new_tokens = 128):
+    _ = model.generate(
+        **tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt = True, # Must add for generation
+            tokenize = True,
+            return_dict = True,
+            return_tensors = "pt",
+        ).to("cuda"),
+        max_new_tokens = max_new_tokens,
+        temperature = 1.0, top_p = 0.95, top_k = 64,
+        streamer = TextStreamer(tokenizer, skip_prompt = True),
+    )
+In [6]:
+from PIL import Image
+import numpy as np
+
+image_test1 = Image.open("/kaggle/input/gemma3n-vision-tests/ocr_test1.jpg")
+image_test1.resize((384,384))
+Out[6]:
+In [7]:
+messages = [{
+    "role" : "user",
+    "content": [
+        { "type": "image", "image" : "/kaggle/input/gemma3n-vision-tests/ocr_test1.jpg" },
+        { "type": "text",  "text" : "Read text from this image." }
+    ]
+}]
+# You might have to wait 1 minute for Unsloth's auto compiler
+do_gemma_3n_inference(messages, max_new_tokens = 256)
+Hello, this is a sample text! Short and to the point.<end_of_turn>
+Another test:
+In [8]:
+image_test2 = Image.open("/kaggle/input/gemma3n-vision-tests/ocr_test2.jpg")
+image_test2.resize((384,384))
+Out[8]:
+In [9]:
+messages = [{
+    "role" : "user",
+    "content": [
+        { "type": "image", "image" : "/kaggle/input/gemma3n-vision-tests/ocr_test2.jpg" },
+        { "type": "text",  "text" : "Read text from this image." }
+    ]
+}]
+do_gemma_3n_inference(messages, max_new_tokens = 256)
+This is a text message.<end_of_turn>
+All correct.
+In [10]:
+import os
+import psutil
+import gc
+import ctypes
+
+
+def force_memory_cleanup():
+    gc.collect()
+    torch.cuda.empty_cache()
+    
+    libc = ctypes.CDLL("libc.so.6")
+    libc.malloc_trim(0)
+
+
+del model
+del tokenizer
+force_memory_cleanup()
+The Transformers pipeline fails
+Transposed fp32 OCR works on some Transformers versions.
+In [11]:
+from transformers import AutoProcessor, AutoModelForImageTextToText, TextStreamer
+import torch
+
+
+GEMMA_PATH = '/kaggle/input/gemma-3n/transformers/gemma-3n-e2b-it/1'
+
+processor = AutoProcessor.from_pretrained(GEMMA_PATH)
+model = AutoModelForImageTextToText.from_pretrained(
+    GEMMA_PATH, torch_dtype=torch.float32, device_map="cpu"
+)
+Loading checkpoint shards: 100%
+3/3 [01:00<00:00, 19.56s/it]
+In [12]:
+def do_gemma_3n_transformers_inference(
+        messages, transpose_image=True, max_new_tokens=128
+    ):
+    inputs = processor.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt"
+    ).to(model.device, dtype=model.dtype)
+    
+    if transpose_image:
+        inputs["pixel_values"] = inputs["pixel_values"].permute(0,1,3,2)
+    input_len = inputs["input_ids"].shape[-1]
+
+    _ = model.generate(
+        **inputs, max_new_tokens=max_new_tokens,
+        temperature = 1.0, top_p = 0.95, top_k = 64,
+        streamer = TextStreamer(processor.tokenizer, skip_prompt = True)
+    )
+    
+With the transposition fix on float32 CPU:
+In [13]:
+messages = [{
+    "role" : "user",
+    "content": [
+        { "type": "image", "image" : "/kaggle/input/gemma3n-vision-tests/ocr_test1.jpg"},
+        { "type": "text",  "text" : "Read text from this image."}
+    ]
+}]
+do_gemma_3n_transformers_inference(messages, max_new_tokens = 64)
+The provided text is a long string of the word "e" repeated many times. It doesn't form any coherent sentence or phrase. 
+
+Therefore, there is nothing to "read" in the traditional sense. It's simply a repetition of the letter "e".<end_of_turn>
+Without the transposition:
+In [14]:
+messages = [{
+    "role" : "user",
+    "content": [
+        { "type": "image", "image" : "/kaggle/input/gemma3n-vision-tests/ocr_test1.jpg"},
+        { "type": "text",  "text" : "Read text from this image."}
+    ]
+}]
+do_gemma_3n_transformers_inference(messages, transpose_image=False, max_new_tokens = 64)
+The text provided is a string of the letter "e" repeated many times. It does not contain any meaningful words or sentences. 
+
+Therefore, there is nothing to "read" in the traditional sense. 
+
+If you have a different text you would like me to read, please provide it!<end_of_turn>
+And inferencing in CUDA fp16 won't work at all because of the activations overflow.
+Conclusion
+Pay attention to what kind of model and package version you're using.

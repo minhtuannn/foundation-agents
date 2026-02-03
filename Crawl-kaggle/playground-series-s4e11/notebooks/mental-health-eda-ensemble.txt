@@ -1,0 +1,632 @@
+Mental Health
+1. Import Necessary Libraries
+unfold_moreShow hidden code
+2. Reading and Understanding our Data
+In [2]:
+df_train = pd.read_csv("/kaggle/input/playground-series-s4e11/train.csv")
+df_test = pd.read_csv("/kaggle/input/playground-series-s4e11/test.csv")
+
+print("First 5 rows of our dataset:")
+df_train.head()
+First 5 rows of our dataset:
+Out[2]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure CGPA Study Satisfaction Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression
+0 0 Aaradhya Female 49.0 Ludhiana Working Professional Chef NaN 5.0 NaN NaN 2.0 More than 8 hours Healthy BHM No 1.0 2.0 No 0
+1 1 Vivan Male 26.0 Varanasi Working Professional Teacher NaN 4.0 NaN NaN 3.0 Less than 5 hours Unhealthy LLB Yes 7.0 3.0 No 1
+2 2 Yuvraj Male 33.0 Visakhapatnam Student NaN 5.0 NaN 8.97 2.0 NaN 5-6 hours Healthy B.Pharm Yes 3.0 1.0 No 1
+3 3 Yuvraj Male 22.0 Mumbai Working Professional Teacher NaN 5.0 NaN NaN 1.0 Less than 5 hours Moderate BBA Yes 10.0 1.0 Yes 1
+4 4 Rhea Female 30.0 Kanpur Working Professional Business Analyst NaN 1.0 NaN NaN 1.0 5-6 hours Unhealthy BBA Yes 9.0 4.0 Yes 0
+In [3]:
+print(f"There are {df_train.shape[1]} columns and {df_train.shape[0]} rows in the train dataset.")
+There are 20 columns and 140700 rows in the train dataset.
+In [4]:
+print("Column names and data type of each column:")
+df_train.dtypes
+Column names and data type of each column:
+Out[4]:
+id                                         int64
+Name                                      object
+Gender                                    object
+Age                                      float64
+City                                      object
+Working Professional or Student           object
+Profession                                object
+Academic Pressure                        float64
+Work Pressure                            float64
+CGPA                                     float64
+Study Satisfaction                       float64
+Job Satisfaction                         float64
+Sleep Duration                            object
+Dietary Habits                            object
+Degree                                    object
+Have you ever had suicidal thoughts ?     object
+Work/Study Hours                         float64
+Financial Stress                         float64
+Family History of Mental Illness          object
+Depression                                 int64
+dtype: object
+In [5]:
+print("There are {} duplicates in the dataset.".format(df_train.duplicated().sum()))
+There are 0 duplicates in the dataset.
+In [6]:
+print("Checking for missing values in each column:")
+print(df_train.isnull().sum())
+Checking for missing values in each column:
+id                                            0
+Name                                          0
+Gender                                        0
+Age                                           0
+City                                          0
+Working Professional or Student               0
+Profession                                36630
+Academic Pressure                        112803
+Work Pressure                             27918
+CGPA                                     112802
+Study Satisfaction                       112803
+Job Satisfaction                          27910
+Sleep Duration                                0
+Dietary Habits                                4
+Degree                                        2
+Have you ever had suicidal thoughts ?         0
+Work/Study Hours                              0
+Financial Stress                              4
+Family History of Mental Illness              0
+Depression                                    0
+dtype: int64
+In [7]:
+plt.figure(figsize=(18,12))
+plt.title("Visualizing Missing Values")
+sns.heatmap(df_train.isnull(), cbar=False, cmap=sns.color_palette(colors), yticklabels=False);
+In [8]:
+# Save 'id' column for submission
+test_ids = df_test['id']
+
+# Drop 'id' column in both datasets
+df_train = df_train.drop(['id'], axis=1)
+df_test = df_test.drop(['id'], axis=1)
+
+# Define the target column
+target_column = 'Depression'
+
+# Select categorical and numerical columns (initial)
+categorical_columns = df_train.select_dtypes(include=['object']).columns
+numerical_columns = df_train.select_dtypes(exclude=['object']).columns.drop(target_column)
+
+# Print out column information
+print("Target Column:", target_column)
+print("\nCategorical Columns:", categorical_columns.tolist())
+print("\nNumerical Columns:", numerical_columns.tolist())
+Target Column: Depression
+
+Categorical Columns: ['Name', 'Gender', 'City', 'Working Professional or Student', 'Profession', 'Sleep Duration', 'Dietary Habits', 'Degree', 'Have you ever had suicidal thoughts ?', 'Family History of Mental Illness']
+
+Numerical Columns: ['Age', 'Academic Pressure', 'Work Pressure', 'CGPA', 'Study Satisfaction', 'Job Satisfaction', 'Work/Study Hours', 'Financial Stress']
+In [9]:
+for column in categorical_columns:
+    num_unique = df_train[column].nunique()
+    print(f"'{column}' has {num_unique} unique categories.")
+'Name' has 422 unique categories.
+'Gender' has 2 unique categories.
+'City' has 98 unique categories.
+'Working Professional or Student' has 2 unique categories.
+'Profession' has 64 unique categories.
+'Sleep Duration' has 36 unique categories.
+'Dietary Habits' has 23 unique categories.
+'Degree' has 115 unique categories.
+'Have you ever had suicidal thoughts ?' has 2 unique categories.
+'Family History of Mental Illness' has 2 unique categories.
+In [10]:
+# Print top 10 unique value counts for each categorical column
+for column in categorical_columns:
+    print(f"\nTop value counts in '{column}':\n{df_train[column].value_counts().head(10)}")
+Top value counts in 'Name':
+Name
+Rohan          3178
+Aarav          2336
+Rupak          2176
+Aaradhya       2045
+Anvi           2035
+Raghavendra    1877
+Vani           1657
+Tushar         1596
+Ritvik         1589
+Shiv           1568
+Name: count, dtype: int64
+
+Top value counts in 'Gender':
+Gender
+Male      77464
+Female    63236
+Name: count, dtype: int64
+
+Top value counts in 'City':
+City
+Kalyan           6591
+Patna            5924
+Vasai-Virar      5765
+Kolkata          5689
+Ahmedabad        5613
+Meerut           5528
+Ludhiana         5226
+Pune             5210
+Rajkot           5207
+Visakhapatnam    5176
+Name: count, dtype: int64
+
+Top value counts in 'Working Professional or Student':
+Working Professional or Student
+Working Professional    112799
+Student                  27901
+Name: count, dtype: int64
+
+Top value counts in 'Profession':
+Profession
+Teacher             24906
+Content Writer       7814
+Architect            4370
+Consultant           4229
+HR Manager           4022
+Pharmacist           3893
+Doctor               3255
+Business Analyst     3161
+Entrepreneur         2968
+Chemist              2967
+Name: count, dtype: int64
+
+Top value counts in 'Sleep Duration':
+Sleep Duration
+Less than 5 hours    38784
+7-8 hours            36969
+More than 8 hours    32726
+5-6 hours            32142
+3-4 hours               12
+6-7 hours                8
+4-5 hours                7
+4-6 hours                5
+2-3 hours                5
+6-8 hours                4
+Name: count, dtype: int64
+
+Top value counts in 'Dietary Habits':
+Dietary Habits
+Moderate             49705
+Unhealthy            46227
+Healthy              44741
+Yes                      2
+More Healthy             2
+No                       2
+Pratham                  1
+Gender                   1
+BSc                      1
+Less than Healthy        1
+Name: count, dtype: int64
+
+Top value counts in 'Degree':
+Degree
+Class 12    14729
+B.Ed        11691
+B.Arch       8742
+B.Com        8113
+B.Pharm      5856
+BCA          5739
+M.Ed         5668
+MCA          5234
+BBA          5030
+BSc          5027
+Name: count, dtype: int64
+
+Top value counts in 'Have you ever had suicidal thoughts ?':
+Have you ever had suicidal thoughts ?
+No     71138
+Yes    69562
+Name: count, dtype: int64
+
+Top value counts in 'Family History of Mental Illness':
+Family History of Mental Illness
+No     70758
+Yes    69942
+Name: count, dtype: int64
+In [11]:
+print("The skewness of columns:")
+print(df_train[numerical_columns].skew())
+The skewness of columns:
+Age                  -0.217977
+Academic Pressure    -0.133977
+Work Pressure         0.018515
+CGPA                 -0.073636
+Study Satisfaction    0.011764
+Job Satisfaction      0.054361
+Work/Study Hours     -0.128169
+Financial Stress      0.035603
+dtype: float64
+3. Exploratory Data Analysis
+3.1. Distribution of Numerical Variables
+unfold_moreShow hidden code
+3.2. Distribution of Categorical Features
+unfold_moreShow hidden code
+3.3. Distribution of Numerical Features by Presence of Depression
+unfold_moreShow hidden code
+3.4. Relationship of Categorical Columns with a Target Variable
+unfold_moreShow hidden code
+3.5. Exploring Professions
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+Architect
+Business Analyst
+Chef
+Chemist
+Consultant
+Content Writer
+Customer Support
+Data Scientist
+Doctor
+Educational Consultant
+Entrepreneur
+HR Manager
+Lawyer
+Marketing Manager
+Pharmacist
+Pilot
+Plumber
+Researcher
+Teacher
+Travel Consultant
+No Depression
+Depression
+Sankey Diagram of Profession and Depression
+3.6. Exploring Degrees
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+Class 12
+B.Ed
+B.Arch
+B.Com
+B.Pharm
+BCA
+M.Ed
+MCA
+BBA
+BSc
+1
+0
+0
+1
+0
+1
+0
+1
+0
+1
+0
+1
+0
+1
+0
+1
+0
+1
+0
+1
+2k
+4k
+6k
+8k
+10k
+Count
+Sunburst Chart of Top 10 Degrees and Depression
+3.7. Distribution of a Target Variable
+unfold_moreShow hidden code
+3.8. Correlation between Variables
+unfold_moreShow hidden code
+1
+−0.07595554
+−0.0989244
+0.005128978
+0.008861887
+0.03079284
+−0.1183561
+−0.0835887
+−0.5646712
+−0.07595554
+1
+−0.02519523
+−0.1122282
+−1
+0.09564992
+0.152105
+0.4750366
+−0.0989244
+1
+−0.03695779
+−0.002807975
+0.02441191
+0.2166335
+0.005128978
+−0.02519523
+1
+−0.047078
+1
+0.002875259
+0.006397621
+0.02172902
+0.008861887
+−0.1122282
+−0.047078
+1
+−1
+−0.03693423
+−0.06500133
+−0.1680136
+0.03079284
+−1
+−0.03695779
+1
+−1
+1
+−0.029227
+−0.02915951
+−0.1685429
+−0.1183561
+0.09564992
+−0.002807975
+0.002875259
+−0.03693423
+−0.029227
+1
+0.03613364
+0.1917462
+−0.0835887
+0.152105
+0.02441191
+0.006397621
+−0.06500133
+−0.02915951
+0.03613364
+1
+0.2272365
+−0.5646712
+0.4750366
+0.2166335
+0.02172902
+−0.1680136
+−0.1685429
+0.1917462
+0.2272365
+1
+Age
+Academic Pressure
+Work Pressure
+CGPA
+Study Satisfaction
+Job Satisfaction
+Work/Study Hours
+Financial Stress
+Depression
+Depression
+Financial Stress
+Work/Study Hours
+Job Satisfaction
+Study Satisfaction
+CGPA
+Work Pressure
+Academic Pressure
+Age
+−1
+−0.5
+0
+0.5
+1
+Heatmap of Correlation Matrix
+3.9. Depression by Age and Work Pressure
+unfold_moreShow hidden code
+0.2654639
+0.3413793
+0.4817708
+0.6402481
+0.7654059
+0.1102464
+0.2112299
+0.2550143
+0.4601227
+0.6111554
+0.1026786
+0.1563682
+0.2483487
+0.4039581
+0.5662447
+0.04748201
+0.06415094
+0.09762533
+0.2549708
+0.3821586
+0.01007634
+0.01442434
+0.02211951
+0.04615385
+0.1059908
+0.008003049
+0.01930369
+0.02269289
+0.05001825
+0.0915109
+0.005797101
+0.008078995
+0.009115463
+0.02294521
+0.05707932
+0.004558776
+0.002265647
+0.009076682
+0.01450189
+0.02825746
+0.001051525
+0.001575299
+0.001769912
+0.00440044
+0.008235804
+806.4516μ
+0.001361779
+0.002062387
+0.002438364
+0.005386565
+(0.996, 1.4]
+(1.8, 2.2]
+(2.6, 3.0]
+(3.8, 4.2]
+(4.6, 5.0]
+(17.958, 22.2]
+(22.2, 26.4]
+(26.4, 30.6]
+(30.6, 34.8]
+(34.8, 39.0]
+(39.0, 43.2]
+(43.2, 47.4]
+(47.4, 51.6]
+(51.6, 55.8]
+(55.8, 60.0]
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+Depression
+Heatmap of Depression by Age and Work Pressure
+Work Pressure Bin
+Age Bin
+4. Feature Engineering and Data Preprocessing
+In [23]:
+# Feature Engineering
+# Create an interaction term between Age and Work Pressure
+df_train['Age_WorkPressure'] = df_train['Age'] * df_train['Work Pressure']
+df_test['Age_WorkPressure'] = df_test['Age'] * df_test['Work Pressure']
+
+# Target encoding for categorical features
+encoder = TargetEncoder(cols=['City', 'Profession'])
+df_train[['City_encoded', 'Profession_encoded']] = encoder.fit_transform(df_train[['City', 'Profession']], df_train["Depression"])
+df_test[['City_encoded', 'Profession_encoded']] = encoder.transform(df_test[['City', 'Profession']])
+In [24]:
+# Define features and target
+X_train = df_train.drop('Depression', axis=1)
+y_train = df_train['Depression']
+
+# Redefine columns for preprocessing after feature engineering
+numerical_columns = X_train.select_dtypes(include=['float64', 'int64']).columns.tolist()
+categorical_columns = X_train.select_dtypes(include=['object']).columns.tolist()
+
+# Define preprocessing pipelines
+numerical_pipeline = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='median')),
+    ('scaler', StandardScaler()),
+    ('convert_to_float32', FunctionTransformer(lambda x: x.astype(np.float32)))
+])
+
+categorical_pipeline = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+    ('ordinal', OrdinalEncoder(dtype=np.int32, handle_unknown='use_encoded_value', unknown_value=-1))
+])
+
+# Combine the numerical and categorical pipelines
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', numerical_pipeline, numerical_columns),
+        ('cat', categorical_pipeline, categorical_columns)
+    ]
+)
+
+# Apply the transformations to the training and test sets
+X_train_preprocessed = preprocessor.fit_transform(X_train)
+X_test_preprocessed = preprocessor.transform(df_test)
+In [25]:
+# Apply Isolation Forest for outlier detection on the training data
+isolation_forest = IsolationForest(contamination=0.04, random_state=rs)
+outlier_labels = isolation_forest.fit_predict(X_train_preprocessed)
+
+# Filter out outliers from both X_train_preprocessed and y_train
+non_outliers_mask = outlier_labels != -1
+X_train_preprocessed = X_train_preprocessed[non_outliers_mask]
+y_train = y_train[non_outliers_mask]
+5. Model Training
+In [26]:
+# Define parameters
+xgb_params = {
+     'learning_rate': 0.298913248058474, 
+     'max_depth': 9, 
+     'min_child_weight': 3, 
+     'n_estimators': 673, 
+     'subsample': 0.5933970249700855, 
+     'gamma': 2.597137534750985, 
+     'reg_lambda': 0.11328048420927406, 
+     'colsample_bytree': 0.1381203919800721
+}
+
+catboost_params = {
+    'iterations': 145, 
+    'depth': 7, 
+    'learning_rate': 0.29930179265937246, 
+    'l2_leaf_reg': 1.242352421942431, 
+    'random_strength': 8.325681754379957, 
+    'bagging_temperature': 0.7869848919618048, 
+    'border_count': 139
+}
+
+hgb_params = {
+    'learning_rate': 0.16299202834206894, 
+    'max_iter': 250, 
+    'max_depth': 4, 
+    'l2_regularization': 7.1826466833939895,
+    'early_stopping': True
+}
+
+# Initialize models with pre-tuned and trial-specific parameters
+xgb_model = XGBClassifier(**xgb_params, use_label_encoder=False, random_state=rs)
+catboost_model = CatBoostClassifier(**catboost_params, task_type="GPU", random_state=rs, verbose=0)
+hgb_model = HistGradientBoostingClassifier(**hgb_params, random_state=rs)
+
+# Define stacking ensemble with the LightGBM model tuned in this trial
+stacking_ensemble = StackingClassifier(
+    estimators=[
+        ('catboost', catboost_model),
+        ('xgb', xgb_model),
+        ('hgb', hgb_model)
+    ],
+    final_estimator=LogisticRegression(),
+    passthrough=False
+)
+In [27]:
+# Define a scoring metric
+scoring = make_scorer(accuracy_score)
+
+# Perform cross-validation
+cv_scores = cross_val_score(stacking_ensemble, X_train_preprocessed, y_train, cv=5, scoring=scoring)
+
+# Print cross-validation results
+print(f"Cross-Validation Scores: {cv_scores}")
+print(f"Mean CV Accuracy: {cv_scores.mean():.4f}")
+print(f"Standard Deviation of CV Accuracy: {cv_scores.std():.4f}")
+Cross-Validation Scores: [0.94158801 0.94373496 0.94265936 0.94402902 0.94510254]
+Mean CV Accuracy: 0.9434
+Standard Deviation of CV Accuracy: 0.0012
+In [28]:
+# Fit the model 
+stacking_ensemble.fit(X_train_preprocessed, y_train)
+
+# Make predictions 
+test_preds = stacking_ensemble.predict(X_test_preprocessed)
+In [29]:
+# Create a DataFrame to hold the submission results
+output = pd.DataFrame({'id': test_ids,
+                       'class': test_preds})
+
+# Save the output DataFrame to a CSV file
+output.to_csv('submission.csv', index=False)
+
+output.head()
+Out[29]:
+id class
+0 140700 0
+1 140701 0
+2 140702 0
+3 140703 1
+4 140704 0

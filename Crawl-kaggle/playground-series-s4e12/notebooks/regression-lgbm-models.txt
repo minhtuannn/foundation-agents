@@ -1,0 +1,181 @@
+Regression With Insurance Data | LGBM
+unfold_moreShow hidden code
+CPU times: user 458 ms, sys: 90.2 ms, total: 548 ms
+Wall time: 23.9 s
+Load Data
+In [6]:
+%%time
+
+!git clone https://github.com/muhammadabdullah0303/AbdML
+
+import sys
+sys.path.append('/kaggle/working/repository')
+
+from AbdML.main import AbdBase
+
+train = pd.read_csv('/kaggle/input/playground-series-s4e12/train.csv')
+test = pd.read_csv('/kaggle/input/playground-series-s4e12/test.csv')
+sample = pd.read_csv('/kaggle/input/playground-series-s4e12/sample_submission.csv')
+lgb_off = pd.read_csv('/kaggle/input/regression-with-an-insurance-dataset-offpreds/lgb_off.csv')
+
+train.drop('id', axis=1, inplace=True)
+test.drop('id', axis=1, inplace=True) 
+
+def date(Df):
+
+    Df['Policy Start Date'] = pd.to_datetime(Df['Policy Start Date'])
+    Df['Year'] = Df['Policy Start Date'].dt.year
+    Df['Day'] = Df['Policy Start Date'].dt.day
+    Df['Month'] = Df['Policy Start Date'].dt.month
+    Df['Month_name'] = Df['Policy Start Date'].dt.month_name()
+    Df['Day_of_week'] = Df['Policy Start Date'].dt.day_name()
+    Df['Week'] = Df['Policy Start Date'].dt.isocalendar().week
+    Df['Year_sin'] = np.sin(2 * np.pi * Df['Year'])
+    Df['Year_cos'] = np.cos(2 * np.pi * Df['Year'])
+    min_year = Df['Year'].min()
+    max_year = Df['Year'].max()
+    Df['Year_sin'] = np.sin(2 * np.pi * (Df['Year'] - min_year) / (max_year - min_year))
+    Df['Year_cos'] = np.cos(2 * np.pi * (Df['Year'] - min_year) / (max_year - min_year))
+    Df['Month_sin'] = np.sin(2 * np.pi * Df['Month'] / 12) 
+    Df['Month_cos'] = np.cos(2 * np.pi * Df['Month'] / 12)
+    Df['Day_sin'] = np.sin(2 * np.pi * Df['Day'] / 31)  
+    Df['Day_cos'] = np.cos(2 * np.pi * Df['Day'] / 31)
+    Df['Group']=(Df['Year']-2020)*48+Df['Month']*4+Df['Day']//7
+    
+    Df.drop('Policy Start Date', axis=1, inplace=True)
+
+    Df['contract length'] = pd.cut(
+        Df["Insurance Duration"].fillna(99),  
+        bins=[-float('inf'), 1, 3, float('inf')],  
+        labels=[0, 1, 2]  
+    ).astype(int)
+
+    return Df
+
+train = date(train)
+test = date(test)
+
+cat_c = [col for col in train.columns if train[col].dtype == 'object']
+
+def update(df):
+    
+    global cat_c
+
+    for c in cat_c:
+        df[c] = df[c].fillna('None').astype('category')
+                
+    return df
+
+train = update(train)
+test = update(test)
+fatal: destination path 'AbdML' already exists and is not an empty directory.
+CPU times: user 13.2 s, sys: 1.53 s, total: 14.7 s
+Wall time: 15.8 s
+In [7]:
+%%time
+
+train.head()
+CPU times: user 346 µs, sys: 45 µs, total: 391 µs
+Wall time: 393 µs
+Out[7]:
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Customer Feedback Smoking Status Exercise Frequency Property Type Premium Amount Year Day Month Month_name Day_of_week Week Year_sin Year_cos Month_sin Month_cos Day_sin Day_cos Group contract length
+0 19.0 Female 10049.0 Married 1.0 Bachelor's Self-Employed 22.598761 Urban Premium 2.0 17.0 372.0 5.0 Poor No Weekly House 2869.0 2023 23 12 December Saturday 51 -9.510565e-01 0.309017 -2.449294e-16 1.000000e+00 -0.998717 -0.050649 195 2
+1 39.0 Female 31678.0 Divorced 3.0 Master's None 15.569731 Rural Comprehensive 1.0 12.0 694.0 2.0 Average Yes Monthly House 1483.0 2023 12 6 June Monday 24 -9.510565e-01 0.309017 1.224647e-16 -1.000000e+00 0.651372 -0.758758 169 1
+2 23.0 Male 25602.0 Divorced 3.0 High School Self-Employed 47.177549 Suburban Premium 1.0 14.0 NaN 3.0 Good Yes Weekly House 567.0 2023 30 9 September Saturday 39 -9.510565e-01 0.309017 -1.000000e+00 -1.836970e-16 -0.201299 0.979530 184 1
+3 21.0 Male 141855.0 Married 2.0 Bachelor's None 10.938144 Rural Basic 1.0 0.0 367.0 1.0 Poor Yes Daily Apartment 765.0 2024 12 6 June Wednesday 24 -2.449294e-16 1.000000 1.224647e-16 -1.000000e+00 0.651372 -0.758758 217 0
+4 21.0 Male 39651.0 Single 1.0 Bachelor's Self-Employed 20.376094 Rural Premium 0.0 8.0 598.0 4.0 Poor Yes Weekly House 2022.0 2021 1 12 December Wednesday 48 5.877853e-01 -0.809017 -2.449294e-16 1.000000e+00 0.201299 0.979530 96 2
+In [8]:
+%%time
+
+test.head()
+CPU times: user 298 µs, sys: 39 µs, total: 337 µs
+Wall time: 327 µs
+Out[8]:
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Customer Feedback Smoking Status Exercise Frequency Property Type Year Day Month Month_name Day_of_week Week Year_sin Year_cos Month_sin Month_cos Day_sin Day_cos Group contract length
+0 28.0 Female 2310.0 None 4.0 Bachelor's Self-Employed 7.657981 Rural Basic NaN 19.0 NaN 1.0 Poor Yes Weekly House 2023 4 6 June Sunday 22 -9.510565e-01 0.309017 1.224647e-16 -1.000000 0.724793 0.688967 168 0
+1 31.0 Female 126031.0 Married 2.0 Master's Self-Employed 13.381379 Suburban Premium NaN 14.0 372.0 8.0 Good Yes Rarely Apartment 2024 22 4 April Monday 17 -2.449294e-16 1.000000 8.660254e-01 -0.500000 -0.968077 -0.250653 211 2
+2 47.0 Female 17092.0 Divorced 0.0 PhD Unemployed 24.354527 Urban Comprehensive NaN 16.0 819.0 9.0 Average Yes Monthly Condo 2023 5 4 April Wednesday 14 -9.510565e-01 0.309017 8.660254e-01 -0.500000 0.848644 0.528964 160 2
+3 28.0 Female 30424.0 Divorced 3.0 PhD Self-Employed 5.136225 Suburban Comprehensive 1.0 3.0 770.0 5.0 Poor Yes Daily House 2023 25 10 October Wednesday 43 -9.510565e-01 0.309017 -8.660254e-01 0.500000 -0.937752 0.347305 187 2
+4 24.0 Male 10863.0 Divorced 2.0 High School Unemployed 11.844155 Suburban Premium NaN 14.0 755.0 7.0 Average No Weekly House 2021 26 11 November Friday 47 5.877853e-01 -0.809017 -5.000000e-01 0.866025 -0.848644 0.528964 95 2
+LGBM Models
+In [83]:
+%%time
+
+SEED = 42
+n_splits = 10
+cat_c = [col for col in base.X_train.columns if base.X_train[col].dtype == 'category']
+
+
+base = AbdBase(train_data=train, test_data=test, target_column='Premium Amount',gpu=False,
+                 problem_type="regression", metric="rmsle", seed=SEED,
+                 n_splits=n_splits,early_stop=True,num_classes=0,cat_features = cat_c,
+                 fold_type='RKF')
+*** AbdBase ['V_1.3'] ***
+
+ *** Available Settings *** 
+
+Available Models: LGBM, CAT, XGB, Voting, TABNET
+Available Metrics: roc_auc, accuracy, f1, precision, recall, rmse, wmae, rmsle, mae, r2
+Available Problem Types: classification, regression
+Available Fold Types: SKF, KF, GKF, GSKF, RKF
+
+ *** Configuration *** 
+
+Problem Type Selected: REGRESSION
+Metric Selected: RMSLE
+Fold Type Selected: RKF
+Calculate Train Probabilities: False
+Calculate Test Probabilities: False
+Early Stopping: True
+GPU: False
+CPU times: user 66 ms, sys: 42 ms, total: 108 ms
+Wall time: 106 ms
+In [70]:
+%%time
+
+Params = {'n_estimators': 200,"n_jobs":-1}
+
+results = base.Train_ML(Params,'LGBM',e_stop=40, y_log=True)
+Training Folds: 100%|██████████| 10/10 [06:04<00:00, 36.48s/it]
+Overall Train RMSLE: 1.0422
+Overall OOF RMSLE: 1.0457 
+CPU times: user 6min 1s, sys: 3.07 s, total: 6min 4s
+Wall time: 6min 4s
+In [74]:
+%%time
+
+base.X_train['results'] = results[0]
+base.X_test['results'] = results[1]
+In [75]:
+%%time
+
+Params1 = {'learning_rate': 0.08692991511139551, 'num_leaves': 85, 'max_depth': 15, 'min_data_in_leaf': 95,
+          'feature_fraction': 0.7567559292276751, 'bagging_fraction': 0.9472874885021447, 'bagging_freq': 1,
+           'min_child_weight': 1, 'scale_pos_weight': 4,'n_estimators': 200}
+
+results1 = base.Train_ML(Params1,'LGBM',e_stop=40, y_log=True)
+Training Folds: 100%|██████████| 10/10 [03:55<00:00, 23.56s/it]
+Overall Train RMSLE: 1.0398
+Overall OOF RMSLE: 1.0458 
+CPU times: user 3min 52s, sys: 3.08 s, total: 3min 55s
+Wall time: 3min 55s
+Submission
+In [89]:
+%%time
+
+xTest = results[1]
+xTest1 = results1[1] 
+
+sample['Premium Amount'] = xTest * 0.53348895 + xTest1 * 0.46651105
+
+sample.to_csv('submission.csv', index = False)
+sample.head()
+CPU times: user 1.63 s, sys: 54.9 ms, total: 1.69 s
+Wall time: 1.69 s
+Out[89]:
+id Premium Amount
+0 1200000 858.082129
+1 1200001 793.615879
+2 1200002 789.564310
+3 1200003 802.256142
+4 1200004 752.896376

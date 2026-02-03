@@ -1,0 +1,3455 @@
+Import
+In [1]:
+from IPython.display import clear_output
+In [2]:
+AUTOGLUON = False
+# AUTOGLUON =  True
+# !pip install ray==2.10.0 autogluon.tabular ipywidgets catboost==1.2.5
+# clear_output()
+In [3]:
+import numpy as np
+import pandas as pd
+import math
+!pip install -q scikit-learn==1.5.2
+clear_output()
+In [4]:
+import datetime
+import sys
+
+import matplotlib
+import matplotlib as mpl
+import matplotlib.cm as cmap
+import matplotlib.colors as mpl_colors
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+
+import seaborn as sns
+
+def hex_to_rgb(h):
+    h = h.lstrip('#')
+    return tuple(int(h[i:i+2], 16)/255 for i in (0, 2, 4))
+
+# palette = ['#b4d2b1', '#568f8b', '#1d4a60', '#cd7e59', '#ddb247', '#d15252']
+# palette_rgb = [hex_to_rgb(x) for x in palette]
+# cmap = mpl_colors.ListedColormap(palette_rgb)
+# colors = cmap.colors
+bg_color= '#fdfcf6'
+
+black, red, green, blue = ['#000000', '#ff0000', '#00ff00', '#0000ff']
+
+custom_params = {
+    "axes.spines.right": False,
+    "axes.spines.top": False,
+    'grid.alpha':0.3,
+    'figure.figsize': (16, 6),
+    'axes.titlesize': 'Large',
+    'axes.labelsize': 'Large',
+    'figure.facecolor': bg_color,
+    'axes.facecolor': bg_color
+}
+
+sns.set_theme(
+    style='whitegrid',
+#     palette=sns.color_palette(palette),
+    rc=custom_params
+)
+
+from plotly.offline import init_notebook_mode, iplot, plot
+import plotly.express as px
+import plotly as py
+#init_notebook_mode(connected=True)
+import plotly.graph_objs as go
+
+import scipy.stats as st
+
+from warnings import simplefilter
+simplefilter("ignore")
+
+import random
+import os
+
+SEED = 2024
+def seed_everything(seed=42):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+seed_everything(SEED)
+
+from IPython.display import clear_output
+from tqdm import tqdm, trange
+
+from sklearn.linear_model import *
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.neural_network import MLPRegressor
+
+from sklearn.ensemble import AdaBoostRegressor
+from sklearn.ensemble import BaggingRegressor
+from sklearn.ensemble import ExtraTreesRegressor
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor
+
+from xgboost import XGBRegressor
+from catboost import CatBoostRegressor, Pool
+from lightgbm import LGBMRegressor
+from lightgbm import early_stopping, log_evaluation
+
+
+from lightgbm import LGBMClassifier, LGBMRegressor
+from lightgbm import early_stopping, log_evaluation
+from sklearn.linear_model import LogisticRegression
+import catboost
+from xgboost import XGBClassifier
+
+from sklearn.pipeline import make_pipeline, Pipeline
+
+# Encoders
+from sklearn.preprocessing import *
+from category_encoders.leave_one_out import LeaveOneOutEncoder 
+from category_encoders import TargetEncoder, WOEEncoder
+
+# Scalers
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, MaxAbsScaler, RobustScaler, Normalizer
+
+from sklearn.ensemble import *
+from sklearn.compose import *
+
+from scipy.stats.mstats import gmean, hmean
+from scipy.stats import mode
+from numpy import mean, median
+
+import re
+
+from sklearn.model_selection import *
+from sklearn.metrics import *
+from sklearn.base import clone
+from sklearn.calibration import CalibrationDisplay, CalibratedClassifierCV
+from sklearn.feature_selection import *
+from sklearn.metrics import root_mean_squared_log_error
+
+# if not AUTOGLUON :
+#     import eli5
+#     from eli5.sklearn import PermutationImportance
+#     import shap
+
+from termcolor import colored
+
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers, models, Sequential
+from tensorflow.keras import backend as K
+
+from sklearn.inspection import PartialDependenceDisplay
+🤔 PROBLEM
+In [5]:
+PROBLEM = 'regression'
+
+TARGET = 'Premium Amount'
+
+def load_datasets():
+    train = pd.read_csv('/kaggle/input/playground-series-s4e12/train.csv')
+    test = pd.read_csv('/kaggle/input/playground-series-s4e12/test.csv')
+    sample_sub = pd.read_csv('/kaggle/input/playground-series-s4e12/sample_submission.csv')
+    original = pd.read_csv('/kaggle/input/insurance-premium-prediction/Insurance Premium Prediction Dataset.csv')
+    
+    train = train.drop(['id'], axis=1)
+    test = test.drop(['id'], axis=1)
+
+    train['nans'] = train.isnull().sum(axis=1).astype(float)
+    test['nans'] = test.isnull().sum(axis=1)
+    original['nans'] = original.isnull().sum(axis=1)
+
+    return train, test, original, sample_sub # don't use original
+
+def SCORE(y_true, y_pred):
+    return root_mean_squared_log_error(y_true, y_pred)
+
+def LOSS(y_true, y_pred):
+    return root_mean_squared_log_error(y_true, np.clip(y_pred, 20, 4999))
+    
+
+SCORE_NAME = 'RMSLE'
+
+OBJ = -1 # 1 maximize score, -1 minimize score
+🔩 ENGINE
+💾 Database
+In [6]:
+import shutil
+
+INPUT = '/kaggle/input/insurance-4-12/'
+
+class DatasetCollection():
+    '''
+        Save and load datasets, i.e. (train, test)
+    '''
+    
+    def __init__(self, dir: str = 'datasets') -> None :
+        self.dir_ = dir 
+        if not os.path.exists(self.dir_) : 
+            os.mkdir(self.dir_)
+
+        self.data_ = {}
+        
+    def __str__(self) -> str :
+        s = ''
+        for name, ds in self.data_.items() :
+            s += f"{name}, {ds['description']} :\n"
+            for df in ['train', 'test'] :
+                if ds[df] is not None:
+                    s += f'{df}, {ds[df].shape[0]} rows {ds[df].shape[1]} columns\n'
+            s += '\n'
+        return s
+    
+    def __repr__(self) -> str :
+        return 'DatasetCollection :\n\n' + self.__str__()
+        
+    def load(self) -> None :
+        path = os.path.join(INPUT, self.dir_)
+        if not os.path.exists(path) :
+            print('no datasets found')
+            return
+        listdir = os.listdir(path)
+        for name in listdir :
+            self.data_[name] = {
+                'train' : pd.read_csv(os.path.join(path, name, 'train.csv')) if os.path.exists(os.path.join(path, name, 'train.csv')) else None,
+                'test' : pd.read_csv(os.path.join(path, name, 'test.csv')) if os.path.exists(os.path.join(path, name, 'test.csv')) else None,
+            }
+            if os.path.exists(os.path.join(path, name, 'description.txt')):
+                f = open(os.path.join(path, name, 'description.txt'), 'r')
+                self.data_[name]['description'] = f.read()
+                f.close()
+            else:
+                self.data_[name]['description'] = ''
+                
+    def save(self) -> None :
+        for name, ds in self.data_.items() :
+            if not os.path.exists(os.path.join(self.dir_, name)) : 
+                os.mkdir(os.path.join(self.dir_, name))
+            df = self.data_[name]['train']
+            if df is not None :
+                df.to_csv(os.path.join(self.dir_, name, 'train.csv'), index=False)
+            df = self.data_[name]['test']
+            if df is not None :
+                df.to_csv(os.path.join(self.dir_, name, 'test.csv'), index=False)
+            f = open(os.path.join(self.dir_, name, 'description.txt'), 'w')
+            f.write(self.data_[name]['description'])
+            f.close()
+        
+    def put(self, name: str = 'loaded', train: pd.DataFrame = None, test: pd.DataFrame = None, description: str = '',) -> None :
+        self.data_[name] = {
+            'train' : train.copy() if train is not None else None,
+            'test'  : test.copy() if test is not None else None,
+            'description' : description,
+        }
+    
+    def train(self, name: str = 'loaded') -> pd.DataFrame :
+        df = self.data_[name]['train']
+        if df is None :
+            return None
+        return df.copy()
+    
+    def test(self, name: str = 'loaded') -> pd.DataFrame :
+        df = self.data_[name]['test']
+        if df is None :
+            return None
+        return df.copy()
+    
+    def X_test(self, name: str = 'loaded') -> pd.DataFrame :
+        df = self.data_[name]['test']
+        if df is None :
+            return None
+        return df.copy()
+    
+    def X(self, name: str = 'loaded') -> pd.DataFrame :
+        df = self.data_[name]['train'].copy()
+        if df is None :
+            return None
+        cols = df.columns.tolist()
+        if TARGET in cols:
+            cols.remove(TARGET)
+        return df[cols].copy()
+    
+    def y(self, name: str = 'loaded') -> pd.Series :
+        df = self.data_[name]['train'].copy()
+        if df is None :
+            return None
+        cols = df.columns.tolist()
+        if TARGET in cols:
+            return df[TARGET]
+        return None
+
+    def union(self, name: str = 'loaded') -> pd.DataFrame :
+        return pd.concat([self.X(name), self.test(name)])
+    
+    def names(self) -> list :
+        return list(self.data_.keys())
+
+    def summary(self, name : str = 'loaded', dataframes : list = ['train', 'test'], tab : bool = True, plots : bool = False, info : bool = True, nrows : int = 3) -> None :
+        for df_name in dataframes :
+            df = self.data_[name][df_name]
+            print(colored(f'\n---------- {name} {df_name} ----------:\n', 'red'))
+                    
+            if tab:
+                display(df.head(nrows))
+                display(df.tail(nrows))
+                print(colored(f'{name} has {df.shape[0]} rows, {df.shape[1]} columns\n', 'blue'))
+        
+            inf = pd.DataFrame(df.dtypes).reset_index().rename(columns={'index':'column', 0:'type'})
+            df_missed = pd.DataFrame(df.isnull().sum()).reset_index().rename(columns={'index':'column', 0:'missed'})
+            df_unique = pd.DataFrame(df.nunique()).reset_index().rename(columns={'index':'column', 0:'unique'})
+            inf['missed'] = df_missed['missed']
+            inf['unique'] = df_unique['unique']
+            inf['duplicate'] = df.duplicated().sum()
+            
+            desc = pd.DataFrame(df.describe(include='all').transpose())
+            if 'min' in desc.columns.tolist():
+                inf['min'] = desc['min'].values
+                inf['max'] = desc['max'].values
+                inf['avg'] = desc['mean'].values
+                inf['std dev'] = desc['std'].values
+            if 'top' in desc.columns.tolist():
+                inf['top value'] = desc['top'].values
+                inf['Freq'] = desc['freq'].values    
+            
+            if info:
+                display(inf.style.background_gradient(subset='missed', cmap='Reds').background_gradient(subset='unique', cmap='Greens'))
+          
+            if plots:
+                print()
+                if df_missed['missed'].sum() > 0:
+                    fig, ax = plt.subplots(1, 1, figsize=(24, 5))
+                    sns.barplot(df_missed[df_missed['missed'] > 0], x='column', y='missed', ax=ax)
+                    ax.set_title(f'{name} missed values') 
+                    ax.bar_label(ax.containers[0])
+                    plt.tight_layout()
+                    plt.show()
+        
+                fig, ax = plt.subplots(1, 1, figsize=(24, 5))
+                sns.barplot(df_unique[df_unique['unique'] > 0], x='column', y='unique', ax=ax)
+                ax.set_title(f'{name} unique values')
+                ax.bar_label(ax.containers[0])
+                plt.tight_layout()
+                plt.show()
+
+
+
+import json
+names = {}
+
+class CrossValidation() :
+
+    def __init__(
+        self,
+        name : str               = 'cv',
+        estimator_class  : str   = 'unknown',
+        dataset_name : str       = 'unknown',
+        params : dict            = {},
+        n_splits : int           = 5, 
+        n_repeats : int          = 1, 
+        oof_train                = None, 
+        oof_true                 = None, 
+        oof_test                 = None, 
+        submission               = None,
+        oof_scores : list        = [],
+        description : str        = '',
+        iteration_time : float   = 0.0,
+    ) -> None :
+
+        self.summary = {
+            'name' : name,
+            'estimator_class' : estimator_class,
+            'dataset_name' : dataset_name,
+            'params' : params,
+            'n_splits' : n_splits,
+            'n_repeats' : n_repeats,
+            'description' : description,
+            'scores' : oof_scores,
+        }
+        self.oof = {
+            'train'        : oof_train,
+            'test'         : oof_test,
+            'true'         : oof_true,
+        }
+
+    def __str__(self) -> str :
+        s = ''
+        for k, v in self.summary.items() :
+            if k != 'params':
+                s += '    ' + k + ' '* (20-len(k)) + ':' + str(v) + '\n'
+        s += 'params:\n'
+        p = self.summary['params']
+        if type(p) is str :
+             s += p + '\n\n'
+        else :
+            for k, v in p.items() :
+                s += '    ' + k + ' '* (20-len(k)) + ':' + str(v) + '\n'
+        for df_name, df in self.oof.items() :
+            if df is not None:
+                s += f'oof {df_name}, {df.shape[0]} rows\n'
+        s += '\n'
+        return s
+    
+    def __repr__(self) -> str :
+        return 'CrossValidation:\n' + self.__str__()
+
+    def load(self, dir : str) -> bool :
+        if not os.path.exists(os.path.join(dir, 'summary.json')):
+            print('directory', dir, 'has no summary')
+            return False
+
+        f = open(os.path.join(dir, 'summary.json'), 'r')
+        summ = f.read()
+        f.close()
+        self.summary = json.loads(summ)
+        
+        for df_name, df in self.oof.items() :
+            self.oof[df_name] = pd.read_csv(os.path.join(dir, f'{df_name}.csv')).to_numpy().flatten() if os.path.exists(os.path.join(dir, f'{df_name}.csv')) else None
+        return True
+
+    def save(self, dir : str) -> None :
+        name = self.summary['name']
+        if not os.path.exists(os.path.join(dir, name)) : 
+            os.mkdir(os.path.join(dir, name))
+
+        for df_name, arr in self.oof.items() :
+            if arr is not None:
+                df = pd.DataFrame()
+                df['value'] = arr
+                df.to_csv(os.path.join(dir, name, f'{df_name}.csv'), index=False)
+
+        summary = json.dumps(self.summary, indent=4)
+        f = open(os.path.join(dir, name, 'summary.json'), 'w')
+        f.write(summary)
+        f.close()
+
+    def display(self, estimator, verbose = 2) -> None :
+        estimator.upload_cv(self)
+        estimator.display_cv_results()
+        if verbose > 1 :
+            estimator.display_cv_plots()
+
+    def run(self, estimator, db) :
+        '''
+            rerun cv, put new cv into db
+            return new cv
+        '''
+        s = self.summary
+        cv = estimator.crossvalidate(
+            db.datasets.train(s['dataset_name']),
+            db.datasets.test(s['dataset_name']),
+            name = s['name'],
+            description = s['description'],
+            n_splits = s['n_splits'],
+            n_repeats = s['n_repeats'],
+            dataset_name = s['dataset_name'],
+        )
+        db.cvs.put(cv)
+        return cv
+
+    def submit(self) :
+        '''
+            oof test -> .csv
+        '''
+        sub = sample_sub.copy()
+        sub[TARGET] = self.oof['test_pred']
+        sub.to_csv(f"cv_{self.summary['name']}.csv", index=False)
+        display(sub.head(3))
+
+
+
+class CVCollection():
+    '''
+        Save and load CV settings, i.e. model, perameters, number of
+        splits and repeats, and OOF data.
+    '''
+    
+    def __init__(self, dir: str = 'cvs') -> None :
+        self.dir_ = dir 
+        if not os.path.exists(self.dir_) : 
+            os.mkdir(self.dir_)
+
+        self.data_ = {}
+        
+    def __str__(self) -> str :
+        s = ''
+        for _, cv in self.data_.items() :
+            s += str(cv) + '\n'
+        return s
+    
+    def __repr__(self) -> str :
+        return 'CVCollection :\n\n' + self.__str__()
+
+    def load(self) -> None :
+        '''
+            load cvs from input directory
+        '''
+        path = os.path.join(INPUT, self.dir_)
+        if not os.path.exists(path) :
+            print('no datasets found')
+            return
+        listdir = os.listdir(path)
+        for name in listdir :
+            cv = CrossValidation()
+            ok = cv.load(os.path.join(path, name))
+            if ok :
+                self.data_[name] = cv
+                
+    def save(self) -> None :
+        '''
+             save all cvs
+        '''
+        for name, cv in self.data_.items() :
+            cv.save(os.path.join(self.dir_))
+        
+    def put(self, cv : CrossValidation) -> None :
+        '''
+            put cv into database
+        '''
+        self.data_[cv.summary['name']] = cv
+
+    def get(self, cv_name : str) -> CrossValidation :
+        '''
+            returns cv by name
+        '''
+        if not cv_name in self.data_:
+            print(colored(f'cv {cv_name} not found'), 'red')
+            return None
+        return self.data_[cv_name]
+
+class Database():
+    '''
+        Save database when notebook saved with commit,
+        load on run.
+    '''
+    
+    def __init__(self, dir: str = 'database') -> None :
+        self.dir_ = dir 
+        if not os.path.exists(self.dir_) : 
+            os.mkdir(self.dir_)
+       
+        self.datasets = DatasetCollection(dir = os.path.join(self.dir_, 'datasets'))
+        self.cvs = CVCollection(dir = os.path.join(self.dir_, 'cvs'))
+        
+    def __str__(self) -> str :
+        s = '\nDatasets:\n' + self.datasets.__str__()
+        s += '\nCVs:\n' + self.cvs.__str__()
+        return s
+    
+    def __repr__(self) -> str :
+        return 'Database :\n\n' + self.__str__()
+        
+    def load(self) -> None :
+        self.datasets.load()
+        self.cvs.load()
+        
+    def save(self) -> None :
+        self.datasets.save()
+        self.cvs.save()        
+        shutil.make_archive(self.dir_, 'zip', os.path.join('/kaggle/working', self.dir_))
+⚖ Averager
+We will use it to average different prediction in fold with weights optimized
+In [7]:
+from functools import partial
+import scipy as sp
+
+class Averager(object):
+
+    def __init__(self, method='nelder-mead', round_avg=False, options={}):
+        self.weights_ = []
+        self.opt_ = ''
+        self.method_ = method
+        self.round_avg_ = round_avg
+        self.options_ = options
+
+    def _weighted_average(self, weights, values):
+        qty = len(values)
+        sum_values = values[0] * weights[0]
+        sum_weights = weights[0]
+        for i in range(1, qty):
+            sum_values += values[i] * weights[i]
+            sum_weights += weights[i]
+        if self.round_avg_:
+            return int(np.round(sum_values / sum_weights, 0))
+        return sum_values / sum_weights
+
+    def _score(self, weights, values, true_labels):
+        preds = self._weighted_average(weights, values)
+        return LOSS(true_labels, preds)
+
+    def fit(self, values, true_labels):
+        qty = len(values)
+        initial_weights = [1 for _ in range(qty)]
+        score_partial = partial(self._score, values=values, true_labels=true_labels)
+        self.opt_ = sp.optimize.minimize(score_partial, initial_weights, method=self.method_, options=self.options_)
+        self.weights_ = self.opt_['x']
+
+    def predict(self, values):
+        assert len(self.weights_) == len(values), 'Averager error, must be fitted before predict'
+        return self._weighted_average(self.weights_, values)
+
+    def fit_predict(self, values, true_labels):
+        self.fit(values, true_labels)
+        return self.predict(values)
+
+    def weights(self):
+        return self.weights_
+
+    def optimization(self):
+        return self.opt_
+💼 Estimators Classes
+In [8]:
+class Estimator():
+
+    def __init__(self, name : str = 'model', params : list = {}, verbose : int = 1) :
+        self.name = name
+        self.models_ = []
+        self.model_ = None
+        self.params_ = params
+        self.verbose_ = verbose
+        
+        self.cv = None
+
+    def fit(self, X, y):
+        pass
+
+    def fit_predict(self, X, y, X_val, y_val):
+        pass
+
+    def fit_predict_proba(self, X, y, X_val, y_val):
+        pass
+
+    def predict_proba(self, X):
+        pass
+
+    def predict(self, X):
+        pass
+
+    def crossvalidate(
+            train_: pd.DataFrame, 
+            test_:  pd.DataFrame,
+            n_splits=5, n_repeats=1, random_state=42, verbose=1, dataset_name='unknown', use_tqdm=True, clear=True,
+        ) -> CrossValidation :
+        pass
+    
+    def display_cv_plots():
+        pass
+    
+    def display_cv_results():
+        pass
+    
+    def upload_cv(self, cv : CrossValidation) -> None :
+        self.cv = cv
+    
+    def submit():
+        pass
+  
+In [9]:
+class Regressor(Estimator):
+
+    def fit_predict(self, X, y, X_val, y_val):
+        self.fit(X, y, X_val, y_val)
+        return self.predict(X_val)
+
+    def fit_predict_proba(self, X, y, X_val, y_val):
+        self.fit(X, y, X_val, y_val)
+        return self.predict(X_val)
+
+    def predict_proba(self, X):
+        return self.predict(X)
+    
+    def predict(self, X):
+        assert self.model_ is not None, 'Model error, must be fitted before predict'
+        return self.model_.predict(X)
+        
+    def crossvalidate(self,
+            train_: pd.DataFrame, 
+            test_:  pd.DataFrame,
+            name : str = None,            
+            description : str = '',
+            n_splits=5, n_repeats=1, random_state=42, verbose=2, dataset_name='unknown', use_tqdm=True, clear=True,
+        ) -> CrossValidation :
+
+        if name is None :
+            name = self.name
+        
+        # debug
+        train, test = train_.copy(), test_.copy()
+        train_n_rows = train.shape[0]
+        if verbose > 0 :
+            print(f'\n---------- cv: train: {train.shape}, test: {test.shape} -----------\n')
+
+        features = test.columns.to_list()
+
+        folds = RepeatedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=random_state)
+
+        oof_test = np.zeros(len(test))
+        oof_train = np.zeros(len(train))
+        oof_true = np.zeros(len(train))
+        oof_scores = []
+
+        assert train_n_rows == len(oof_train) and train_n_rows == len(oof_true), f"train ({train_n_lows}), oof_test_proba ({len(oof_train_proba)}), oof_true ({len(oof_true)}) doesn't match"
+        
+        if use_tqdm and verbose > 0:
+            data = tqdm(enumerate(folds.split(train[features], train[TARGET])), desc='Fold', total=n_splits*n_repeats, file=sys.stdout, colour='GREEN')
+        else:
+            data = enumerate(folds.split(train[features], train[TARGET]))
+
+        start = datetime.datetime.now()
+
+        for i, (train_idx,val_idx) in data:
+
+            train_labels =  train.loc[train_idx, TARGET]
+            val_labels =  train.loc[val_idx, TARGET]
+            train_features = train.loc[train_idx, features]
+            val_features = train.loc[val_idx, features]
+
+            train_labels_log = np.log1p(train_labels)
+            val_labels_log = np.log1p(val_labels)
+    
+            val_preds_log =  self.fit_predict(train_features, train_labels_log, val_features, val_labels_log)
+            test_preds_log = self.predict(test)
+
+            val_preds = np.clip(np.expm1(val_preds_log), a_min = 20.0, a_max = 4999.0)
+            test_preds = np.clip(np.expm1(test_preds_log), a_min = 20.0, a_max = 4999.0)
+
+            oof_test += test_preds
+
+            score = SCORE(val_labels, val_preds)
+            oof_scores.append(score)
+            
+            oof_train[val_idx] = val_preds
+            oof_true[val_idx] = val_labels
+            assert train_n_rows == len(oof_train) and train_n_rows == len(oof_true), f"train ({train_n_lows}), oof_test_proba ({len(oof_train_proba)}), oof_true ({len(oof_true)}) doesn't match"
+
+            if clear:
+                clear_output(wait=True)
+ 
+            if verbose > 0:
+                print('\nfold', i, SCORE_NAME, score, '\n')
+
+        if clear:
+            clear_output(wait=True)
+
+        iteration_time = (datetime.datetime.now() - start).total_seconds() / n_splits * n_repeats
+
+        oof_test /= n_splits * n_repeats
+
+        assert train_n_rows == len(oof_train) and train_n_rows == len(oof_true), f"train ({train_n_lows}), oof_test_proba ({len(oof_train_proba)}), oof_true ({len(oof_true)}) doesn't match"
+        
+        self.cv = CrossValidation(
+            name                = name,
+            estimator_class     = self.name,
+            dataset_name        = dataset_name,
+            params              = self.params_,
+            n_splits            = n_splits, 
+            n_repeats           = n_repeats, 
+            oof_train           = oof_train, 
+            oof_true            = oof_true, 
+            oof_test            = oof_test, 
+            oof_scores          = oof_scores,
+            description         = description,
+            iteration_time      = iteration_time,            
+        )
+
+        if verbose > 0:
+            self.display_cv_results()
+        if verbose > 1:
+            self.display_cv_plots()
+        return self.cv
+    
+    def cv_scores(self):       
+        oof_train = self.cv.oof['train']
+        oof_true = self.cv.oof['true']
+
+        if 'scores' in self.cv.summary :
+            mean_oof_score = np.mean(self.cv.summary['scores'])
+        else:
+            mean_oof_score = None
+            
+        score = SCORE(oof_true, oof_train)
+        R2 = r2_score(oof_true, oof_train)
+        
+        self.cv_scores_ = {
+            'Model': self.name,
+            'Dataset': self.cv.summary['dataset_name'] if 'dataset_name' in self.cv.summary else 'n/a',
+            f'Mean OOF {SCORE_NAME}': mean_oof_score,
+            f'{SCORE_NAME}': score,
+            'R2': R2,
+            'iteration_time': self.cv.summary['iteration_time'] if 'iteration_time' in self.cv.summary else 'n/a',
+        }    
+        return self.cv_scores_        
+
+    def display_cv_results(self):
+        scores = self.cv_scores()
+        print(colored(f'\n---------- {self.name} {SCORE_NAME}: {scores[SCORE_NAME]} ----------:\n', 'red'))
+        display(pd.DataFrame([scores,]))
+                
+    def display_cv_plots(self):
+        
+        scores = self.cv_scores()
+        
+        fig, axs = plt.subplots(1, 3, figsize=(20, 10))
+        axs = axs.flatten()
+
+        if 'scores' in self.cv.summary:
+            sns.boxplot(self.cv.summary['scores'], ax=axs[0])
+            axs[0].set_title(f'OOF {SCORE_NAME}')
+        else:
+            axs[0].set_title(f'OOF {SCORE_NAME} N/A')
+
+        df = pd.DataFrame()
+        df['Actual'] = self.cv.oof['true']
+        df['Predicted'] = self.cv.oof['train']
+        sns.scatterplot(df, x='Actual', y='Predicted', ax=axs[1])
+        sns.lineplot(x=[0, np.max(self.cv.oof['train'])], y=[0, np.max(self.cv.oof['train'])], ax=axs[1], color=red)
+        axs[1].set_title('Actual vs Predicted')
+
+        d = PredictionErrorDisplay.from_predictions(np.array(self.cv.oof['true']), np.array(self.cv.oof['train']), ax=axs[2])
+        axs[2].set_title('Prediction error')
+   
+        plt.tight_layout()
+        plt.show()     
+
+    def submit(self):
+        sub = sample_sub.copy()
+        sub[TARGET] = self.cv.oof['test']
+        score = self.cv_scores()[SCORE_NAME]
+        sub.to_csv(f"{self.name}_{self.cv.summary['name']}_{score:.5f}.csv", index=False)
+        display(sub.head(30))
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+In [12]:
+ 
+class RegressorWrapper(Regressor):
+    
+    def __init__(self, model, name='model', params={}, verbose=1):
+        super().__init__(name=name, params=params, verbose=verbose)
+        self.model_ = model
+        
+    def fit(self, X, y, X_val, y_val):
+        self.model_.fit(X, y)
+
+
+class RegressorToClassifierWrapper(Classifier):
+    
+    def __init__(self, model, name='model', params={}, verbose=1) :
+        super().__init__(name=name, params=params, verbose=verbose)
+        self.model_ = model
+        
+    def fit(self, X, y, X_val, y_val):
+        self.model_.fit(X, y)
+        
+    def predict_proba(self, X):
+        return self.model_.predict(X)
+         
+    def predict(self, X):
+        assert self.model_ is not None, 'Model error, must be fitted before predict'
+        return DECISION(self.model_.predict(X))
+   
+    
+class ClassifierWrapper(Classifier):
+    
+    def __init__(self, model, name='model', params={}, verbose=1):
+        super().__init__(name=name, params=params, verbose=verbose)
+        self.model_ = model
+        
+    def fit(self, X, y, X_val, y_val):
+        self.model_.fit(X, y)    
+    
+class MulticlassWrapper(Multiclass):
+    
+    def __init__(self, model, name='model', params={}, verbose=1):
+        super().__init__(name=name, params=params, verbose=verbose)
+        self.model_ = model
+        
+    def fit(self, X, y, X_val, y_val):
+        self.model_.fit(X, y)
+In [13]:
+class EnsembleRegressor(Regressor):
+    
+    def __init__(self, estimators, name='ENS', params={}, verbose=1, options = {}):
+        super().__init__(name=name, params=params, verbose=verbose)
+        
+        self.estimators_ = estimators
+        self.options_ = options
+        
+    def fit_predict(self, X, y, X_val, y_val):
+        
+        print('\n')
+
+        self.models_ = []
+
+        val_preds = []
+
+        for estimator in self.estimators_:
+            try:
+                m = clone(estimator)
+            except:
+                m = estimator
+            val_p = m.fit_predict(X, y, X_val, y_val)
+            if self.verbose_ > 0:
+                print(colored(f'\n{m.__class__.__name__}: {SCORE(y_val, val_p)}', 'blue'))
+            self.models_.append(m)
+            val_preds.append(val_p)
+        
+        if self.verbose_ > 0:
+            print('\nPREDS:')
+            for pred in val_preds:
+                print(pred)
+
+            preds_mean = np.mean(val_preds, axis=0)
+            print('MEAN:\n', preds_mean)
+
+            print(colored(f'{SCORE_NAME} OF MEAN: {SCORE(y_val, preds_mean)}', 'red'))
+
+        self.averager_ = Averager()
+        VAL_PREDS = self.averager_.fit_predict(val_preds, y_val)
+        if self.verbose_ > 0:
+            print('\nWEIGHTS:\n', self.averager_.weights())
+            print('AVGW (weighted average):\n', VAL_PREDS)
+
+            print(colored(f'{SCORE_NAME} OF AVGW: {SCORE(y_val, VAL_PREDS)}\n\n', 'red'))
+        
+        if 'optimize' in self.options_:
+            if not self.options_['optimize']:
+                return preds_mean
+        return VAL_PREDS
+            
+    def predict(self, X):
+        assert len(self.models_) > 0, 'Model error, must be fitted before predict'
+        if len(self.models_) == 1:
+            return self.models_[0].predict(X)
+
+        preds = [model.predict(X) for model in self.models_]
+        
+        if 'optimize' in self.options_:
+            if not self.options_['optimize']:
+                return np.mean(preds, axis=0)
+        return self.averager_.predict(preds)       
+    
+# EXAMPLE
+estimator = EnsembleRegressor(
+    [
+        RegressorWrapper(LGBMRegressor(n_estimators=100, random_state=42, verbose=-1)) ,
+        RegressorWrapper(XGBRegressor(n_estimators=100, random_state=42, enable_categorical=True)) ,
+    ], 
+    name='ENS',
+)
+unfold_moreShow hidden code
+In [15]:
+class StackRegressor(Regressor):
+    
+    def __init__(self, 
+            estimators : list,
+            datasets_names : list,
+            final_estimator: Estimator,
+            name : str = 'STK', 
+            params : dict = {}, 
+            verbose : int = 2,
+        ):
+        
+        super().__init__(name = name, params = params, verbose = verbose)
+        
+        self.estimators_ = estimators 
+        self.datasets_names_ = datasets_names
+        self.final_estimator_ = final_estimator
+
+        count = len(self.estimators_)
+        if type(self.datasets_names_) is str :
+            self.datasets_names_ = [self.datasets_names_] * count
+        
+    def crossvalidate(self,
+            name : str = None,            
+            description : str = '',
+            n_splits=5, n_repeats=1, random_state=42, verbose=2, use_tqdm=True, clear=True,
+        ) -> CrossValidation :
+
+        if name is None :
+            name = self.name
+        y = DB.datasets.train(self.datasets_names_[0])[TARGET]
+        trn = pd.DataFrame()
+        tst = pd.DataFrame()
+        trn[TARGET] = y
+        for i, estimator in enumerate(self.estimators_) :
+            yi = DB.datasets.train(self.datasets_names_[i])[TARGET]
+            assert np.array_equal(y, yi, equal_nan=True), 'datasets are not equal'
+            cv = estimator.crossvalidate(
+                    DB.datasets.train(self.datasets_names_[i]),
+                    DB.datasets.test(self.datasets_names_[i]),
+                    dataset_name = self.datasets_names_[i], 
+                    n_splits = n_splits,
+                    n_repeats = n_repeats,
+                    clear = False,
+                    verbose = 1,
+                    name = '',
+            )
+            trn[f'est{i}'] = cv.oof['train']
+            tst[f'est{i}'] = cv.oof['test']
+
+        display(trn)
+
+        display(tst)
+            
+        self.cv = self.final_estimator_.crossvalidate(
+                trn, tst,
+                dataset_name = str(self.datasets_names_), 
+                n_splits = 10,
+                n_repeats = 1,
+                clear = clear,
+                use_tqdm = use_tqdm,
+                verbose = verbose,
+                name = name,
+        )
+        return   self.cv
+
+# EXAMPLE
+estimator = StackRegressor(
+    estimators = [
+        RegressorWrapper(LGBMRegressor(n_estimators=100, random_state=42, verbose=-1), name = 'LGBM'),
+        RegressorWrapper(XGBRegressor(n_estimators=100, random_state=42, enable_categorical=True), name = 'XGB'),
+    ],
+    datasets_names = 'lxe',
+    final_estimator = RegressorWrapper(LinearRegression(), name='LR'),
+    name = 'STK_LR'
+)
+unfold_moreShow hidden code
+🔧 Execution settings
+In [17]:
+EVALUATE_DATASETS = True
+EVALUATE_MODELS   = True
+EDA               = True
+SUBMIT            = True
+OPTUNA            = False
+DEBUG             = False
+
+DB                = Database('DATABASE (1)')
+LOAD_DB           = True
+SHOW_CVs          = True
+
+if LOAD_DB :
+    DB.load()
+DB
+Out[17]:
+Database :
+
+
+Datasets:
+cleaned_enccat,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+fe_cat_best,  :
+train, 1200000 rows 22 columns
+test, 800000 rows 21 columns
+
+fe_cat,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+cleaned,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+fe_enccat_best,  :
+train, 1200000 rows 22 columns
+test, 800000 rows 21 columns
+
+fe_enccat,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+loaded,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+fe,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+best,  :
+train, 1200000 rows 1 columns
+test, 800000 rows 1 columns
+
++original,  :
+train, 1477019 rows 21 columns
+test, 800000 rows 20 columns
+
+cleaned_cat,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+cleaned_allcat,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+tmp,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+
+CVs:
+    name                :CAT_3
+    estimator_class     :CATR
+    dataset_name        :fe_cat_best
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.031522940498027, 1.0312244460730067, 1.0332708000684316, 1.0294716827994748, 1.0321887221874737]
+params:
+    loss_function       :RMSE
+    iterations          :3000
+    random_seed         :42
+    use_best_model      :True
+    od_type             :Iter
+    od_wait             :20
+    cat_features        :['Gender', 'Marital Status', 'Education Level', 'Occupation', 'Location', 'Policy Type', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type']
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :XGB_0
+    estimator_class     :XGBR
+    dataset_name        :cleaned_enccat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0500552522578748, 1.0485697936530471, 1.0494952885698516, 1.0475052981778132, 1.0491872627513874]
+params:
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :dataset_eval_cleaned
+    estimator_class     :LGBR
+    dataset_name        :cleaned
+    n_splits            :3
+    n_repeats           :1
+    description         :
+    scores              :[1.050404101173846, 1.0473581656834146, 1.048196142611718]
+params:
+    random_state        :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :XGB_2
+    estimator_class     :XGBR
+    dataset_name        :fe_enccat_best
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.031603080673993, 1.0314631589681642, 1.033289402490744, 1.0293942386279062, 1.032331254100645]
+params:
+    n_estimators        :5000
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :LGB_1
+    estimator_class     :LGBR
+    dataset_name        :fe_enccat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0468932074085258, 1.046081220076799, 1.0469935182570433, 1.045120042448295, 1.0471729903705815]
+params:
+    n_esimators         :3000
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :CAT_1
+    estimator_class     :CATR
+    dataset_name        :fe_cat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0484142542939245, 1.0476295445475292, 1.04860348865384, 1.0463903165610908, 1.048147716224586]
+params:
+    loss_function       :RMSE
+    iterations          :300
+    random_seed         :42
+    use_best_model      :True
+    od_type             :Iter
+    od_wait             :20
+    cat_features        :['Gender', 'Marital Status', 'Education Level', 'Occupation', 'Location', 'Policy Type', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type']
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :CAT_0
+    estimator_class     :CATR
+    dataset_name        :cleaned_allcat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0593137501761138, 1.0578033862508083, 1.0593198132020079, 1.0574478719423, 1.059477340553157]
+params:
+    iterations          :1000
+    learning_rate       :0.05
+    random_seed         :42
+    use_best_model      :True
+    od_type             :Iter
+    od_wait             :20
+    cat_features        :['Age', 'Gender', 'Annual Income', 'Marital Status', 'Number of Dependents', 'Education Level', 'Occupation', 'Health Score', 'Location', 'Policy Type', 'Previous Claims', 'Vehicle Age', 'Credit Score', 'Insurance Duration', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type', 'Year']
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :LGB_0
+    estimator_class     :LGBR
+    dataset_name        :cleaned_enccat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.04987085407026, 1.0487235765947593, 1.0495423119842955, 1.0472961906197362, 1.0491638016806915]
+params:
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :dataset_eval_+original
+    estimator_class     :LGBR
+    dataset_name        :+original
+    n_splits            :3
+    n_repeats           :1
+    description         :
+    scores              :[1.1875397270158508, 1.1852253099608099, 1.1898604717927086]
+params:
+    random_state        :42
+oof train, 1477019 rows
+oof test, 800000 rows
+oof true, 1477019 rows
+
+
+    name                :dataset_eval_fe
+    estimator_class     :LGBR
+    dataset_name        :fe
+    n_splits            :3
+    n_repeats           :1
+    description         :
+    scores              :[1.0480733920775132, 1.0448763441759328, 1.0461529497456654]
+params:
+    random_state        :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :XGB_1
+    estimator_class     :XGBR
+    dataset_name        :fe_enccat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0480892089126679, 1.0474703952899438, 1.047814143071344, 1.045949749165228, 1.0473473764610168]
+params:
+    n_estimators        :5000
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :dataset_eval_loaded
+    estimator_class     :LGBR
+    dataset_name        :loaded
+    n_splits            :3
+    n_repeats           :1
+    description         :
+    scores              :[1.0503971124668876, 1.047443106268908, 1.0480381055144634]
+params:
+    random_state        :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :LGB_2
+    estimator_class     :LGBR
+    dataset_name        :fe_enccat_best
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.031798858181761, 1.031420521819355, 1.033414084743485, 1.0296223357737186, 1.0323620968230145]
+params:
+    n_estimators        :3000
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :CAT_2
+    estimator_class     :CATR
+    dataset_name        :fe_cat_best
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0317946015589698, 1.0314823200862921, 1.033493228489753, 1.0298239224388515, 1.0323135868644455]
+params:
+    loss_function       :RMSE
+    iterations          :300
+    random_seed         :42
+    use_best_model      :True
+    od_type             :Iter
+    od_wait             :20
+    cat_features        :['Gender', 'Marital Status', 'Education Level', 'Occupation', 'Location', 'Policy Type', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type']
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+📌 Models
+In [18]:
+ESTIMATORS = {} # for cv load / rerun
+In [19]:
+if AUTOGLUON :
+    
+    from autogluon.tabular import TabularPredictor
+    
+    class AGClassifier(Classifier):
+    
+        def __init__(self, name : str = 'AGC', params : dict = {}, verbose : int = 1, time_limit : int = 300, eval_metric : str = 'roc_auc') :
+            super().__init__(name=name, params=params, verbose=verbose)
+            
+            self.time_limit_ = time_limit
+            self.eval_metric_ = eval_metric
+            
+        def fit(self, X, y, X_val, y_val):
+            X[TARGET]  = y
+            
+            self.model_ = TabularPredictor(
+                label = TARGET,
+                eval_metric = self.eval_metric_,
+                problem_type = 'binary',
+            ).fit(
+                X,
+                presets = 'best_quality',
+                time_limit = self.time_limit_,
+                verbosity = self.verbose_,
+                ag_args_fit = {'num_cpus': 4},
+            )
+            
+        def predict(self, X):
+            pred = self.model_.predict(X)
+            print('pred:', pred)
+            return pred    
+            
+        def predict_proba(self, X):
+            proba = self.model_.predict_proba(X)
+            print('proba:', proba)
+            return proba.loc[:, 1]    
+        
+    
+    class AGRegressor(Regressor):
+    
+        def __init__(self, name : str = 'AGR', params : dict = {}, verbose : int = 1, time_limit : int = 300, eval_metric : str = 'root_mean_squared_error') :
+            super().__init__(name=name, params=params, verbose=verbose)
+            
+            self.time_limit_ = time_limit
+            self.eval_metric_ = eval_metric
+            
+        def fit(self, X, y, X_val, y_val):
+            X[TARGET]  = y
+            
+            self.model_ = TabularPredictor(
+                label = TARGET,
+                eval_metric = self.eval_metric_,
+                problem_type = 'regression',
+            ).fit(
+                X,
+                presets = 'best_quality',
+                time_limit = self.time_limit_,
+                verbosity = self.verbose_,
+                ag_args_fit = {'num_cpus': 4},
+            )
+            
+    ESTIMATORS['AGC'] = AGClassifier
+    ESTIMATORS['AGR'] = AGRegressor
+In [20]:
+class LGBRegressor(Regressor):
+
+    def __init__(self, name='LGBR', params={}, verbose=1) :
+        super().__init__(name=name, params=params, verbose=verbose)
+        
+    def fit(self, X, y, X_val, y_val):
+        self.model_ = LGBMRegressor(**self.params_)
+        self.model_.fit(
+            X, y, 
+            eval_set=(X_val, y_val),
+            callbacks = [log_evaluation(period=100, show_stdv=False), early_stopping(stopping_rounds=200, verbose=self.verbose_)],            
+        )      
+    
+
+class LGBClassifier(Classifier):
+
+    def __init__(self, name='LGBC', params={}, verbose=1) :
+        super().__init__(name=name, params=params, verbose=verbose)
+        
+    def fit(self, X, y, X_val, y_val):
+        self.model_ = LGBMClassifier(**self.params_)
+        self.model_.fit(
+            X, y, 
+            eval_set=(X_val, y_val),
+            callbacks = [log_evaluation(period=100, show_stdv=False), early_stopping(stopping_rounds=200, verbose=self.verbose_)],            
+        )      
+
+    
+ESTIMATORS['LGBC'] = LGBClassifier
+ESTIMATORS['LGBR'] = LGBRegressor    
+In [21]:
+class CATRegressor(Regressor):
+
+    def __init__(self, name='CATR', params={}, verbose=1) :
+        super().__init__(name=name, params=params, verbose=verbose)
+
+        self.evals_results_ = []
+        
+    def fit(self, X, y, X_val = None, y_val = None) :
+        if X_val is not None :
+            cat_features = fcn(X)[1] # X.columns.tolist()            
+            train_pool = Pool(data=X, label=y, cat_features=cat_features)
+            valid_pool = Pool(data=X_val, label=y_val, cat_features=cat_features)
+            self.model_ = catboost.CatBoostRegressor(**self.params_)
+            self.model_.fit(train_pool, eval_set=valid_pool, verbose=20)
+        else:
+            cat_features = X.columns.tolist()            
+            train_pool = Pool(data=X, label=y, cat_features=cat_features)
+            params =  self.model_.get_params()
+            params.update({
+                'iterations'     : int(self.model_.tree_count_ * 1.2),
+            })
+    
+            new_params = {}
+            for k, v in params.items() :
+                if not k in ['use_best_model', 'od_type', 'od_wait', 'early_stopping_rounds'] :
+                    new_params[k] = v
+                    
+            print('\n--- FIT ---', new_params, '---\n')
+                    
+            self.model_ = catboost.CatBoostRegressor(**new_params)
+            self.model_.fit(train_pool, verbose=200)   
+
+        self.evals_results_.append(self.model_.get_evals_result())
+
+    def fit_predict(self, X, y, X_val, y_val):
+        self.fit(X, y, X_val, y_val)
+        return self.predict(X_val)
+        
+    def predict(self, X):
+        best_iter = self.model_.best_iteration_
+        return self.model_.predict(X, ntree_end=best_iter)
+
+    def plot_metrics_(self) :
+        if self.evals_results_  == [] :
+            print('no metrics to plot')
+            return
+    
+        data, metrics_names = [], set()
+        for fold, results in enumerate(self.evals_results_) :
+            for curve, metrics in results.items() :
+                for metric, values in metrics.items() :
+                    metrics_names.add(metric)
+                    for iter, value in enumerate(values) :
+                        item = {
+                            'fold'      : fold,
+                            'iteration' : iter,
+                            'curve'     : curve,
+                             metric     : value,
+                        }   
+                        data.append(item)
+    
+        df = pd.DataFrame(data)
+        nrows = len(metrics_names)
+        fig, ax = plt.subplots(nrows, 1, figsize = (16, 6 * nrows))
+        if nrows > 1 :
+            ax = ax.flatten()
+        else :
+            ax = [ax]
+        for i, metric in enumerate(metrics_names) :
+            sns.lineplot(df, x = 'iteration', y = metric, hue = 'curve', style = 'curve', markers = False, ax = ax[i])
+            ax[i].set_ylabel(metric)
+            # ax[i].set_xticks(range(df['epoch'].max() + 1))
+        plt.tight_layout()
+        plt.show()
+    
+    def display_cv_plots(self) -> None :  
+        super().display_cv_plots()
+        self.plot_metrics_()
+        
+ESTIMATORS['CATR'] = CATRegressor
+In [22]:
+class CATClassifier(Classifier):
+
+    def __init__(self, name='CATC', params={}, verbose=1) :
+        super().__init__(name=name, params=params, verbose=verbose)
+
+        self.evals_results_ = []
+        
+    def fit(self, X, y, X_val = None, y_val = None) :
+        if X_val is not None :
+            if 'cat_features' in self.params_ :
+                cat_features = self.params_['cat_features']
+            else :
+                cat_features = X.columns.tolist()            
+            train_pool = Pool(data=X, label=y, cat_features=cat_features)
+            valid_pool = Pool(data=X_val, label=y_val, cat_features=cat_features)
+            self.model_ = catboost.CatBoostClassifier(**self.params_)
+            self.model_.fit(train_pool, eval_set=valid_pool, verbose=200)
+        else:
+            cat_features = X.columns.tolist()            
+            train_pool = Pool(data=X, label=y, cat_features=cat_features)
+            params =  self.model_.get_params()
+            params.update({
+                'iterations'     : int(self.model_.tree_count_ * 1.2),
+            })
+    
+            new_params = {}
+            for k, v in params.items() :
+                if not k in ['use_best_model', 'od_type', 'od_wait', 'early_stopping_rounds'] :
+                    new_params[k] = v
+                    
+            print('\n--- FIT ---', new_params, '---\n')
+                    
+            self.model_ = catboost.CatBoostClassifier(**new_params)
+            self.model_.fit(train_pool, verbose=200)   
+
+        self.evals_results_.append(self.model_.get_evals_result())
+
+    def fit_predict_proba(self, X, y, X_val, y_val):
+        self.fit(X, y, X_val, y_val)
+        return self.predict_proba(X_val)
+        
+    def predict_proba(self, X):
+        best_iter = self.model_.best_iteration_
+        return self.model_.predict_proba(X, ntree_end=best_iter)[:,-1]
+
+    def plot_metrics_(self) :
+        if self.evals_results_  == [] :
+            print('no metrics to plot')
+            return
+    
+        data, metrics_names = [], set()
+        for fold, results in enumerate(self.evals_results_) :
+            for curve, metrics in results.items() :
+                for metric, values in metrics.items() :
+                    metrics_names.add(metric)
+                    for iter, value in enumerate(values) :
+                        item = {
+                            'fold'      : fold,
+                            'iteration' : iter,
+                            'curve'     : curve,
+                             metric     : value,
+                        }   
+                        data.append(item)
+    
+        df = pd.DataFrame(data)
+        nrows = len(metrics_names)
+        fig, ax = plt.subplots(nrows, 1, figsize = (16, 6 * nrows))
+        if nrows > 1 :
+            ax = ax.flatten()
+        else :
+            ax = [ax]
+        for i, metric in enumerate(metrics_names) :
+            sns.lineplot(df, x = 'iteration', y = metric, hue = 'curve', style = 'curve', markers = False, ax = ax[i])
+            ax[i].set_ylabel(metric)
+            # ax[i].set_xticks(range(df['epoch'].max() + 1))
+        plt.tight_layout()
+        plt.show()
+    
+    def display_cv_plots(self) -> None :  
+        super().display_cv_plots()
+        self.plot_metrics_()
+
+ESTIMATORS['CATC'] = CATClassifier
+In [23]:
+import xgboost as xgb
+
+class XGB():
+        
+    def fit(self, X, y, X_val, y_val):
+        dtrain = xgb.DMatrix(X.to_numpy(), label=y.to_numpy())
+        dvalid = xgb.DMatrix(X_val.to_numpy(), label=y_val.to_numpy())
+        eval_set = [(dtrain, 'train'), (dvalid, 'valid')]        
+        self.model_ = xgb.train(
+            params=self.params_,
+            dtrain=dtrain,
+            num_boost_round=5000,
+            maximize=True,
+            evals=eval_set,
+            early_stopping_rounds=300,
+            verbose_eval=200,
+        )
+        
+    def predict(self, X):
+        return np.clip(self.model_.predict(xgb.DMatrix(X.to_numpy())), a_min = 0,a_max = None)
+
+    def predict_proba(self, X):
+        return self.model_.predict(xgb.DMatrix(X.to_numpy()))
+In [24]:
+class xGBClassifier(Classifier, XGB):
+
+    def __init__(self, name='XGBC', params={}, verbose=1) :
+        Classifier.__init__(self, name=name, params=params, verbose=verbose)
+        
+    def fit(self, X, y, X_val, y_val):
+        XGB.fit(self, X, y, X_val, y_val)
+              
+    def predict_proba(self, X):
+        return XGB.predict_proba(self, X)
+    
+    
+class xGBRegressor(Regressor, XGB):
+
+    def __init__(self, name='XGBR', params={}, verbose=1) :
+        Regressor.__init__(self, name=name, params=params, verbose=verbose)
+        
+    def fit(self, X, y, X_val, y_val):
+        XGB.fit(self, X, y, X_val, y_val)
+              
+    def predict(self, X):
+        return XGB.predict(self, X)    
+ESTIMATORS['XGBC'] = xGBClassifier
+ESTIMATORS['XGBR'] = xGBRegressor    
+In [25]:
+def fcn(df, cat_types = ['object', 'category', 'bool', 'string']):
+    return df.columns.tolist(), df.select_dtypes(include=cat_types).columns.tolist(), df.select_dtypes(exclude=cat_types).columns.tolist()   
+In [26]:
+DATASETS_SCORES = {}
+In [27]:
+def display_scores(scores, x='CV', y=SCORE_NAME, plot=True):
+    if scores == {}:
+        print('scores list is empty')
+        return
+    print('\nCOMPARE:')
+    
+    data = []
+    for cv_, cv_scores_ in scores.items() :
+        item = {'CV' : cv_}
+        for k, v in cv_scores_.items():
+            item[k] = v
+        data.append(item)
+        
+    df = pd.DataFrame(data)
+    display(df.style.background_gradient(subset=df.select_dtypes(include=[float, int]).columns.to_list(), cmap='Greens'))
+
+    if not plot:
+        return
+    mn, mx = df[y].min(), df[y].max()
+    fig, ax = plt.subplots(1, 1, figsize=(15, 5))
+    sns.barplot(df, x=y, y=x, ax=ax)
+    ax.set(xlim=(mn*0.999, mx*1.001))
+    ax.bar_label(ax.containers[0])
+    plt.tight_layout()
+    plt.show()
+unfold_moreShow hidden code
+In [29]:
+def evaluate_dataset(name, clear=True, db=DB, update=False):
+    tmp = 'tmp'
+    if EVALUATE_DATASETS:
+            
+        params = {
+            'random_state'       : 42,
+        }
+        estimator = LGBRegressor(params=params)
+
+        cv_name = f'dataset_eval_{name}'
+
+        cv = None
+        if db is not None and not update:
+            cv = db.cvs.get(cv_name)
+            if cv is not None:
+                if cv.summary['estimator_class'] != estimator.name or cv.summary['params'] != params :
+                    cv = None
+                else :
+                    estimator.upload_cv(cv)
+                    estimator.display_cv_results()
+                    estimator.display_cv_plots()
+        if cv is None :
+            print('encoding categorical features ...', end=' ')
+            enccat(name, tmp)
+            print(name, 'dataset evaluation ...', end=' ')
+            cv = estimator.crossvalidate(
+                DB.datasets.train(tmp), 
+                DB.datasets.test(tmp), 
+                n_splits = 3, 
+                dataset_name=name, 
+                clear=clear, 
+                verbose=2,
+                name=cv_name,
+            )
+            if db is not None:
+                print('saving ...', end=' ')
+                db.cvs.put(cv)
+                # db.save()
+                print('ready\n')
+        
+        DATASETS_SCORES[name] = estimator.cv_scores()
+        
+        # display_scores(DATASETS_SCORES, plot=False)
+unfold_moreShow hidden code
+🔍 LOAD DATASETS
+In [31]:
+train, test, original, sample_sub = load_datasets()
+DB.datasets.put('loaded', train, test)
+In [32]:
+DB.datasets.summary('loaded', plots = True)
+---------- loaded train ----------:
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type ... Vehicle Age Credit Score Insurance Duration Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type Premium Amount nans
+0 19.0 Female 10049.0 Married 1.0 Bachelor's Self-Employed 22.598761 Urban Premium ... 17.0 372.0 5.0 2023-12-23 15:21:39.134960 Poor No Weekly House 2869.0 0.0
+1 39.0 Female 31678.0 Divorced 3.0 Master's NaN 15.569731 Rural Comprehensive ... 12.0 694.0 2.0 2023-06-12 15:21:39.111551 Average Yes Monthly House 1483.0 1.0
+2 23.0 Male 25602.0 Divorced 3.0 High School Self-Employed 47.177549 Suburban Premium ... 14.0 NaN 3.0 2023-09-30 15:21:39.221386 Good Yes Weekly House 567.0 1.0
+3 rows × 21 columns
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type ... Vehicle Age Credit Score Insurance Duration Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type Premium Amount nans
+1199997 19.0 Male 51884.0 Divorced 0.0 Master's NaN 14.724469 Suburban Basic ... 19.0 NaN 6.0 2021-05-25 15:21:39.106582 Good No Monthly Condo 371.0 2.0
+1199998 55.0 Male NaN Single 1.0 PhD NaN 18.547381 Suburban Premium ... 7.0 407.0 4.0 2021-09-19 15:21:39.190215 Poor No Daily Apartment 596.0 2.0
+1199999 21.0 Female NaN Divorced 0.0 PhD NaN 10.125323 Rural Premium ... 18.0 502.0 6.0 2020-08-26 15:21:39.155231 Good Yes Monthly House 2480.0 2.0
+3 rows × 21 columns
+loaded has 1200000 rows, 21 columns
+  column type missed unique duplicate min max avg std dev top value Freq
+0 Age float64 18705 47 0 18.000000 64.000000 41.145563 13.539950 nan nan
+1 Gender object 0 2 0 nan nan nan nan Male 602571
+2 Annual Income float64 44949 88593 0 1.000000 149997.000000 32745.217777 32179.506124 nan nan
+3 Marital Status object 18529 3 0 nan nan nan nan Single 395391
+4 Number of Dependents float64 109672 5 0 0.000000 4.000000 2.009934 1.417338 nan nan
+5 Education Level object 0 4 0 nan nan nan nan Master's 303818
+6 Occupation object 358075 3 0 nan nan nan nan Employed 282750
+7 Health Score float64 74076 532657 0 2.012237 58.975914 25.613908 12.203462 nan nan
+8 Location object 0 3 0 nan nan nan nan Suburban 401542
+9 Policy Type object 0 3 0 nan nan nan nan Premium 401846
+10 Previous Claims float64 364029 10 0 0.000000 9.000000 1.002689 0.982840 nan nan
+11 Vehicle Age float64 6 20 0 0.000000 19.000000 9.569889 5.776189 nan nan
+12 Credit Score float64 137882 550 0 300.000000 849.000000 592.924350 149.981945 nan nan
+13 Insurance Duration float64 1 9 0 1.000000 9.000000 5.018219 2.594331 nan nan
+14 Policy Start Date object 0 167381 0 nan nan nan nan 2020-02-08 15:21:39.134960 142
+15 Customer Feedback object 77824 3 0 nan nan nan nan Average 377905
+16 Smoking Status object 0 2 0 nan nan nan nan Yes 601873
+17 Exercise Frequency object 0 4 0 nan nan nan nan Weekly 306179
+18 Property Type object 0 3 0 nan nan nan nan House 400349
+19 Premium Amount float64 0 4794 0 20.000000 4999.000000 1102.544822 864.998859 nan nan
+20 nans float64 0 8 0 0.000000 7.000000 1.003123 0.886838 nan nan
+---------- loaded test ----------:
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type nans
+0 28.0 Female 2310.0 NaN 4.0 Bachelor's Self-Employed 7.657981 Rural Basic NaN 19.0 NaN 1.0 2023-06-04 15:21:39.245086 Poor Yes Weekly House 3
+1 31.0 Female 126031.0 Married 2.0 Master's Self-Employed 13.381379 Suburban Premium NaN 14.0 372.0 8.0 2024-04-22 15:21:39.224915 Good Yes Rarely Apartment 1
+2 47.0 Female 17092.0 Divorced 0.0 PhD Unemployed 24.354527 Urban Comprehensive NaN 16.0 819.0 9.0 2023-04-05 15:21:39.134960 Average Yes Monthly Condo 1
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type nans
+799997 26.0 Female 35178.0 Single 0.0 Master's Employed 6.636583 Urban Comprehensive NaN 10.0 NaN 6.0 2019-09-30 15:21:39.132191 Poor No Monthly Apartment 2
+799998 34.0 Female 45661.0 Single 3.0 Master's NaN 15.937248 Urban Premium 2.0 17.0 467.0 7.0 2022-05-09 15:21:39.253660 Average No Weekly Condo 1
+799999 25.0 Male 24843.0 Divorced 3.0 High School NaN 24.893939 Suburban Comprehensive NaN 15.0 NaN 8.0 2021-05-18 15:21:39.108562 Good No Rarely House 3
+loaded has 800000 rows, 20 columns
+  column type missed unique duplicate min max avg std dev top value Freq
+0 Age float64 12489 47 0 18.000000 64.000000 41.136440 13.537829 nan nan
+1 Gender object 0 2 0 nan nan nan nan Male 401089
+2 Annual Income float64 29860 80716 0 2.000000 149997.000000 32803.871471 32201.063749 nan nan
+3 Marital Status object 12336 3 0 nan nan nan nan Single 263705
+4 Number of Dependents float64 73130 5 0 0.000000 4.000000 2.009337 1.415241 nan nan
+5 Education Level object 0 4 0 nan nan nan nan Master's 202552
+6 Occupation object 239125 3 0 nan nan nan nan Employed 188574
+7 Health Score float64 49449 388702 0 1.646561 57.957351 25.613036 12.206882 nan nan
+8 Location object 0 3 0 nan nan nan nan Suburban 267190
+9 Policy Type object 0 3 0 nan nan nan nan Premium 267629
+10 Previous Claims float64 242802 10 0 0.000000 9.000000 1.004873 0.982803 nan nan
+11 Vehicle Age float64 3 20 0 0.000000 19.000000 9.571891 5.772200 nan nan
+12 Credit Score float64 91451 550 0 300.000000 849.000000 592.904749 150.116374 nan nan
+13 Insurance Duration float64 2 9 0 1.000000 9.000000 5.018949 2.593759 nan nan
+14 Policy Start Date object 0 158776 0 nan nan nan nan 2022-08-30 15:21:39.134960 98
+15 Customer Feedback object 52276 3 0 nan nan nan nan Average 251217
+16 Smoking Status object 0 2 0 nan nan nan nan Yes 401859
+17 Exercise Frequency object 0 4 0 nan nan nan nan Weekly 204514
+18 Property Type object 0 3 0 nan nan nan nan House 267151
+19 nans int64 0 7 0 0.000000 6.000000 1.003654 0.885899 nan nan
+In [33]:
+if original is not None:
+    summary(original, plots=True)
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type ... Vehicle Age Credit Score Insurance Duration Premium Amount Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type nans
+0 56.0 Male 99990.0 Married 1.0 Master's NaN 31.074627 Urban Comprehensive ... 13 320.0 5 308.0 2022-12-10 15:21:39.078837 Poor Yes Daily Condo 2
+1 46.0 Male 2867.0 Single 1.0 Bachelor's NaN 50.271335 Urban Comprehensive ... 3 694.0 4 517.0 2023-01-31 15:21:39.078837 Good Yes Monthly House 2
+2 32.0 Female 30154.0 Divorced 3.0 Bachelor's NaN 14.714909 Suburban Comprehensive ... 16 652.0 8 849.0 2023-11-26 15:21:39.078837 Poor No Monthly House 1
+3 rows × 21 columns
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type ... Vehicle Age Credit Score Insurance Duration Premium Amount Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type nans
+278857 45.0 Female 557.0 Single 1.0 Bachelor's Self-Employed 62.112230 Rural Premium ... 19 751.0 7 1334.0 2021-01-20 15:21:39.291118 Poor Yes Weekly Apartment 1
+278858 60.0 Male 4064.0 Single 4.0 Master's Employed 6.163919 Rural Premium ... 17 457.0 3 662.0 2024-01-14 15:21:39.291118 Average Yes Weekly Apartment 1
+278859 50.0 Female 66056.0 Divorced 1.0 PhD Unemployed 25.962097 Rural Premium ... 13 797.0 9 1240.0 2021-02-03 15:21:39.291118 Poor No Daily Apartment 1
+3 rows × 21 columns
+dataframe has 278860 rows, 21 columns
+  column type missed unique duplicate min max avg std dev top value Freq
+0 Age float64 4685 47 0 18.000000 64.000000 41.020771 13.549683 nan nan
+1 Gender object 0 2 0 nan nan nan nan Male 139754
+2 Annual Income float64 13955 101693 0 0.000000 149997.000000 42089.085329 35444.517255 nan nan
+3 Marital Status object 5019 3 0 nan nan nan nan Single 91497
+4 Number of Dependents float64 27886 5 0 0.000000 4.000000 1.998048 1.412312 nan nan
+5 Education Level object 0 4 0 nan nan nan nan PhD 69955
+6 Occupation object 81288 3 0 nan nan nan nan Self-Employed 65908
+7 Health Score float64 10597 268263 0 0.035436 93.876090 28.584290 15.966208 nan nan
+8 Location object 0 3 0 nan nan nan nan Suburban 93482
+9 Policy Type object 0 3 0 nan nan nan nan Premium 93298
+10 Previous Claims float64 81288 10 0 0.000000 9.000000 0.998117 1.000795 nan nan
+11 Vehicle Age int64 0 20 0 0.000000 19.000000 9.520283 5.767915 nan nan
+12 Credit Score float64 27886 550 0 300.000000 849.000000 574.362049 158.792037 nan nan
+13 Insurance Duration int64 0 9 0 1.000000 9.000000 5.007764 2.581349 nan nan
+14 Premium Amount float64 1841 4949 0 0.000000 4999.000000 966.118667 909.404567 nan nan
+15 Policy Start Date object 0 181607 0 nan nan nan nan 2022-08-30 15:21:39.134960 16
+16 Customer Feedback object 18349 3 0 nan nan nan nan Average 86906
+17 Smoking Status object 0 2 0 nan nan nan nan Yes 139635
+18 Exercise Frequency object 0 4 0 nan nan nan nan Weekly 70238
+19 Property Type object 0 3 0 nan nan nan nan House 93228
+20 nans int64 0 7 0 0.000000 6.000000 0.978247 0.883659 nan nan
+📊 EDA
+The target
+In [34]:
+if EDA:
+    df, hue  = train, None
+    if original is not None:
+        t, o = train.copy(), original.copy()
+        t['df'] = 'train'
+        o['df'] = 'original'
+        df, hue = pd.concat([t, o], axis=0), 'df'    
+    if PROBLEM == 'regression':
+        f = TARGET
+        fig, axs = plt.subplots(2, 2, figsize=(24, 10))
+        
+        ax = axs[0,0]
+        sns.kdeplot(train, x=f, label='train', ax=ax, color=red)
+        if original is not None:
+            sns.kdeplot(original[f], label='original', ax=ax, color=blue)
+        ax.set_title(f'{f} distribution')
+        ax.legend()
+        
+        ax = axs[0,1]
+        sns.boxplot(df, y=f, x=hue, ax=ax)
+        ax.set_title(f'{f} boxplot')
+        
+        ax = axs[1,0]
+        sns.kdeplot(np.log(train[f]), label='train', ax=ax, color=red)
+        if original is not None:
+            sns.kdeplot(np.log(original[f]), label='original', ax=ax, color=blue)
+        ax.set_title(f'log({f}) distribution')
+        ax.legend()
+        
+        ax = axs[1,1]
+        if original is not None:
+            sns.boxplot(y=np.log(df[f]), x=df['df'], ax=ax)
+        else :
+            sns.boxplot(y=np.log(df[f]), ax=ax)
+        ax.set_title(f'log({f}) boxplot')
+        
+        plt.tight_layout()
+        plt.show()
+    else:
+        fig, ax = plt.subplots(1, 1, figsize=(24, 5))
+        sns.countplot(train, x=TARGET)
+        ax.bar_label(ax.containers[0])
+        plt.tight_layout()
+        plt.show()
+The features
+In [35]:
+def top_values(df : pd.DataFrame, column : str, n_max : int = 10, ax = None) :
+    vc = pd.DataFrame(df[column].value_counts()).reset_index()[:n_max]
+    sns.barplot(vc, y=column, x='count', ax=ax)
+    # titles
+    ax.set_title(f'{column} Top {n_max}');
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+    ax.bar_label(ax.containers[0])
+
+def counts_hist(df : pd.DataFrame, column : str, ax = None) :
+    vc = pd.DataFrame(df[column].value_counts()).reset_index()
+    sns.histplot(vc, x='count', ax=ax) # bins=int(vc.shape[0]/10), 
+    # titles
+    ax.set_title(f'{column} counts histogram');
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+
+def corr(df, title='Correlation', ax=None):
+    associations_df = associations(df, nominal_columns='all', plot=False)
+    corr_matrix = associations_df['corr']
+    sns.heatmap(corr_matrix, annot=True, fmt='.2f', cmap='coolwarm', linewidths=0.5, ax=ax)
+    ax.set_title(title)
+In [36]:
+def top_target(df : pd.DataFrame, column : str, n_max : int = 10, ascending : bool = False, ax = None) :
+    vc = pd.DataFrame(df[column].value_counts()) #.reset_index()
+    tc = pd.DataFrame(df[column].loc[df[TARGET] == 1].value_counts())#.reset_index()
+    tc['ratio'] = tc['count'] * 100 / vc['count']
+    tc = tc.sort_values('ratio', ascending=ascending)
+    tc['ratio']  = np.round(tc['ratio'], 1)
+    if not ascending :
+        d = 'top'
+    else :
+        d = 'bottom'
+    tc = tc[:n_max]
+    sns.barplot(tc, y=tc.index, x='ratio', ax=ax)
+    # titles
+    ax.set_title(f'{column}, {d} {n_max} {TARGET} risk');
+    ax.set_xlabel('')
+    ax.set_ylabel(f'{TARGET} %')
+    ax.bar_label(ax.containers[0])
+In [37]:
+def top_target_w(df : pd.DataFrame, column : str, n_max : int = 10, ascending : bool = False, ax = None) :
+    vc = pd.DataFrame(df[column].value_counts()) #.reset_index()
+    tc = pd.DataFrame(df[column].loc[df[TARGET] == 1].value_counts())#.reset_index()
+    tc['ratio'] = tc['count'] * 100 * vc['count'] / df.shape[0]
+    tc = tc.sort_values('ratio', ascending=ascending)
+    tc['ratio']  = np.round(tc['ratio'], 1)
+    if not ascending :
+        d = 'top'
+    else :
+        d = 'bottom'
+    tc = tc[:n_max]
+    sns.barplot(tc, y=tc.index, x='ratio', ax=ax)
+    # titles
+    ax.set_title(f'{column}, {d} {n_max} {TARGET} risk');
+    ax.set_xlabel('')
+    ax.set_ylabel(f'{TARGET} % * Sample %')
+    ax.bar_label(ax.containers[0])
+In [38]:
+def kde_nums(train, test, original):
+    _, _, nums = fcn(test)
+    columns = nums
+    n_cols = 3
+    n_rows = math.ceil(len(columns)/n_cols)
+    fig, ax = plt.subplots(n_rows, n_cols, figsize=(16, n_rows*5))
+    ax = ax.flatten()
+
+    for i, column in enumerate(columns):
+        plot_axes = [ax[i]]
+
+        sns.kdeplot(train[column], label='Train', ax=ax[i], color=red)
+
+        sns.kdeplot(test[column], label='Test', ax=ax[i], color=blue)
+
+        if original is not None:
+            sns.kdeplot(original[column], label='Original', ax=ax[i], color=green)
+
+        # titles
+        ax[i].set_title(f'{column} Distribution');
+        ax[i].set_xlabel(None)
+
+    plt.tight_layout()
+In [39]:
+if EDA:
+    print('Numerical features:')
+    kde_nums(train, test, original)
+Numerical features:
+In [40]:
+def count_cats(train_, test, n_cols=3, tight=True):
+
+    train = train_.copy()
+    train['nans'] = train['nans'].astype('string')
+    
+    columns = fcn(test)[1] + ['nans']
+    columns.remove('Policy Start Date')
+    if len(columns) == 0:
+        return
+        
+    n_cols = 2
+    n_rows = math.ceil(len(columns) * 2 / n_cols)
+    fig, ax = plt.subplots(n_rows, n_cols, figsize=(16, n_rows*5))
+    ax = ax.flatten()
+
+    for i, column in enumerate(columns):
+        n = i * n_cols
+        
+        vc = pd.DataFrame(train[column].value_counts()[:10]).reset_index()
+        sns.barplot(vc, x=column, y='count', ax=ax[n])
+
+        # titles
+        ax[n].set_title(column);
+        ax[n].set_xlabel('')
+        ax[n].set_ylabel('')
+        ax[n].bar_label(ax[n].containers[0])
+
+        sns.boxplot(train, y = TARGET, x = column, ax = ax[n + 1])
+
+    if tight:
+        plt.tight_layout()
+    
+In [41]:
+if EDA:
+    print('Categorical features')
+    count_cats(train, test)
+Categorical features
+Correlation
+unfold_moreShow hidden code
+🗜 PREPROCESS
+Set the base for dataset evaluation
+In [43]:
+evaluate_dataset('loaded', update=False) 
+---------- LGBR RMSLE: 1.0486268839708717 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 LGBR loaded 1.048626 1.048627 -0.142704 n/a
+Add original
+and check if the CV score is better
+optional, use original or not it depends
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+📍 Cleaning
+In [47]:
+def clean(src, dst):     
+    train, test = DB.datasets.train(src), DB.datasets.test(src)
+
+    for df in [train, test] :
+        df['Policy Start Date'] = pd.to_datetime(df['Policy Start Date'])
+        df['Year'] = df['Policy Start Date'].dt.year.astype(float)    
+        df.drop('Policy Start Date', axis=1, inplace=True)    
+    DB.datasets.put(dst, train, test)
+
+clean('loaded', 'cleaned')
+
+DB.datasets.summary('cleaned')
+---------- cleaned train ----------:
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type ... Vehicle Age Credit Score Insurance Duration Customer Feedback Smoking Status Exercise Frequency Property Type Premium Amount nans Year
+0 19.0 Female 10049.0 Married 1.0 Bachelor's Self-Employed 22.598761 Urban Premium ... 17.0 372.0 5.0 Poor No Weekly House 2869.0 0.0 2023.0
+1 39.0 Female 31678.0 Divorced 3.0 Master's NaN 15.569731 Rural Comprehensive ... 12.0 694.0 2.0 Average Yes Monthly House 1483.0 1.0 2023.0
+2 23.0 Male 25602.0 Divorced 3.0 High School Self-Employed 47.177549 Suburban Premium ... 14.0 NaN 3.0 Good Yes Weekly House 567.0 1.0 2023.0
+3 rows × 21 columns
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type ... Vehicle Age Credit Score Insurance Duration Customer Feedback Smoking Status Exercise Frequency Property Type Premium Amount nans Year
+1199997 19.0 Male 51884.0 Divorced 0.0 Master's NaN 14.724469 Suburban Basic ... 19.0 NaN 6.0 Good No Monthly Condo 371.0 2.0 2021.0
+1199998 55.0 Male NaN Single 1.0 PhD NaN 18.547381 Suburban Premium ... 7.0 407.0 4.0 Poor No Daily Apartment 596.0 2.0 2021.0
+1199999 21.0 Female NaN Divorced 0.0 PhD NaN 10.125323 Rural Premium ... 18.0 502.0 6.0 Good Yes Monthly House 2480.0 2.0 2020.0
+3 rows × 21 columns
+cleaned has 1200000 rows, 21 columns
+  column type missed unique duplicate min max avg std dev top value Freq
+0 Age float64 18705 47 0 18.000000 64.000000 41.145563 13.539950 nan nan
+1 Gender object 0 2 0 nan nan nan nan Male 602571
+2 Annual Income float64 44949 88593 0 1.000000 149997.000000 32745.217777 32179.506124 nan nan
+3 Marital Status object 18529 3 0 nan nan nan nan Single 395391
+4 Number of Dependents float64 109672 5 0 0.000000 4.000000 2.009934 1.417338 nan nan
+5 Education Level object 0 4 0 nan nan nan nan Master's 303818
+6 Occupation object 358075 3 0 nan nan nan nan Employed 282750
+7 Health Score float64 74076 532657 0 2.012237 58.975914 25.613908 12.203462 nan nan
+8 Location object 0 3 0 nan nan nan nan Suburban 401542
+9 Policy Type object 0 3 0 nan nan nan nan Premium 401846
+10 Previous Claims float64 364029 10 0 0.000000 9.000000 1.002689 0.982840 nan nan
+11 Vehicle Age float64 6 20 0 0.000000 19.000000 9.569889 5.776189 nan nan
+12 Credit Score float64 137882 550 0 300.000000 849.000000 592.924350 149.981945 nan nan
+13 Insurance Duration float64 1 9 0 1.000000 9.000000 5.018219 2.594331 nan nan
+14 Customer Feedback object 77824 3 0 nan nan nan nan Average 377905
+15 Smoking Status object 0 2 0 nan nan nan nan Yes 601873
+16 Exercise Frequency object 0 4 0 nan nan nan nan Weekly 306179
+17 Property Type object 0 3 0 nan nan nan nan House 400349
+18 Premium Amount float64 0 4794 0 20.000000 4999.000000 1102.544822 864.998859 nan nan
+19 nans float64 0 8 0 0.000000 7.000000 1.003123 0.886838 nan nan
+20 Year float64 0 6 0 2019.000000 2024.000000 2021.620870 1.476008 nan nan
+---------- cleaned test ----------:
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Customer Feedback Smoking Status Exercise Frequency Property Type nans Year
+0 28.0 Female 2310.0 NaN 4.0 Bachelor's Self-Employed 7.657981 Rural Basic NaN 19.0 NaN 1.0 Poor Yes Weekly House 3 2023.0
+1 31.0 Female 126031.0 Married 2.0 Master's Self-Employed 13.381379 Suburban Premium NaN 14.0 372.0 8.0 Good Yes Rarely Apartment 1 2024.0
+2 47.0 Female 17092.0 Divorced 0.0 PhD Unemployed 24.354527 Urban Comprehensive NaN 16.0 819.0 9.0 Average Yes Monthly Condo 1 2023.0
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Customer Feedback Smoking Status Exercise Frequency Property Type nans Year
+799997 26.0 Female 35178.0 Single 0.0 Master's Employed 6.636583 Urban Comprehensive NaN 10.0 NaN 6.0 Poor No Monthly Apartment 2 2019.0
+799998 34.0 Female 45661.0 Single 3.0 Master's NaN 15.937248 Urban Premium 2.0 17.0 467.0 7.0 Average No Weekly Condo 1 2022.0
+799999 25.0 Male 24843.0 Divorced 3.0 High School NaN 24.893939 Suburban Comprehensive NaN 15.0 NaN 8.0 Good No Rarely House 3 2021.0
+cleaned has 800000 rows, 20 columns
+  column type missed unique duplicate min max avg std dev top value Freq
+0 Age float64 12489 47 0 18.000000 64.000000 41.136440 13.537829 nan nan
+1 Gender object 0 2 0 nan nan nan nan Male 401089
+2 Annual Income float64 29860 80716 0 2.000000 149997.000000 32803.871471 32201.063749 nan nan
+3 Marital Status object 12336 3 0 nan nan nan nan Single 263705
+4 Number of Dependents float64 73130 5 0 0.000000 4.000000 2.009337 1.415241 nan nan
+5 Education Level object 0 4 0 nan nan nan nan Master's 202552
+6 Occupation object 239125 3 0 nan nan nan nan Employed 188574
+7 Health Score float64 49449 388702 0 1.646561 57.957351 25.613036 12.206882 nan nan
+8 Location object 0 3 0 nan nan nan nan Suburban 267190
+9 Policy Type object 0 3 0 nan nan nan nan Premium 267629
+10 Previous Claims float64 242802 10 0 0.000000 9.000000 1.004873 0.982803 nan nan
+11 Vehicle Age float64 3 20 0 0.000000 19.000000 9.571891 5.772200 nan nan
+12 Credit Score float64 91451 550 0 300.000000 849.000000 592.904749 150.116374 nan nan
+13 Insurance Duration float64 2 9 0 1.000000 9.000000 5.018949 2.593759 nan nan
+14 Customer Feedback object 52276 3 0 nan nan nan nan Average 251217
+15 Smoking Status object 0 2 0 nan nan nan nan Yes 401859
+16 Exercise Frequency object 0 4 0 nan nan nan nan Weekly 204514
+17 Property Type object 0 3 0 nan nan nan nan House 267151
+18 nans int64 0 7 0 0.000000 6.000000 1.003654 0.885899 nan nan
+19 Year float64 0 6 0 2019.000000 2024.000000 2021.621140 1.476611 nan nan
+In [48]:
+evaluate_dataset('cleaned', update=False)
+---------- LGBR RMSLE: 1.0486535901451044 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 LGBR cleaned 1.048653 1.048654 -0.142657 n/a
+📍 Feature engineering
+In [49]:
+src, dst = 'cleaned', 'fe'
+train, test = DB.datasets.train(src), DB.datasets.test(src)
+
+object_columns = fcn(test)[1]
+
+for df in [train, test] :
+    for column in object_columns :
+        df[column] = df[column].astype('string')
+        df['Year'] = df['Year'].astype(float)
+
+unknown = ['Marital Status', 'Occupation', 'Customer Feedback']
+for df in [train, test] :
+    for column in  unknown:
+        df[column] = df[column].fillna('Unknown')
+
+n_cols, n_rows = len(unknown), 1
+fig, ax = plt.subplots(n_rows, n_cols, figsize=(16, n_rows*5))
+ax = ax.flatten()
+for i, column in enumerate(unknown):
+    sns.boxplot(train, y = TARGET, x = column, ax = ax[i])
+plt.show()
+
+source = train.copy()
+source['df'] = 'source'
+median = ['Age', 'Vehicle Age', 'Insurance Duration', 'Annual Income', 'Health Score', 'Previous Claims', 'Credit Score']
+for df in [train, test] :
+    for column in  median:
+        mdn = train[column].median()
+        df[column] = df[column].fillna(mdn)
+        df['Number of Dependents'] = df['Number of Dependents'].fillna(2.0)
+source = pd.concat([source, train])
+source['df'] = source['df'].fillna('imputed')
+
+DB.datasets.put(dst, train, test)
+DB.datasets.summary(dst)
+---------- fe train ----------:
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type ... Vehicle Age Credit Score Insurance Duration Customer Feedback Smoking Status Exercise Frequency Property Type Premium Amount nans Year
+0 19.0 Female 10049.0 Married 1.0 Bachelor's Self-Employed 22.598761 Urban Premium ... 17.0 372.0 5.0 Poor No Weekly House 2869.0 0.0 2023.0
+1 39.0 Female 31678.0 Divorced 3.0 Master's Unknown 15.569731 Rural Comprehensive ... 12.0 694.0 2.0 Average Yes Monthly House 1483.0 1.0 2023.0
+2 23.0 Male 25602.0 Divorced 3.0 High School Self-Employed 47.177549 Suburban Premium ... 14.0 595.0 3.0 Good Yes Weekly House 567.0 1.0 2023.0
+3 rows × 21 columns
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type ... Vehicle Age Credit Score Insurance Duration Customer Feedback Smoking Status Exercise Frequency Property Type Premium Amount nans Year
+1199997 19.0 Male 51884.0 Divorced 0.0 Master's Unknown 14.724469 Suburban Basic ... 19.0 595.0 6.0 Good No Monthly Condo 371.0 2.0 2021.0
+1199998 55.0 Male 23911.0 Single 1.0 PhD Unknown 18.547381 Suburban Premium ... 7.0 407.0 4.0 Poor No Daily Apartment 596.0 2.0 2021.0
+1199999 21.0 Female 23911.0 Divorced 0.0 PhD Unknown 10.125323 Rural Premium ... 18.0 502.0 6.0 Good Yes Monthly House 2480.0 2.0 2020.0
+3 rows × 21 columns
+fe has 1200000 rows, 21 columns
+  column type missed unique duplicate min max avg std dev top value Freq
+0 Age float64 0 47 0 18.000000 64.000000 41.143294 13.434020 nan nan
+1 Gender string 0 2 0 nan nan nan nan Male 602571
+2 Annual Income float64 0 88593 0 1.000000 149997.000000 32414.310064 31615.603456 nan nan
+3 Marital Status string 0 4 0 nan nan nan nan Single 395391
+4 Number of Dependents float64 0 5 0 0.000000 4.000000 2.009026 1.351022 nan nan
+5 Education Level string 0 4 0 nan nan nan nan Master's 303818
+6 Occupation string 0 4 0 nan nan nan nan Unknown 358075
+7 Health Score float64 0 532658 0 2.012237 58.975914 25.550001 11.823428 nan nan
+8 Location string 0 3 0 nan nan nan nan Suburban 401542
+9 Policy Type string 0 3 0 nan nan nan nan Premium 401846
+10 Previous Claims float64 0 10 0 0.000000 9.000000 1.001873 0.820329 nan nan
+11 Vehicle Age float64 0 20 0 0.000000 19.000000 9.569891 5.776174 nan nan
+12 Credit Score float64 0 550 0 300.000000 849.000000 593.162846 141.104056 nan nan
+13 Insurance Duration float64 0 9 0 1.000000 9.000000 5.018219 2.594330 nan nan
+14 Customer Feedback string 0 4 0 nan nan nan nan Average 377905
+15 Smoking Status string 0 2 0 nan nan nan nan Yes 601873
+16 Exercise Frequency string 0 4 0 nan nan nan nan Weekly 306179
+17 Property Type string 0 3 0 nan nan nan nan House 400349
+18 Premium Amount float64 0 4794 0 20.000000 4999.000000 1102.544822 864.998859 nan nan
+19 nans float64 0 8 0 0.000000 7.000000 1.003123 0.886838 nan nan
+20 Year float64 0 6 0 2019.000000 2024.000000 2021.620870 1.476008 nan nan
+---------- fe test ----------:
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Customer Feedback Smoking Status Exercise Frequency Property Type nans Year
+0 28.0 Female 2310.0 Unknown 4.0 Bachelor's Self-Employed 7.657981 Rural Basic 1.0 19.0 595.0 1.0 Poor Yes Weekly House 3 2023.0
+1 31.0 Female 126031.0 Married 2.0 Master's Self-Employed 13.381379 Suburban Premium 1.0 14.0 372.0 8.0 Good Yes Rarely Apartment 1 2024.0
+2 47.0 Female 17092.0 Divorced 0.0 PhD Unemployed 24.354527 Urban Comprehensive 1.0 16.0 819.0 9.0 Average Yes Monthly Condo 1 2023.0
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Customer Feedback Smoking Status Exercise Frequency Property Type nans Year
+799997 26.0 Female 35178.0 Single 0.0 Master's Employed 6.636583 Urban Comprehensive 1.0 10.0 595.0 6.0 Poor No Monthly Apartment 2 2019.0
+799998 34.0 Female 45661.0 Single 3.0 Master's Unknown 15.937248 Urban Premium 2.0 17.0 467.0 7.0 Average No Weekly Condo 1 2022.0
+799999 25.0 Male 24843.0 Divorced 3.0 High School Unknown 24.893939 Suburban Comprehensive 1.0 15.0 595.0 8.0 Good No Rarely House 3 2021.0
+fe has 800000 rows, 20 columns
+  column type missed unique duplicate min max avg std dev top value Freq
+0 Age float64 0 47 0 18.000000 64.000000 41.134310 13.431753 nan nan
+1 Gender string 0 2 0 nan nan nan nan Male 401089
+2 Annual Income float64 0 80716 0 2.000000 149997.000000 32471.945044 31639.333995 nan nan
+3 Marital Status string 0 4 0 nan nan nan nan Single 263705
+4 Number of Dependents float64 0 5 0 0.000000 4.000000 2.008484 1.349009 nan nan
+5 Education Level string 0 4 0 nan nan nan nan Master's 202552
+6 Occupation string 0 4 0 nan nan nan nan Unknown 239125
+7 Health Score float64 0 388703 0 1.646561 57.957351 25.549099 11.826227 nan nan
+8 Location string 0 3 0 nan nan nan nan Suburban 267190
+9 Policy Type string 0 3 0 nan nan nan nan Premium 267629
+10 Previous Claims float64 0 10 0 0.000000 9.000000 1.003394 0.820215 nan nan
+11 Vehicle Age float64 0 20 0 0.000000 19.000000 9.571893 5.772190 nan nan
+12 Credit Score float64 0 550 0 300.000000 849.000000 593.144265 141.277440 nan nan
+13 Insurance Duration float64 0 9 0 1.000000 9.000000 5.018949 2.593756 nan nan
+14 Customer Feedback string 0 4 0 nan nan nan nan Average 251217
+15 Smoking Status string 0 2 0 nan nan nan nan Yes 401859
+16 Exercise Frequency string 0 4 0 nan nan nan nan Weekly 204514
+17 Property Type string 0 3 0 nan nan nan nan House 267151
+18 nans int64 0 7 0 0.000000 6.000000 1.003654 0.885899 nan nan
+19 Year float64 0 6 0 2019.000000 2024.000000 2021.621140 1.476611 nan nan
+In [50]:
+evaluate_dataset('fe', update=False) 
+---------- LGBR RMSLE: 1.0463683870194225 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 LGBR fe 1.046368 1.046368 -0.137697 n/a
+In [51]:
+display_scores(DATASETS_SCORES)
+COMPARE:
+  CV Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 loaded LGBR loaded 1.048626 1.048627 -0.142704 n/a
+1 cleaned LGBR cleaned 1.048653 1.048654 -0.142657 n/a
+2 fe LGBR fe 1.046368 1.046368 -0.137697 n/a
+In [52]:
+    
+from sklearn.decomposition import PCA
+
+def plot_variance(pca, width=10, height=4, dpi=100):
+    # Create figure
+    fig, axs = plt.subplots(1, 2)
+    n = pca.n_components_
+    grid = np.arange(1, n + 1)
+    # Explained variance
+    evr = pca.explained_variance_ratio_
+    axs[0].bar(grid, evr)
+    axs[0].set(
+        xlabel="Component", title="% Explained Variance", ylim=(0.0, 0.2)
+    )
+
+    # Cumulative Variance
+    cv = np.cumsum(evr)
+    axs[1].plot(np.r_[0, grid], np.r_[0, cv], "o-")
+    axs[1].set(
+        xlabel="Component", title="", ylim=(0.0, 1.0)
+    )
+    
+    # Set up figure
+    fig.set(figwidth=width, figheight=height,  dpi=100)
+    return axs
+
+def make_pca(train, test, display_loadings=True, plots=True):
+    features = test.columns.tolist()
+    pca = PCA(2)
+    X_pca = pca.fit_transform(train.copy()[features])
+    X_test_pca = pca.transform(test.copy()[features])
+    component_names = [f"PC{i+1}" for i in range(X_pca.shape[1])]
+    X_pca = pd.DataFrame(X_pca, columns=component_names)
+    X_test_pca = pd.DataFrame(X_test_pca, columns=component_names)
+
+    if display_loadings:
+        loadings = pd.DataFrame(
+            pca.components_.T,  # transpose the matrix of loadings
+            columns=component_names,  # so the columns are the principal components
+            index=features,  # and the rows are the original features
+        )
+        print('\nLoadings:')
+        display(loadings.head(20).style.background_gradient(subset=loadings.columns.to_list(), cmap='Greens'))
+
+    if plots:
+        plot_variance(pca)
+    return X_pca, X_test_pca
+In [53]:
+if EDA:
+    train_pca, test_pca = make_pca(DB.datasets.train('fe_enccat'), DB.datasets.test('fe_enccat'))
+Loadings:
+  PC1 PC2
+Gender -0.000000 0.000002
+Marital Status 0.000000 -0.000003
+Education Level 0.000000 -0.000016
+Occupation -0.000000 0.000039
+Location 0.000000 -0.000003
+Policy Type -0.000000 -0.000007
+Customer Feedback 0.000001 0.000105
+Smoking Status -0.000000 0.000005
+Exercise Frequency 0.000000 -0.000006
+Property Type -0.000000 0.000004
+Age 0.000000 0.000266
+Annual Income 1.000000 0.000809
+Number of Dependents 0.000000 -0.000012
+Health Score 0.000009 0.001236
+Previous Claims 0.000001 0.000211
+Vehicle Age -0.000000 0.000017
+Credit Score -0.000809 0.999999
+Insurance Duration 0.000000 0.000010
+nans -0.000001 -0.000052
+Year -0.000000 -0.000093
+In [54]:
+def mutual_info(train_df, plot=True):
+    train = train_df.copy()
+    X_train = train.drop([TARGET], axis=1) # [features]
+    y_train = train[TARGET]
+
+    if PROBLEM == 'regression':
+        mi_scores = mutual_info_regression(X_train, y_train, random_state=42)
+    else:
+        mi_scores = mutual_info_classif(X_train, y_train, random_state=42)
+
+    mi_scores = pd.Series(mi_scores, name="MI_score", index=X_train.columns)
+    mi_scores = mi_scores.sort_values(ascending=False)
+    df_mi_scores = pd.DataFrame(mi_scores).reset_index().rename(columns={'index':'feature'})
+    display(df_mi_scores.style.background_gradient(subset=['MI_score'], cmap='Reds'))
+    plt.figure(figsize=(24, 16))
+    d = sns.barplot(y=df_mi_scores['feature'], x=df_mi_scores['MI_score'])
+    return mi_scores
+
+if EDA:
+    mi_scores = mutual_info(DB.datasets.train('fe_enccat').sample(10000))
+unfold_moreShow hidden output
+📌 CV
+📌 Datasets
+In [55]:
+# tocat('cleaned', 'cleaned_cat')
+# allcat('cleaned', 'cleaned_allcat')
+# enccat('cleaned', 'cleaned_enccat')
+# DB.save()
+In [56]:
+# enccat('fe', 'fe_enccat')
+# tocat('fe', 'fe_cat')
+# DB.save()
+📌 Saved CVs
+In [57]:
+scores = {}
+TRAIN, TEST, TRAINP, TESTP = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+TRAIN[TARGET] = DB.datasets.y('cleaned')
+In [58]:
+RERUN = False
+
+for _, cv in DB.cvs.data_.items() :
+
+    summ = cv.summary
+    estimator_class = summ['estimator_class']
+    name = summ['name']
+
+    if name.startswith('dataset_eval') :
+        continue
+
+    display(summ)
+
+    params = summ['params']
+    
+
+    if not RERUN :
+        print('\n========== model :', estimator_class, '==========\n')
+        estimator = ESTIMATORS[estimator_class](params=params)
+        estimator.upload_cv(cv)
+        if SHOW_CVs :    
+            cv.display(estimator)
+        cv_scores = estimator.cv_scores()
+        cv_scores['Dataset'] = summ['dataset_name']
+        scores[name] = cv_scores
+        
+        #  oof data for stack and blend
+        TRAIN[name], TEST[name] = cv.oof['train'], cv.oof['test']
+    else:
+        estimator = ESTIMATORS[estimator_class](params=params)
+        if type(params) is not dict :
+            continue
+
+        print(colored(f"\n{estimator_class}:", 'blue'))
+        for  k, v in params.items() :
+            print('    ', k, ' '*(30-len(k)), ':', v)
+
+        new_cv = cv.run(estimator, DB)
+        DB.cvs.put(new_cv)
+        
+        TRAIN[name]  = new_cv.oof['train']
+        TEST[name] = new_cv.oof['test']        
+        
+        scores[name] = estimator.cv_scores()
+        dbnew.save
+
+    # estimator.submit()
+    
+display_scores(scores)
+{'name': 'CAT_3',
+ 'estimator_class': 'CATR',
+ 'dataset_name': 'fe_cat_best',
+ 'params': {'loss_function': 'RMSE',
+  'iterations': 3000,
+  'random_seed': 42,
+  'use_best_model': True,
+  'od_type': 'Iter',
+  'od_wait': 20,
+  'cat_features': ['Gender',
+   'Marital Status',
+   'Education Level',
+   'Occupation',
+   'Location',
+   'Policy Type',
+   'Customer Feedback',
+   'Smoking Status',
+   'Exercise Frequency',
+   'Property Type']},
+ 'n_splits': 5,
+ 'n_repeats': 1,
+ 'description': '',
+ 'scores': [1.031522940498027,
+  1.0312244460730067,
+  1.0332708000684316,
+  1.0294716827994748,
+  1.0321887221874737]}
+========== model : CATR ==========
+
+
+---------- CATR RMSLE: 1.0315364739187192 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 CATR fe_cat_best 1.031536 1.031536 -0.106529 n/a
+no metrics to plot
+{'name': 'XGB_0',
+ 'estimator_class': 'XGBR',
+ 'dataset_name': 'cleaned_enccat',
+ 'params': {'learning_rate': 0.05, 'random_seed': 42},
+ 'n_splits': 5,
+ 'n_repeats': 1,
+ 'description': '',
+ 'scores': [1.0500552522578748,
+  1.0485697936530471,
+  1.0494952885698516,
+  1.0475052981778132,
+  1.0491872627513874]}
+========== model : XGBR ==========
+
+
+---------- XGBR RMSLE: 1.0489629419394122 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 XGBR cleaned_enccat 1.048963 1.048963 -0.144038 n/a
+{'name': 'XGB_2',
+ 'estimator_class': 'XGBR',
+ 'dataset_name': 'fe_enccat_best',
+ 'params': {'n_estimators': 5000, 'learning_rate': 0.05, 'random_seed': 42},
+ 'n_splits': 5,
+ 'n_repeats': 1,
+ 'description': '',
+ 'scores': [1.031603080673993,
+  1.0314631589681642,
+  1.033289402490744,
+  1.0293942386279062,
+  1.032331254100645]}
+========== model : XGBR ==========
+
+
+---------- XGBR RMSLE: 1.031617028817288 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 XGBR fe_enccat_best 1.031616 1.031617 -0.105243 n/a
+{'name': 'LGB_1',
+ 'estimator_class': 'LGBR',
+ 'dataset_name': 'fe_enccat',
+ 'params': {'n_esimators': 3000, 'learning_rate': 0.05, 'random_seed': 42},
+ 'n_splits': 5,
+ 'n_repeats': 1,
+ 'description': '',
+ 'scores': [1.0468932074085258,
+  1.046081220076799,
+  1.0469935182570433,
+  1.045120042448295,
+  1.0471729903705815]}
+========== model : LGBR ==========
+
+
+---------- LGBR RMSLE: 1.0464524746854516 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 LGBR fe_enccat 1.046452 1.046452 -0.138244 n/a
+{'name': 'CAT_1',
+ 'estimator_class': 'CATR',
+ 'dataset_name': 'fe_cat',
+ 'params': {'loss_function': 'RMSE',
+  'iterations': 300,
+  'random_seed': 42,
+  'use_best_model': True,
+  'od_type': 'Iter',
+  'od_wait': 20,
+  'cat_features': ['Gender',
+   'Marital Status',
+   'Education Level',
+   'Occupation',
+   'Location',
+   'Policy Type',
+   'Customer Feedback',
+   'Smoking Status',
+   'Exercise Frequency',
+   'Property Type']},
+ 'n_splits': 5,
+ 'n_repeats': 1,
+ 'description': '',
+ 'scores': [1.0484142542939245,
+  1.0476295445475292,
+  1.04860348865384,
+  1.0463903165610908,
+  1.048147716224586]}
+========== model : CATR ==========
+
+
+---------- CATR RMSLE: 1.0478373649810535 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 CATR fe_cat 1.047837 1.047837 -0.145711 n/a
+no metrics to plot
+{'name': 'CAT_0',
+ 'estimator_class': 'CATR',
+ 'dataset_name': 'cleaned_allcat',
+ 'params': {'iterations': 1000,
+  'learning_rate': 0.05,
+  'random_seed': 42,
+  'use_best_model': True,
+  'od_type': 'Iter',
+  'od_wait': 20,
+  'cat_features': ['Age',
+   'Gender',
+   'Annual Income',
+   'Marital Status',
+   'Number of Dependents',
+   'Education Level',
+   'Occupation',
+   'Health Score',
+   'Location',
+   'Policy Type',
+   'Previous Claims',
+   'Vehicle Age',
+   'Credit Score',
+   'Insurance Duration',
+   'Customer Feedback',
+   'Smoking Status',
+   'Exercise Frequency',
+   'Property Type',
+   'Year']},
+ 'n_splits': 5,
+ 'n_repeats': 1,
+ 'description': '',
+ 'scores': [1.0593137501761138,
+  1.0578033862508083,
+  1.0593198132020079,
+  1.0574478719423,
+  1.059477340553157]}
+========== model : CATR ==========
+
+
+---------- CATR RMSLE: 1.0586727850416373 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 CATR cleaned_allcat 1.058672 1.058673 -0.120571 n/a
+no metrics to plot
+{'name': 'LGB_0',
+ 'estimator_class': 'LGBR',
+ 'dataset_name': 'cleaned_enccat',
+ 'params': {'learning_rate': 0.05, 'random_seed': 42},
+ 'n_splits': 5,
+ 'n_repeats': 1,
+ 'description': '',
+ 'scores': [1.04987085407026,
+  1.0487235765947593,
+  1.0495423119842955,
+  1.0472961906197362,
+  1.0491638016806915]}
+========== model : LGBR ==========
+
+
+---------- LGBR RMSLE: 1.0489197308298621 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 LGBR cleaned_enccat 1.048919 1.04892 -0.143308 n/a
+{'name': 'XGB_1',
+ 'estimator_class': 'XGBR',
+ 'dataset_name': 'fe_enccat',
+ 'params': {'n_estimators': 5000, 'learning_rate': 0.05, 'random_seed': 42},
+ 'n_splits': 5,
+ 'n_repeats': 1,
+ 'description': '',
+ 'scores': [1.0480892089126679,
+  1.0474703952899438,
+  1.047814143071344,
+  1.045949749165228,
+  1.0473473764610168]}
+========== model : XGBR ==========
+
+
+---------- XGBR RMSLE: 1.0473344358169676 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 XGBR fe_enccat 1.047334 1.047334 -0.143633 n/a
+{'name': 'LGB_2',
+ 'estimator_class': 'LGBR',
+ 'dataset_name': 'fe_enccat_best',
+ 'params': {'n_estimators': 3000, 'learning_rate': 0.05, 'random_seed': 42},
+ 'n_splits': 5,
+ 'n_repeats': 1,
+ 'description': '',
+ 'scores': [1.031798858181761,
+  1.031420521819355,
+  1.033414084743485,
+  1.0296223357737186,
+  1.0323620968230145]}
+========== model : LGBR ==========
+
+
+---------- LGBR RMSLE: 1.031724333376164 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 LGBR fe_enccat_best 1.031724 1.031724 -0.106341 n/a
+{'name': 'CAT_2',
+ 'estimator_class': 'CATR',
+ 'dataset_name': 'fe_cat_best',
+ 'params': {'loss_function': 'RMSE',
+  'iterations': 300,
+  'random_seed': 42,
+  'use_best_model': True,
+  'od_type': 'Iter',
+  'od_wait': 20,
+  'cat_features': ['Gender',
+   'Marital Status',
+   'Education Level',
+   'Occupation',
+   'Location',
+   'Policy Type',
+   'Customer Feedback',
+   'Smoking Status',
+   'Exercise Frequency',
+   'Property Type']},
+ 'n_splits': 5,
+ 'n_repeats': 1,
+ 'description': '',
+ 'scores': [1.0317946015589698,
+  1.0314823200862921,
+  1.033493228489753,
+  1.0298239224388515,
+  1.0323135868644455]}
+========== model : CATR ==========
+
+
+---------- CATR RMSLE: 1.031782223402137 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 CATR fe_cat_best 1.031782 1.031782 -0.106565 n/a
+no metrics to plot
+
+COMPARE:
+  CV Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 CAT_3 CATR fe_cat_best 1.031536 1.031536 -0.106529 n/a
+1 XGB_0 XGBR cleaned_enccat 1.048963 1.048963 -0.144038 n/a
+2 XGB_2 XGBR fe_enccat_best 1.031616 1.031617 -0.105243 n/a
+3 LGB_1 LGBR fe_enccat 1.046452 1.046452 -0.138244 n/a
+4 CAT_1 CATR fe_cat 1.047837 1.047837 -0.145711 n/a
+5 CAT_0 CATR cleaned_allcat 1.058672 1.058673 -0.120571 n/a
+6 LGB_0 LGBR cleaned_enccat 1.048919 1.048920 -0.143308 n/a
+7 XGB_1 XGBR fe_enccat 1.047334 1.047334 -0.143633 n/a
+8 LGB_2 LGBR fe_enccat_best 1.031724 1.031724 -0.106341 n/a
+9 CAT_2 CATR fe_cat_best 1.031782 1.031782 -0.106565 n/a
+📌 New CV
+In [59]:
+SPLITS, REPEATS = 5, 1
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+In [63]:
+# addbest('fe_cat', 'fe_cat_best')
+# addbest('fe_enccat', 'fe_enccat_best')
+more_horiz8 hidden cells
+📌 OOF Data
+In [72]:
+plt.figure(figsize=(16, 12))
+sns.heatmap(TRAIN.corr(), annot=True, fmt='.2f')
+plt.show()
+In [73]:
+df = pd.DataFrame()
+for c in TEST.columns.tolist() :
+    x = pd.DataFrame()
+    x['oof_proba'] = TRAIN[c]
+    x['model'] = c
+    df = pd.concat([df, x], axis=0)
+                   
+plt.figure(figsize=(16, 5))
+sns.kdeplot(TEST, bw_adjust=0.1, log_scale=(False, False))
+plt.show()
+In [74]:
+df = TRAIN.copy()
+X_train = df.drop([TARGET], axis=1) # [features]
+y_train = df[TARGET]
+
+if PROBLEM == 'regression':
+    mi_scores = mutual_info_regression(X_train, y_train, random_state=42)
+else:
+    mi_scores = mutual_info_classif(X_train, y_train, random_state=42)
+
+mi_scores = pd.Series(mi_scores, name="MI_score", index=X_train.columns)
+mi_scores = mi_scores.sort_values(ascending=False)
+df_mi_scores = pd.DataFrame(mi_scores).reset_index().rename(columns={'index':'feature'})
+display(df_mi_scores.style.background_gradient(subset=['MI_score'], cmap='Reds'))
+plt.figure(figsize=(24, 16))
+d = sns.barplot(y=df_mi_scores['feature'], x=df_mi_scores['MI_score'])
+  feature MI_score
+0 LGB_1 0.209939
+1 XGB_1 0.193747
+2 CAT_1 0.193008
+3 LGB_0 0.190377
+4 CAT_3 0.183810
+5 CAT_2 0.183293
+6 LGB_2 0.183276
+7 XGB_2 0.179808
+8 XGB_0 0.178715
+9 CAT_0 0.110533
+📌 STACK
+members list otimization
+In [75]:
+import itertools
+def best_members(members, f_, constant_members=[], n_min=2, n_max=0, verbose=1, name='estimator'):
+    
+    def f(x) :
+        return OBJ * f_(x)
+    
+    best, f_best = [], -np.inf
+    
+    all, history = [], []
+    stop = len(members) + 1
+    if n_max > 0:
+        stop = n_max
+    for i in range(n_min, stop):
+        all_i = list(itertools.combinations(members, i))
+        all.extend(all_i)
+    trials = len(all)
+        
+    trial = 1
+    for curr in all:
+        is_best = False
+        curr = list(curr)
+        curr.extend(constant_members)
+        f_curr = f(curr)
+        if verbose > 0:
+            print(f'{trial}/{trials}', curr, ' '*(50-len(str(curr))), '->', OBJ * f_curr, end=' ')
+        if f_curr > f_best:
+            f_best = f_curr
+            best = curr
+            is_best = True
+            if verbose > 0:
+                print('best so far', end=' ')
+        if verbose > 0:
+            print()
+        history.append({
+            'trial'    : trial,
+            'members'  : str(curr),
+            'best'     : is_best,
+            SCORE_NAME : OBJ * f_curr,
+            'estimator': name,
+        })
+        trial += 1
+    if verbose > 0:
+        print('\n\nthe best:\n', best, '->', OBJ * f_best)
+    return best, f_best, history
+In [76]:
+def stack(train, test, members, verbose=2, name='STACK', submission=False):
+    
+    # estimator = RegressorWrapper(LinearRegression(), name=name)
+    # estimator = xGBRegressor(params={
+    estimator = LGBRegressor(params={
+        'n_estimators': 10000,
+        # 'learning_rate' : 0.01,
+        'random_seed':42,    
+    })
+    cv = estimator.crossvalidate(
+        train[members + [TARGET]], 
+        test[members], 
+        dataset_name=str(members), 
+        n_splits=5,
+        n_repeats=1,
+        verbose=verbose,
+        clear=False,
+        name=name,
+    )
+    if submission:
+        estimator.submit()
+    return estimator.cv_scores(), cv.oof['train'], cv.oof['test']
+
+def stack_score(members):
+    scores, _, _ = stack(TRAIN, TEST, members, verbose=0)
+    return scores[SCORE_NAME]
+In [77]:
+members = TEST.columns.tolist() 
+members
+Out[77]:
+['CAT_3',
+ 'XGB_0',
+ 'XGB_2',
+ 'LGB_1',
+ 'CAT_1',
+ 'CAT_0',
+ 'LGB_0',
+ 'XGB_1',
+ 'LGB_2',
+ 'CAT_2']
+In [78]:
+# best, best_score, stack_history  = best_members(members, stack_score, name = 'linear regression')
+In [79]:
+score, train_best, test_best = stack(TRAIN, TEST, members, submission=True)
+scores['STACK'] = score
+---------- cv: train: (1200000, 11), test: (800000, 10) -----------
+
+Fold:   0%|          | 0/5 [00:00<?, ?it/s][LightGBM] [Info] Auto-choosing col-wise multi-threading, the overhead of testing was 0.078384 seconds.
+You can set `force_col_wise=true` to remove the overhead.
+[LightGBM] [Info] Total Bins 2550
+[LightGBM] [Info] Number of data points in the train set: 960000, number of used features: 10
+[LightGBM] [Info] Start training from score 6.593848
+Training until validation scores don't improve for 200 rounds
+[100] valid_0's l2: 1.06302
+[200] valid_0's l2: 1.06344
+Early stopping, best iteration is:
+[60] valid_0's l2: 1.06293
+
+fold 0 RMSLE 1.030986493522434 
+
+Fold:  20%|██        | 1/5 [00:11<00:44, 11.21s/it][LightGBM] [Info] Auto-choosing col-wise multi-threading, the overhead of testing was 0.089164 seconds.
+You can set `force_col_wise=true` to remove the overhead.
+[LightGBM] [Info] Total Bins 2550
+[LightGBM] [Info] Number of data points in the train set: 960000, number of used features: 10
+[LightGBM] [Info] Start training from score 6.594073
+Training until validation scores don't improve for 200 rounds
+[100] valid_0's l2: 1.06269
+[200] valid_0's l2: 1.06313
+Early stopping, best iteration is:
+[51] valid_0's l2: 1.06239
+
+fold 1 RMSLE 1.0307229664063957 
+
+Fold:  40%|████      | 2/5 [00:25<00:39, 13.22s/it][LightGBM] [Info] Auto-choosing col-wise multi-threading, the overhead of testing was 0.089919 seconds.
+You can set `force_col_wise=true` to remove the overhead.
+[LightGBM] [Info] Total Bins 2550
+[LightGBM] [Info] Number of data points in the train set: 960000, number of used features: 10
+[LightGBM] [Info] Start training from score 6.592481
+Training until validation scores don't improve for 200 rounds
+[100] valid_0's l2: 1.06652
+[200] valid_0's l2: 1.06687
+Early stopping, best iteration is:
+[64] valid_0's l2: 1.06631
+
+fold 2 RMSLE 1.032623888240653 
+
+Fold:  60%|██████    | 3/5 [00:41<00:28, 14.25s/it][LightGBM] [Info] Auto-choosing col-wise multi-threading, the overhead of testing was 0.093537 seconds.
+You can set `force_col_wise=true` to remove the overhead.
+[LightGBM] [Info] Total Bins 2550
+[LightGBM] [Info] Number of data points in the train set: 960000, number of used features: 10
+[LightGBM] [Info] Start training from score 6.594598
+Training until validation scores don't improve for 200 rounds
+[100] valid_0's l2: 1.05849
+[200] valid_0's l2: 1.059
+Early stopping, best iteration is:
+[55] valid_0's l2: 1.05846
+
+fold 3 RMSLE 1.028814227172152 
+
+Fold:  80%|████████  | 4/5 [00:55<00:14, 14.32s/it][LightGBM] [Info] Auto-choosing col-wise multi-threading, the overhead of testing was 0.089038 seconds.
+You can set `force_col_wise=true` to remove the overhead.
+[LightGBM] [Info] Total Bins 2550
+[LightGBM] [Info] Number of data points in the train set: 960000, number of used features: 10
+[LightGBM] [Info] Start training from score 6.594444
+Training until validation scores don't improve for 200 rounds
+[100] valid_0's l2: 1.06366
+[200] valid_0's l2: 1.06411
+Early stopping, best iteration is:
+[53] valid_0's l2: 1.06349
+
+fold 4 RMSLE 1.0312588866203667 
+
+Fold: 100%|██████████| 5/5 [01:10<00:00, 14.08s/it]
+
+---------- LGBR RMSLE: 1.030882018771677 ----------:
+Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 LGBR ['CAT_3', 'XGB_0', 'XGB_2', 'LGB_1', 'CAT_1', ... 1.030881 1.030882 -0.101572 n/a
+id Premium Amount
+0 1200000 898.962808
+1 1200001 880.889270
+2 1200002 851.118163
+3 1200003 690.073234
+4 1200004 815.341157
+5 1200005 827.207294
+6 1200006 766.868850
+7 1200007 521.477610
+8 1200008 195.936295
+9 1200009 868.071230
+10 1200010 925.428105
+11 1200011 871.395114
+12 1200012 863.099203
+13 1200013 861.186621
+14 1200014 760.174468
+15 1200015 754.643727
+16 1200016 770.739618
+17 1200017 181.381460
+18 1200018 863.784807
+19 1200019 720.965296
+20 1200020 869.510999
+21 1200021 724.327003
+22 1200022 204.978028
+23 1200023 827.241727
+24 1200024 537.713210
+25 1200025 912.878962
+26 1200026 811.832231
+27 1200027 196.382870
+28 1200028 188.927202
+29 1200029 661.947340
+In [80]:
+# trn, tst = pd.DataFrame(), pd.DataFrame()
+# trn['best'] = train_best
+# tst['best'] = test_best
+# DB.datasets.put('best', trn, tst)
+# DB.save()
+# DB
+📌 BLEND differential evolution
+members list and weights otimization
+In [81]:
+def blend_diff(train, test, members, verbose=1):
+    
+    def weighted_average(weights, values):
+        qty = len(values)
+        sum_values = values[0] * weights[0]
+        sum_weights = weights[0]
+        for i in range(1, qty):
+            sum_values += values[i] * weights[i]
+            sum_weights += weights[i]
+        return sum_values / sum_weights
+
+    def obj(weights):
+        preds = weighted_average(weights, X)
+        return LOSS(y, preds)    
+ 
+    X = [train[col].values for col in members]
+    if verbose > 0:
+        print('train arrays:')
+        for a in X:
+            print(a)
+            
+    maxiter = len(members) * 1000
+    
+    y = train[TARGET].values
+    
+    qty = len(X)
+    initial_weights = [1 for _ in range(qty)]
+    bounds = [(0.0, 1.0) for _ in range(qty)]
+    result = sp.optimize.differential_evolution(obj, bounds=bounds, maxiter=1000*qty)
+    weights = result.x
+    
+    if verbose > 0 :
+        print('\n', obj(initial_weights), end=' => ')
+        print(weights)
+        print() 
+        
+    score = SCORE(y, weighted_average(weights, X))
+    if verbose > 0:
+        print(colored(f'estimated {SCORE_NAME} : {score}\n\n', 'red'))
+
+    X_test = [test[col].values for col in members]
+    if verbose > 0:
+        print('arrays to blend:')
+        for a in X_test:
+            print(a)
+
+    result = weighted_average(weights, X_test)
+    if verbose > 0:
+        print('weighted average:\n', result, '\n')
+    
+    return result, score
+
+def blend_score_diff(members):
+    _, score = blend_diff(TRAIN, TEST, members, verbose=0)
+    return score
+In [82]:
+members[-3:]
+Out[82]:
+['XGB_1', 'LGB_2', 'CAT_2']
+In [83]:
+# best, best_score, diff_history  = best_members(members, blend_score_diff, name='differential evolution')
+In [84]:
+TEST_PREDS_D, score_diff = blend_diff(TRAIN, TEST, members) 
+train arrays:
+[974.71248931 681.67762651 888.52392193 ... 178.52609214 967.03587218
+ 249.0006343 ]
+[974.53411865 746.47772217 814.7432251  ... 194.26150513 728.51580811
+ 241.52645874]
+[968.10302734 690.47363281 872.71704102 ... 179.6146698  953.32458496
+ 247.50521851]
+[940.17748722 744.69198578 812.95534353 ... 178.89309393 797.34405557
+ 273.74924744]
+[998.28624154 714.90469488 804.66005868 ... 158.55627934 737.96522358
+ 233.77586659]
+[ 886.57292878  620.11740014  838.80144664 ...  329.97016813 1012.8255662
+  638.0169989 ]
+[953.08139631 760.69797232 814.93828741 ... 183.7158076  757.21105874
+ 301.31322904]
+[977.87744141 728.25213623 822.58746338 ... 177.10189819 746.00164795
+ 241.73274231]
+[972.56703384 666.1284399  873.92337743 ... 188.35599536 961.2333364
+ 224.2052719 ]
+[968.34738537 655.37620412 887.42600938 ... 190.35163536 967.02212619
+ 244.42332176]
+
+ 1.0367092723048408 => [1.         0.         0.99942357 0.         0.         0.02450682
+ 0.         0.         0.408071   0.11141373]
+
+estimated RMSLE : 1.0313762362011574
+
+
+arrays to blend:
+[904.32484381 897.97196551 847.04543071 ... 902.7971671  787.60239305
+ 800.2546533 ]
+[765.70609131 802.96075439 791.35012207 ... 825.62056885 815.45042725
+ 782.062854  ]
+[900.62922363 924.01329346 844.13703613 ... 903.16680908 791.89099121
+ 800.76474609]
+[843.26408561 783.46782828 807.88226797 ... 806.29627711 820.02861529
+ 778.80823685]
+[844.31499176 812.84308641 803.82491874 ... 815.69693658 814.71545729
+ 754.67675901]
+[928.21059812 856.22492354 821.20197689 ... 897.31895986 700.46867139
+ 719.4374014 ]
+[690.01944453 783.66747838 797.51259215 ... 801.98878362 817.40686624
+ 787.07524351]
+[839.34327393 814.90552979 781.72508545 ... 813.8553833  818.77493896
+ 767.35828857]
+[907.48291549 886.21475894 854.90474975 ... 901.37026141 795.97480964
+ 800.1889173 ]
+[897.35504065 897.09423526 845.28344952 ... 894.92367686 779.72403192
+ 807.58322304]
+weighted average:
+ [903.30419232 905.87773894 846.83736099 ... 902.31579924 789.44618904
+ 799.98686511] 
+In [85]:
+scores['DIFF_EV'] = {
+    'Model' : 'DIFF_EV',
+    SCORE_NAME : score_diff,
+}
+
+# TEST['DIFF'] = TEST_PROBAS_D
+In [86]:
+sub = sample_sub.copy()
+sub[TARGET] = TEST_PREDS_D
+sub.to_csv(f"diff_ev_{score_diff}.csv", index=False)
+display(sub.head(10))
+id Premium Amount
+0 1200000 903.304192
+1 1200001 905.877739
+2 1200002 846.837361
+3 1200003 714.514855
+4 1200004 813.073547
+5 1200005 825.057083
+6 1200006 712.046146
+7 1200007 504.021549
+8 1200008 193.893087
+9 1200009 877.171806
+📌 BLEND sp.optimize.minimize
+members list and weights otimization
+In [87]:
+def blend(train, test, members, verbose=1):
+    X = [train[col].values for col in members]
+    if verbose > 0:
+        print('train arrays:')
+        for a in X:
+            print(a)
+            
+    maxiter = len(members) * 500
+    
+    y = train[TARGET].values
+    
+    averager = Averager(options={'maxiter':maxiter})
+    
+    x_valid = np.clip(averager.fit_predict(X, y), 20.0, 4999.0)
+    
+    if verbose > 0:
+        print('\nWEIGHTS:\n', averager.weights())
+        print('weighted average:\n', x_valid)
+
+    score = SCORE(y, x_valid)
+    if verbose > 0:
+        print(colored(f'estimated {SCORE_NAME} : {score}\n\n', 'red'))
+
+    X_test = [test[col].values for col in members]
+    if verbose > 0:
+        print('arrays to blend:')
+        for a in X_test:
+            print(a)
+
+    result = np.clip(averager.predict(X_test), 20, 4999)
+    if verbose > 0:
+        print('weighted average:\n', result, '\n')
+    
+    return result, score
+
+def blend_score(members):
+    _, score = blend(TRAIN, TEST, members, verbose=0)
+    return score
+In [88]:
+# best, best_score, blend_history = best_members(members, blend_score, name='sp.optimize.minimize')
+In [89]:
+TEST_PREDS_A, score_averager = blend(TRAIN, TEST, members) 
+train arrays:
+[974.71248931 681.67762651 888.52392193 ... 178.52609214 967.03587218
+ 249.0006343 ]
+[974.53411865 746.47772217 814.7432251  ... 194.26150513 728.51580811
+ 241.52645874]
+[968.10302734 690.47363281 872.71704102 ... 179.6146698  953.32458496
+ 247.50521851]
+[940.17748722 744.69198578 812.95534353 ... 178.89309393 797.34405557
+ 273.74924744]
+[998.28624154 714.90469488 804.66005868 ... 158.55627934 737.96522358
+ 233.77586659]
+[ 886.57292878  620.11740014  838.80144664 ...  329.97016813 1012.8255662
+  638.0169989 ]
+[953.08139631 760.69797232 814.93828741 ... 183.7158076  757.21105874
+ 301.31322904]
+[977.87744141 728.25213623 822.58746338 ... 177.10189819 746.00164795
+ 241.73274231]
+[972.56703384 666.1284399  873.92337743 ... 188.35599536 961.2333364
+ 224.2052719 ]
+[968.34738537 655.37620412 887.42600938 ... 190.35163536 967.02212619
+ 244.42332176]
+
+WEIGHTS:
+ [ 9.3310442   1.09564787  6.74088417 -2.18190881 -0.48232862  0.13398222
+  0.17997683  0.46055789  4.14682781  0.90500149]
+weighted average:
+ [974.23688097 677.54153106 883.90658146 ... 183.7127767  965.53447105
+ 243.40778361]
+estimated RMSLE : 1.0313127009620042
+
+
+arrays to blend:
+[904.32484381 897.97196551 847.04543071 ... 902.7971671  787.60239305
+ 800.2546533 ]
+[765.70609131 802.96075439 791.35012207 ... 825.62056885 815.45042725
+ 782.062854  ]
+[900.62922363 924.01329346 844.13703613 ... 903.16680908 791.89099121
+ 800.76474609]
+[843.26408561 783.46782828 807.88226797 ... 806.29627711 820.02861529
+ 778.80823685]
+[844.31499176 812.84308641 803.82491874 ... 815.69693658 814.71545729
+ 754.67675901]
+[928.21059812 856.22492354 821.20197689 ... 897.31895986 700.46867139
+ 719.4374014 ]
+[690.01944453 783.66747838 797.51259215 ... 801.98878362 817.40686624
+ 787.07524351]
+[839.34327393 814.90552979 781.72508545 ... 813.8553833  818.77493896
+ 767.35828857]
+[907.48291549 886.21475894 854.90474975 ... 901.37026141 795.97480964
+ 800.1889173 ]
+[897.35504065 897.09423526 845.28344952 ... 894.92367686 779.72403192
+ 807.58322304]
+weighted average:
+ [900.72789528 910.18900394 847.74415589 ... 907.59890238 788.15467237
+ 801.74475733] 
+In [90]:
+scores['BLEND'] = {
+    'Model' : 'BLEND',
+    SCORE_NAME : score_averager,
+}
+display_scores(scores)
+COMPARE:
+  CV Model Dataset Mean OOF RMSLE RMSLE R2 iteration_time
+0 CAT_3 CATR fe_cat_best 1.031536 1.031536 -0.106529 n/a
+1 XGB_0 XGBR cleaned_enccat 1.048963 1.048963 -0.144038 n/a
+2 XGB_2 XGBR fe_enccat_best 1.031616 1.031617 -0.105243 n/a
+3 LGB_1 LGBR fe_enccat 1.046452 1.046452 -0.138244 n/a
+4 CAT_1 CATR fe_cat 1.047837 1.047837 -0.145711 n/a
+5 CAT_0 CATR cleaned_allcat 1.058672 1.058673 -0.120571 n/a
+6 LGB_0 LGBR cleaned_enccat 1.048919 1.048920 -0.143308 n/a
+7 XGB_1 XGBR fe_enccat 1.047334 1.047334 -0.143633 n/a
+8 LGB_2 LGBR fe_enccat_best 1.031724 1.031724 -0.106341 n/a
+9 CAT_2 CATR fe_cat_best 1.031782 1.031782 -0.106565 n/a
+10 STACK LGBR ['CAT_3', 'XGB_0', 'XGB_2', 'LGB_1', 'CAT_1', 'CAT_0', 'LGB_0', 'XGB_1', 'LGB_2', 'CAT_2'] 1.030881 1.030882 -0.101572 n/a
+11 DIFF_EV DIFF_EV nan nan 1.031376 nan nan
+12 BLEND BLEND nan nan 1.031313 nan nan
+📌 Compare ensembles
+unfold_moreShow hidden code
+💾 SUBMISSION
+In [92]:
+sub = sample_sub.copy()
+sub[TARGET] = TEST_PREDS_A
+sub.to_csv(f"averager_{score_averager}.csv", index=False)
+display(sub.head(10))
+id Premium Amount
+0 1200000 900.727895
+1 1200001 910.189004
+2 1200002 847.744156
+3 1200003 711.132706
+4 1200004 813.895465
+5 1200005 828.259748
+6 1200006 703.874018
+7 1200007 491.395899
+8 1200008 197.068596
+9 1200009 881.087299
+In [93]:
+DB.save()
+DB
+Out[93]:
+Database :
+
+
+Datasets:
+cleaned_enccat,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+fe_cat_best,  :
+train, 1200000 rows 22 columns
+test, 800000 rows 21 columns
+
+fe_cat,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+cleaned,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+fe_enccat_best,  :
+train, 1200000 rows 22 columns
+test, 800000 rows 21 columns
+
+fe_enccat,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+loaded,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+fe,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+best,  :
+train, 1200000 rows 1 columns
+test, 800000 rows 1 columns
+
++original,  :
+train, 1477019 rows 21 columns
+test, 800000 rows 20 columns
+
+cleaned_cat,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+cleaned_allcat,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+tmp,  :
+train, 1200000 rows 21 columns
+test, 800000 rows 20 columns
+
+
+CVs:
+    name                :CAT_3
+    estimator_class     :CATR
+    dataset_name        :fe_cat_best
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.031522940498027, 1.0312244460730067, 1.0332708000684316, 1.0294716827994748, 1.0321887221874737]
+params:
+    loss_function       :RMSE
+    iterations          :3000
+    random_seed         :42
+    use_best_model      :True
+    od_type             :Iter
+    od_wait             :20
+    cat_features        :['Gender', 'Marital Status', 'Education Level', 'Occupation', 'Location', 'Policy Type', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type']
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :XGB_0
+    estimator_class     :XGBR
+    dataset_name        :cleaned_enccat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0500552522578748, 1.0485697936530471, 1.0494952885698516, 1.0475052981778132, 1.0491872627513874]
+params:
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :dataset_eval_cleaned
+    estimator_class     :LGBR
+    dataset_name        :cleaned
+    n_splits            :3
+    n_repeats           :1
+    description         :
+    scores              :[1.050404101173846, 1.0473581656834146, 1.048196142611718]
+params:
+    random_state        :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :XGB_2
+    estimator_class     :XGBR
+    dataset_name        :fe_enccat_best
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.031603080673993, 1.0314631589681642, 1.033289402490744, 1.0293942386279062, 1.032331254100645]
+params:
+    n_estimators        :5000
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :LGB_1
+    estimator_class     :LGBR
+    dataset_name        :fe_enccat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0468932074085258, 1.046081220076799, 1.0469935182570433, 1.045120042448295, 1.0471729903705815]
+params:
+    n_esimators         :3000
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :CAT_1
+    estimator_class     :CATR
+    dataset_name        :fe_cat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0484142542939245, 1.0476295445475292, 1.04860348865384, 1.0463903165610908, 1.048147716224586]
+params:
+    loss_function       :RMSE
+    iterations          :300
+    random_seed         :42
+    use_best_model      :True
+    od_type             :Iter
+    od_wait             :20
+    cat_features        :['Gender', 'Marital Status', 'Education Level', 'Occupation', 'Location', 'Policy Type', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type']
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :CAT_0
+    estimator_class     :CATR
+    dataset_name        :cleaned_allcat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0593137501761138, 1.0578033862508083, 1.0593198132020079, 1.0574478719423, 1.059477340553157]
+params:
+    iterations          :1000
+    learning_rate       :0.05
+    random_seed         :42
+    use_best_model      :True
+    od_type             :Iter
+    od_wait             :20
+    cat_features        :['Age', 'Gender', 'Annual Income', 'Marital Status', 'Number of Dependents', 'Education Level', 'Occupation', 'Health Score', 'Location', 'Policy Type', 'Previous Claims', 'Vehicle Age', 'Credit Score', 'Insurance Duration', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type', 'Year']
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :LGB_0
+    estimator_class     :LGBR
+    dataset_name        :cleaned_enccat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.04987085407026, 1.0487235765947593, 1.0495423119842955, 1.0472961906197362, 1.0491638016806915]
+params:
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :dataset_eval_+original
+    estimator_class     :LGBR
+    dataset_name        :+original
+    n_splits            :3
+    n_repeats           :1
+    description         :
+    scores              :[1.1875397270158508, 1.1852253099608099, 1.1898604717927086]
+params:
+    random_state        :42
+oof train, 1477019 rows
+oof test, 800000 rows
+oof true, 1477019 rows
+
+
+    name                :dataset_eval_fe
+    estimator_class     :LGBR
+    dataset_name        :fe
+    n_splits            :3
+    n_repeats           :1
+    description         :
+    scores              :[1.0480733920775132, 1.0448763441759328, 1.0461529497456654]
+params:
+    random_state        :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :XGB_1
+    estimator_class     :XGBR
+    dataset_name        :fe_enccat
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0480892089126679, 1.0474703952899438, 1.047814143071344, 1.045949749165228, 1.0473473764610168]
+params:
+    n_estimators        :5000
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :dataset_eval_loaded
+    estimator_class     :LGBR
+    dataset_name        :loaded
+    n_splits            :3
+    n_repeats           :1
+    description         :
+    scores              :[1.0503971124668876, 1.047443106268908, 1.0480381055144634]
+params:
+    random_state        :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :LGB_2
+    estimator_class     :LGBR
+    dataset_name        :fe_enccat_best
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.031798858181761, 1.031420521819355, 1.033414084743485, 1.0296223357737186, 1.0323620968230145]
+params:
+    n_estimators        :3000
+    learning_rate       :0.05
+    random_seed         :42
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows
+
+
+    name                :CAT_2
+    estimator_class     :CATR
+    dataset_name        :fe_cat_best
+    n_splits            :5
+    n_repeats           :1
+    description         :
+    scores              :[1.0317946015589698, 1.0314823200862921, 1.033493228489753, 1.0298239224388515, 1.0323135868644455]
+params:
+    loss_function       :RMSE
+    iterations          :300
+    random_seed         :42
+    use_best_model      :True
+    od_type             :Iter
+    od_wait             :20
+    cat_features        :['Gender', 'Marital Status', 'Education Level', 'Occupation', 'Location', 'Policy Type', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type']
+oof train, 1200000 rows
+oof test, 800000 rows
+oof true, 1200000 rows

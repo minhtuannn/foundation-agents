@@ -1,0 +1,360 @@
+Feature Engineering with Fast cuDF-Pandas!
+One of the most powerful feature engineering techniques is groupby(COL1)[COL2].agg(STAT). This is where we group by COL1 column and aggregate (i.e. compute) a statistic STAT over another column COL2. This is the underlying method to compute target encoding and count encoding. By computing raw statistics and inputting them into our model, our model can do more than only receiving TE or CE. This notebook illustrates creating 50 engineered features, but we can create hundreds more and improve CV score and LB score!
+When our dataset has millions of rows like Kaggle's Backpack competition, then groupby operations take time to compute. The fastest way to compute a groupby aggregation is to use GPU with RAPIDS cuDF-Pandas library.
+There are two ways to use RAPIDS cuDF. We can write cuDF code which looks just like Pandas code and starts with import cudf. Or we can write normal Pandas code with import pandas but before that we add the cell magic command %load_ext cudf.pandas. By adding this magic command all calls to Pandas afterward will use RAPIDS cuDF behind the scenes taking advantage of the massive speed boost of GPU!
+Alternatively, we can use cuDF-Polars. To use cuDF-Polars, we write Polars code with lazy frame. Then the final call includes .collect(engine="gpu") which will run all previous Polars code behind the scenes with RAPIDS cuDF.
+RAPIDS v25.02
+RAPIDS v25.02 was just released Feb 15, 2025! Instructions on installing RAPIDS is here. On Kaggle, the easiest way to pip install new libraries is to do it once in a Utility Script notebook. Then whenever we attach the Utility Script notebook to another Kaggle notebook, the second Kaggle notebook immediately gets the benefit of the pip installed libraries. We created a RAPIDS 25.02 Utility Script here, and we attach it to the notebook you are reading. Therefore the notebook you are reading can import RAPIDS v25.02 without needing to pip install!
+GPU Acceleration
+We activate cuDF-Pandas with the magic command %load_ext cudf.pandas below. Afterward, all calls to Pandas will use fast GPU RAPIDS cuDF behind the scenes! Since we attached Utility Script notebook here to the notebook you are reading, we will be using the new RAPIDS v25.02!
+In [1]:
+%load_ext cudf.pandas
+
+import numpy as np, pandas as pd
+import matplotlib.pyplot as plt
+pd.set_option('display.max_columns', 500)
+
+VER=1
+Load Data
+We load train, train extra, and test data. The combined train data has 4 million rows! This means we do not need to fear overfitting train. We can make hundreds/thousands of new features and every time our CV improves our LB will improve too!
+In [2]:
+train = pd.read_csv("/kaggle/input/playground-series-s5e2/train.csv")
+print("Train shape", train.shape )
+train.head()
+Train shape (300000, 11)
+Out[2]:
+id Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 0 Jansport Leather Medium 7.0 Yes No Tote Black 11.611723 112.15875
+1 1 Jansport Canvas Small 10.0 Yes Yes Messenger Green 27.078537 68.88056
+2 2 Under Armour Leather Small 2.0 Yes No Messenger Red 16.643760 39.17320
+3 3 Nike Nylon Small 8.0 Yes No Messenger Green 12.937220 80.60793
+4 4 Adidas Canvas Medium 1.0 Yes Yes Messenger Green 17.749338 86.02312
+In [3]:
+train2 = pd.read_csv("/kaggle/input/playground-series-s5e2/training_extra.csv")
+print("Extra Train shape", train2.shape )
+train2.head()
+Extra Train shape (3694318, 11)
+Out[3]:
+id Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 500000 Under Armour Canvas Small 10.0 Yes Yes Tote Blue 23.882052 114.11068
+1 500001 Puma Polyester Small 4.0 No Yes Backpack Green 11.869095 129.74972
+2 500002 Jansport Polyester Small 8.0 Yes Yes Tote Red 8.092302 21.37370
+3 500003 Nike Nylon Large 7.0 No No Messenger Pink 7.719581 48.09209
+4 500004 Nike Leather Large 9.0 No Yes Tote Green 22.741826 77.32461
+In [4]:
+train = pd.concat([train,train2],axis=0,ignore_index=True)
+print("Combined Train shape", train.shape)
+Combined Train shape (3994318, 11)
+In [5]:
+test = pd.read_csv("/kaggle/input/playground-series-s5e2/test.csv")
+print("Test shape", test.shape )
+test.head()
+Test shape (200000, 10)
+Out[5]:
+id Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg)
+0 300000 Puma Leather Small 2.0 No No Tote Green 20.671147
+1 300001 Nike Canvas Medium 7.0 No Yes Backpack Green 13.564105
+2 300002 Adidas Canvas Large 9.0 No Yes Messenger Blue 11.809799
+3 300003 Adidas Nylon Large 1.0 Yes No Messenger Green 18.477036
+4 300004 <NA> Nylon Large 2.0 Yes Yes Tote Black 9.907953
+Feature Engineer Columns
+We will engineer 8 new columns by combining existing columns.
+In [6]:
+CATS = list(train.columns[1:-2])
+print(f"There are {len(CATS)} categorical columns:")
+print( CATS )
+print(f"There are 1 numerical column:")
+print( ["Weight Capacity (kg)"] )
+There are 8 categorical columns:
+['Brand', 'Material', 'Size', 'Compartments', 'Laptop Compartment', 'Waterproof', 'Style', 'Color']
+There are 1 numerical column:
+['Weight Capacity (kg)']
+In [7]:
+COMBO = []
+for i,c in enumerate(CATS):
+    #print(f"{c}, ",end="")
+    combine = pd.concat([train[c],test[c]],axis=0)
+    combine,_ = pd.factorize(combine)
+    train[c] = combine[:len(train)]
+    test[c] = combine[len(train):]
+    n = f"{c}_wc"
+    train[n] = train[c]*100 + train["Weight Capacity (kg)"]
+    test[n] = test[c]*100 + test["Weight Capacity (kg)"]
+    COMBO.append(n)
+print()
+print(f"We engineer {len(COMBO)} new columns!")
+print( COMBO )
+We engineer 8 new columns!
+['Brand_wc', 'Material_wc', 'Size_wc', 'Compartments_wc', 'Laptop Compartment_wc', 'Waterproof_wc', 'Style_wc', 'Color_wc']
+In [8]:
+FEATURES = CATS + ["Weight Capacity (kg)"] + COMBO
+print(f"We now have {len(FEATURES)} columns:")
+print( FEATURES )
+We now have 17 columns:
+['Brand', 'Material', 'Size', 'Compartments', 'Laptop Compartment', 'Waterproof', 'Style', 'Color', 'Weight Capacity (kg)', 'Brand_wc', 'Material_wc', 'Size_wc', 'Compartments_wc', 'Laptop Compartment_wc', 'Waterproof_wc', 'Style_wc', 'Color_wc']
+XGBoost with Feature Engineer GroupBy
+We train XGBoost with nested folds. We use the inner nested fold to create new features that aggregate the target price. And we use the outer fold to create new features that do not aggregate the target price. In each k fold loop, we engineer new features using the advanced feature engineering technique groupby(COL1)[COL2].agg(STAT). Since we are using RAPIDS cuDF-Pandas, these groupby computations will run fast on GPU! And we will train our model quickly on GPU using XGBoost!
+In [9]:
+from sklearn.model_selection import KFold
+from xgboost import XGBRegressor
+import xgboost as xgb
+print(f"XGBoost version",xgb.__version__)
+XGBoost version 2.0.3
+In [10]:
+# STATISTICS TO AGGEGATE FOR OUR FEATURE GROUPS
+STATS = ["mean","std","count","nunique","median","min","max","skew"]
+STATS2 = ["mean","std"]
+In [11]:
+%%time
+
+FOLDS = 7
+kf = KFold(n_splits=FOLDS, shuffle=True, random_state=42)
+
+oof = np.zeros((len(train)))
+pred = np.zeros((len(test)))
+
+# OUTER K FOLD
+for i, (train_index, test_index) in enumerate(kf.split(train)):
+    print(f"### OUTER Fold {i+1} ###")
+
+    X_train = train.loc[train_index,FEATURES+['Price']].reset_index(drop=True).copy()
+    y_train = train.loc[train_index,'Price']
+
+    X_valid = train.loc[test_index,FEATURES].reset_index(drop=True).copy()
+    y_valid = train.loc[test_index,'Price']
+
+    X_test = test[FEATURES].reset_index(drop=True).copy()
+
+    # INNER K FOLD (TO PREVENT LEAKAGE WHEN USING PRICE)
+    kf2 = KFold(n_splits=FOLDS, shuffle=True, random_state=42)   
+    for j, (train_index2, test_index2) in enumerate(kf2.split(X_train)):
+        print(f" ## INNER Fold {j+1} (outer fold {i+1}) ##")
+
+        X_train2 = X_train.loc[train_index2,FEATURES+['Price']].copy()
+        X_valid2 = X_train.loc[test_index2,FEATURES].copy()
+
+        ### FEATURE SET 1 (uses price) ###
+        col = "Weight Capacity (kg)"
+        tmp = X_train2.groupby(col).Price.agg(STATS)
+        tmp.columns = [f"TE1_wc_{s}" for s in STATS]
+        X_valid2 = X_valid2.merge(tmp, on=col, how="left")
+        for c in tmp.columns:
+            X_train.loc[test_index2,c] = X_valid2[c].values
+
+        ### FEATURE SET 2 (uses price) ###
+        for col in COMBO:
+            tmp = X_train2.groupby(col).Price.agg(STATS2)
+            tmp.columns = [f"TE2_{col}_{s}" for s in STATS2]
+            X_valid2 = X_valid2.merge(tmp, on=col, how="left")
+            for c in tmp.columns:
+                X_train.loc[test_index2,c] = X_valid2[c].values
+
+    ### FEATURE SET 1 (uses price) ###
+    col = "Weight Capacity (kg)"
+    tmp = X_train.groupby(col).Price.agg(STATS)
+    tmp.columns = [f"TE1_wc_{s}" for s in STATS]
+    X_valid = X_valid.merge(tmp, on=col, how="left")
+    X_test = X_test.merge(tmp, on=col, how="left")
+
+    ### FEATURE SET 2 (uses price) ###
+    for col in COMBO:
+        tmp = X_train.groupby(col).Price.agg(STATS2)
+        tmp.columns = [f"TE2_{col}_{s}" for s in STATS2]
+        X_valid = X_valid.merge(tmp, on=col, how="left")
+        X_test = X_test.merge(tmp, on=col, how="left")
+
+    ### FEATURE SET 3 (does not use price) ###
+    for col in CATS:
+        col2 = "Weight Capacity (kg)"
+        tmp = X_train.groupby(col)[col2].agg(STATS2)
+        tmp.columns = [f"FE3_{col}_wc_{s}" for s in STATS2]
+        X_train = X_train.merge(tmp, on=col, how="left")
+        X_valid = X_valid.merge(tmp, on=col, how="left")
+        X_test = X_test.merge(tmp, on=col, how="left")
+
+    # CONVERT TO CATS SO XGBOOST RECOGNIZES THEM
+    X_train[CATS] = X_train[CATS].astype("category")
+    X_valid[CATS] = X_valid[CATS].astype("category")
+    X_test[CATS] = X_test[CATS].astype("category")
+
+    # DROP PRICE THAT WAS USED FOR TARGET ENCODING
+    X_train = X_train.drop(['Price'],axis=1)
+
+    # BUILD MODEL
+    model = XGBRegressor(
+        device="cuda",
+        max_depth=6,  
+        colsample_bytree=0.5, 
+        subsample=0.8,  
+        n_estimators=10_000,  
+        learning_rate=0.02,  
+        enable_categorical=True,
+        min_child_weight=10,
+        early_stopping_rounds=100,
+    )
+    
+    # TRAIN MODEL
+    COLS = X_train.columns
+    model.fit(
+        X_train[COLS], y_train,
+        eval_set=[(X_valid[COLS], y_valid)],  
+        verbose=300,
+    )
+
+    # PREDICT OOF AND TEST
+    oof[test_index] = model.predict(X_valid[COLS])
+    pred += model.predict(X_test[COLS])
+
+pred /= FOLDS
+### OUTER Fold 1 ###
+ ## INNER Fold 1 (outer fold 1) ##
+ ## INNER Fold 2 (outer fold 1) ##
+ ## INNER Fold 3 (outer fold 1) ##
+ ## INNER Fold 4 (outer fold 1) ##
+ ## INNER Fold 5 (outer fold 1) ##
+ ## INNER Fold 6 (outer fold 1) ##
+ ## INNER Fold 7 (outer fold 1) ##
+[0] validation_0-rmse:38.90014
+[300] validation_0-rmse:38.63466
+[600] validation_0-rmse:38.62835
+[900] validation_0-rmse:38.62649
+[1161] validation_0-rmse:38.62628
+/usr/local/lib/python3.10/dist-packages/xgboost/core.py:160: UserWarning: [04:00:15] WARNING: /workspace/src/common/error_msg.cc:58: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  warnings.warn(smsg, UserWarning)
+### OUTER Fold 2 ###
+ ## INNER Fold 1 (outer fold 2) ##
+ ## INNER Fold 2 (outer fold 2) ##
+ ## INNER Fold 3 (outer fold 2) ##
+ ## INNER Fold 4 (outer fold 2) ##
+ ## INNER Fold 5 (outer fold 2) ##
+ ## INNER Fold 6 (outer fold 2) ##
+ ## INNER Fold 7 (outer fold 2) ##
+[0] validation_0-rmse:38.89652
+[300] validation_0-rmse:38.63535
+[600] validation_0-rmse:38.62946
+[900] validation_0-rmse:38.62819
+[1034] validation_0-rmse:38.62826
+### OUTER Fold 3 ###
+ ## INNER Fold 1 (outer fold 3) ##
+ ## INNER Fold 2 (outer fold 3) ##
+ ## INNER Fold 3 (outer fold 3) ##
+ ## INNER Fold 4 (outer fold 3) ##
+ ## INNER Fold 5 (outer fold 3) ##
+ ## INNER Fold 6 (outer fold 3) ##
+ ## INNER Fold 7 (outer fold 3) ##
+[0] validation_0-rmse:38.91592
+[300] validation_0-rmse:38.64243
+[600] validation_0-rmse:38.63714
+[900] validation_0-rmse:38.63632
+[1200] validation_0-rmse:38.63582
+[1308] validation_0-rmse:38.63597
+### OUTER Fold 4 ###
+ ## INNER Fold 1 (outer fold 4) ##
+ ## INNER Fold 2 (outer fold 4) ##
+ ## INNER Fold 3 (outer fold 4) ##
+ ## INNER Fold 4 (outer fold 4) ##
+ ## INNER Fold 5 (outer fold 4) ##
+ ## INNER Fold 6 (outer fold 4) ##
+ ## INNER Fold 7 (outer fold 4) ##
+[0] validation_0-rmse:38.95726
+[300] validation_0-rmse:38.69386
+[600] validation_0-rmse:38.68676
+[900] validation_0-rmse:38.68509
+[1200] validation_0-rmse:38.68428
+[1369] validation_0-rmse:38.68421
+### OUTER Fold 5 ###
+ ## INNER Fold 1 (outer fold 5) ##
+ ## INNER Fold 2 (outer fold 5) ##
+ ## INNER Fold 3 (outer fold 5) ##
+ ## INNER Fold 4 (outer fold 5) ##
+ ## INNER Fold 5 (outer fold 5) ##
+ ## INNER Fold 6 (outer fold 5) ##
+ ## INNER Fold 7 (outer fold 5) ##
+[0] validation_0-rmse:38.95321
+[300] validation_0-rmse:38.68620
+[600] validation_0-rmse:38.68007
+[900] validation_0-rmse:38.67865
+[1145] validation_0-rmse:38.67865
+### OUTER Fold 6 ###
+ ## INNER Fold 1 (outer fold 6) ##
+ ## INNER Fold 2 (outer fold 6) ##
+ ## INNER Fold 3 (outer fold 6) ##
+ ## INNER Fold 4 (outer fold 6) ##
+ ## INNER Fold 5 (outer fold 6) ##
+ ## INNER Fold 6 (outer fold 6) ##
+ ## INNER Fold 7 (outer fold 6) ##
+[0] validation_0-rmse:38.89544
+[300] validation_0-rmse:38.62688
+[600] validation_0-rmse:38.62174
+[900] validation_0-rmse:38.62062
+[1178] validation_0-rmse:38.62077
+### OUTER Fold 7 ###
+ ## INNER Fold 1 (outer fold 7) ##
+ ## INNER Fold 2 (outer fold 7) ##
+ ## INNER Fold 3 (outer fold 7) ##
+ ## INNER Fold 4 (outer fold 7) ##
+ ## INNER Fold 5 (outer fold 7) ##
+ ## INNER Fold 6 (outer fold 7) ##
+ ## INNER Fold 7 (outer fold 7) ##
+[0] validation_0-rmse:38.99049
+[300] validation_0-rmse:38.71791
+[600] validation_0-rmse:38.71150
+[900] validation_0-rmse:38.70869
+[1200] validation_0-rmse:38.70834
+[1310] validation_0-rmse:38.70849
+CPU times: user 24min 22s, sys: 1min 52s, total: 26min 14s
+Wall time: 23min 6s
+Overall CV Score
+Below we display overall cv score and save oof predictions to disk so we can use them later to assist finding ensemble weights with our other models.
+In [12]:
+# COMPUTE OVERALL CV SCORE
+true = train.Price.values
+s = np.sqrt(np.mean( (oof-true)**2.0 ) )
+print(f"=> Overall CV Score = {s}")
+=> Overall CV Score = 38.65449506712339
+In [13]:
+# SAVE OOF TO DISK FOR ENSEMBLES
+np.save(f"oof_v{VER}",oof)
+print("Saved oof to disk")
+Saved oof to disk
+Feature Names
+Below we list all our engineered features. We are using 57 features in total!
+In [14]:
+print(f"\nIn total, we used {len(COLS)} features, Wow!\n")
+print( list(COLS) )
+In total, we used 57 features, Wow!
+
+['Brand', 'Material', 'Size', 'Compartments', 'Laptop Compartment', 'Waterproof', 'Style', 'Color', 'Weight Capacity (kg)', 'Brand_wc', 'Material_wc', 'Size_wc', 'Compartments_wc', 'Laptop Compartment_wc', 'Waterproof_wc', 'Style_wc', 'Color_wc', 'TE1_wc_mean', 'TE1_wc_std', 'TE1_wc_count', 'TE1_wc_nunique', 'TE1_wc_median', 'TE1_wc_min', 'TE1_wc_max', 'TE1_wc_skew', 'TE2_Brand_wc_mean', 'TE2_Brand_wc_std', 'TE2_Material_wc_mean', 'TE2_Material_wc_std', 'TE2_Size_wc_mean', 'TE2_Size_wc_std', 'TE2_Compartments_wc_mean', 'TE2_Compartments_wc_std', 'TE2_Laptop Compartment_wc_mean', 'TE2_Laptop Compartment_wc_std', 'TE2_Waterproof_wc_mean', 'TE2_Waterproof_wc_std', 'TE2_Style_wc_mean', 'TE2_Style_wc_std', 'TE2_Color_wc_mean', 'TE2_Color_wc_std', 'FE3_Brand_wc_mean', 'FE3_Brand_wc_std', 'FE3_Material_wc_mean', 'FE3_Material_wc_std', 'FE3_Size_wc_mean', 'FE3_Size_wc_std', 'FE3_Compartments_wc_mean', 'FE3_Compartments_wc_std', 'FE3_Laptop Compartment_wc_mean', 'FE3_Laptop Compartment_wc_std', 'FE3_Waterproof_wc_mean', 'FE3_Waterproof_wc_std', 'FE3_Style_wc_mean', 'FE3_Style_wc_std', 'FE3_Color_wc_mean', 'FE3_Color_wc_std']
+XGB Feature Importance
+Here is XGBoost feature importance sorted by gain.
+In [15]:
+import xgboost as xgb
+fig, ax = plt.subplots(figsize=(10, 20))
+xgb.plot_importance(model, max_num_features=100, importance_type='gain',ax=ax)
+plt.title("Top 100 Feature Importances (XGBoost)")
+plt.show()
+Make Submission CSV
+We save our test predictions to submission.csv and plot our predictions.
+In [16]:
+sub = pd.read_csv("/kaggle/input/playground-series-s5e2/sample_submission.csv")
+sub.Price = pred
+sub.to_csv(f"submission_v{VER}.csv",index=False)
+sub.head()
+Out[16]:
+id Price
+0 300000 79.935581
+1 300001 83.089314
+2 300002 86.401968
+3 300003 76.810952
+4 300004 79.446623
+In [17]:
+plt.figure(figsize=(6,4))
+plt.hist(sub.Price,bins=100)
+plt.title("Test Predictions")
+plt.show()

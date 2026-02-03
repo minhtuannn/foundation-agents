@@ -1,0 +1,584 @@
+In [1]:
+import warnings
+warnings.simplefilter('ignore')
+Load Data
+In [2]:
+import pandas as pd, numpy as np, gc
+
+train = pd.read_csv('/kaggle/input/playground-series-s5e12/train.csv')
+test = pd.read_csv('/kaggle/input/playground-series-s5e12/test.csv')
+orig = pd.read_csv('/kaggle/input/diabetes-health-indicators-dataset/diabetes_dataset.csv')
+print('Train Shape:', train.shape)
+print('Test Shape:', test.shape)
+print('Orig Shape:', orig.shape)
+
+train.head(3)
+Train Shape: (700000, 26)
+Test Shape: (300000, 25)
+Orig Shape: (100000, 31)
+Out[2]:
+id age alcohol_consumption_per_week physical_activity_minutes_per_week diet_score sleep_hours_per_day screen_time_hours_per_day bmi waist_to_hip_ratio systolic_bp ... gender ethnicity education_level income_level smoking_status employment_status family_history_diabetes hypertension_history cardiovascular_history diagnosed_diabetes
+0 0 31 1 45 7.7 6.8 6.1 33.4 0.93 112 ... Female Hispanic Highschool Lower-Middle Current Employed 0 0 0 1.0
+1 1 50 2 73 5.7 6.5 5.8 23.8 0.83 120 ... Female White Highschool Upper-Middle Never Employed 0 0 0 1.0
+2 2 32 3 158 8.5 7.4 9.1 24.1 0.83 95 ... Male Hispanic Highschool Lower-Middle Never Retired 0 0 0 0.0
+3 rows × 26 columns
+In [3]:
+TARGET = 'diagnosed_diabetes'
+BASE = [col for col in train.columns if col not in ['id', TARGET]]
+CATS = train.select_dtypes('object').columns.to_list()
+NUMS = [col for col in BASE if col not in CATS]
+print(f'{len(BASE)} Base Features:{BASE}')
+24 Base Features:['age', 'alcohol_consumption_per_week', 'physical_activity_minutes_per_week', 'diet_score', 'sleep_hours_per_day', 'screen_time_hours_per_day', 'bmi', 'waist_to_hip_ratio', 'systolic_bp', 'diastolic_bp', 'heart_rate', 'cholesterol_total', 'hdl_cholesterol', 'ldl_cholesterol', 'triglycerides', 'gender', 'ethnicity', 'education_level', 'income_level', 'smoking_status', 'employment_status', 'family_history_diabetes', 'hypertension_history', 'cardiovascular_history']
+Some EDA for Modeling
+1. Check Unique Values & Missing Data
+First, let's check the number of unique values and missing values for both NUMS and CATS features.
+In [4]:
+print('NaN Count:', train[CATS].isnull().sum().sum(), '\n')
+print(train[CATS].nunique(),'\n')
+train[CATS].head(3)
+NaN Count: 0 
+
+gender               3
+ethnicity            5
+education_level      4
+income_level         5
+smoking_status       3
+employment_status    4
+dtype: int64 
+Out[4]:
+gender ethnicity education_level income_level smoking_status employment_status
+0 Female Hispanic Highschool Lower-Middle Current Employed
+1 Female White Highschool Upper-Middle Never Employed
+2 Male Hispanic Highschool Lower-Middle Never Retired
+In [5]:
+print('NaN Count:', train[NUMS].isnull().sum().sum(), '\n')
+print(train[NUMS].nunique(),'\n')
+train[NUMS].head(3)
+NaN Count: 0 
+
+age                                    71
+alcohol_consumption_per_week            9
+physical_activity_minutes_per_week    565
+diet_score                             99
+sleep_hours_per_day                    69
+screen_time_hours_per_day             151
+bmi                                   231
+waist_to_hip_ratio                     36
+systolic_bp                            71
+diastolic_bp                           54
+heart_rate                             60
+cholesterol_total                     154
+hdl_cholesterol                        69
+ldl_cholesterol                       151
+triglycerides                         228
+family_history_diabetes                 2
+hypertension_history                    2
+cardiovascular_history                  2
+dtype: int64 
+Out[5]:
+age alcohol_consumption_per_week physical_activity_minutes_per_week diet_score sleep_hours_per_day screen_time_hours_per_day bmi waist_to_hip_ratio systolic_bp diastolic_bp heart_rate cholesterol_total hdl_cholesterol ldl_cholesterol triglycerides family_history_diabetes hypertension_history cardiovascular_history
+0 31 1 45 7.7 6.8 6.1 33.4 0.93 112 70 62 199 58 114 102 0 0 0
+1 50 2 73 5.7 6.5 5.8 23.8 0.83 120 77 71 199 50 121 124 0 0 0
+2 32 3 158 8.5 7.4 9.1 24.1 0.83 95 89 73 188 59 114 108 0 0 0
+Observations
+No Missing Values: The dataset is clean, containing zero null values.
+Low Cardinality: Even the numerical features exhibit relatively low unique counts (cardinality) considering the large dataset size of roughly 700k samples.
+Feature Engineering Idea: Given this discrete nature, Target Encoding could be effective in extracting more signals from Numerical features.
+2.1 Target Distribution
+We examine the distribution of the target variable diagnosed_diabetes. This helps us determine if we need to address class imbalance techniques or use stratified cross-validation.
+In [6]:
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+sns.set_style('whitegrid')
+plt.rcParams['font.size'] = 10
+plt.rcParams['figure.dpi'] = 100
+In [7]:
+fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+
+# Train Dataset
+sns.countplot(data=train, x=TARGET, ax=ax[0], palette='viridis')
+ax[0].set_title(f'Train: {TARGET} Distribution')
+for p in ax[0].patches:
+    ax[0].annotate(f'{p.get_height():,}', (p.get_x() + p.get_width() / 2., p.get_height()), 
+                   ha='center', va='center', xytext=(0, 10), textcoords='offset points')
+
+# Original Dataset (if target exists)
+if TARGET in orig.columns:
+    sns.countplot(data=orig, x=TARGET, ax=ax[1], palette='viridis')
+    ax[1].set_title(f'Original: {TARGET} Distribution')
+    for p in ax[1].patches:
+        ax[1].annotate(f'{p.get_height():,}', (p.get_x() + p.get_width() / 2., p.get_height()), 
+                       ha='center', va='center', xytext=(0, 10), textcoords='offset points')
+
+plt.tight_layout()
+plt.show()
+2.2 Feature Distributions (Train vs Test vs Original)
+Next, we visualize the distributions of numerical features across the Train, Test, and Original datasets. It is crucial to confirm that the Test set follows a similar distribution to the Train set to ensure model generalization.
+In [8]:
+df_plot = pd.concat([
+    train[NUMS].assign(Source='Train'),
+    test[NUMS].assign(Source='Test'),
+    orig[NUMS].assign(Source='Original')
+])
+
+n_cols = 3
+n_rows = (len(NUMS) + n_cols - 1) // n_cols
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 4 * n_rows))
+axes = axes.flatten()
+
+for i, col in enumerate(NUMS):
+    sns.kdeplot(data=df_plot, x=col, hue='Source', ax=axes[i], 
+                fill=True, common_norm=False, warn_singular=False)
+    axes[i].set_title(col)
+
+for i in range(len(NUMS), len(axes)):
+    axes[i].axis('off')
+
+plt.tight_layout()
+plt.show()
+
+del df_plot
+2.3 Correlation Matrix
+Finally, we analyze the correlation between numerical features and the target. This heatmap helps identify multicollinearity and highlights features that have a strong linear relationship with the target.
+In [9]:
+corr_features = NUMS + [TARGET]
+corr_matrix = train[corr_features].corr()
+
+mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+
+plt.figure(figsize=(14, 12))
+sns.heatmap(corr_matrix, mask=mask, annot=True, fmt=".2f", 
+            cmap='coolwarm', vmin=-1, vmax=1, linewidths=0.5)
+plt.title('Correlation Matrix (Numerical Features vs Target)')
+plt.show()
+Observations & Strategy
+Based on the EDA above, we can draw several key insights to guide our modeling strategy:
+Distribution Alignment: The feature distributions of Train and Test are nearly identical, which is excellent for model generalization and validates our local CV strategy.
+Original Data Strategy: The Original dataset shows distinct distributional differences (sharper peaks and shifts). Simply concatenating it for data augmentation might introduce noise (covariate shift). Instead, it may be more effective to use the Original data for Feature Engineering—such as creating aggregate features or robust target encoding—to extract underlying biological signals.
+Multicollinearity: We observe a strong correlation (0.81) between ldl_cholesterol and cholesterol_total. While tree-based models like XGBoost can handle this, we should be aware of this redundancy when analyzing feature importance.
+3. Feature Engineering
+We will implement several feature engineering techniques to boost model performance.
+Original Data Features (External Source Encoding)
+As noted in the EDA, the Original Dataset distribution differs from Train/Test. Instead of simple concatenation (which risks covariate shift), we utilize the Original data as an external reference to create statistical features:
+Orig Mean (Target Encoding): The probability of diabetes for a given category/value in the real-world dataset. This serves as a robust, leakage-free risk indicator.
+Orig Count (Frequency Encoding): How frequently a value appears in the original medical records.
+In [10]:
+ORIG = []
+
+for col in BASE:
+    # MEAN
+    mean_map = orig.groupby(col)[TARGET].mean()
+    new_mean_col_name = f"orig_mean_{col}"
+    mean_map.name = new_mean_col_name
+    
+    train = train.merge(mean_map, on=col, how='left')
+    test = test.merge(mean_map, on=col, how='left')
+    ORIG.append(new_mean_col_name)
+
+    # COUNT
+    new_count_col_name = f"orig_count_{col}"
+    count_map = orig.groupby(col).size().reset_index(name=new_count_col_name)
+    
+    train = train.merge(count_map, on=col, how='left')
+    test = test.merge(count_map, on=col, how='left')
+    ORIG.append(new_count_col_name)
+
+print(f'{len(ORIG)} ORIG Features Created.')
+48 ORIG Features Created.
+In [11]:
+for col in ORIG:
+    if 'mean' in col:
+        train[col] = train[col].fillna(orig[TARGET].mean())
+        test[col] = test[col].fillna(orig[TARGET].mean())
+    else:
+        train[col] = train[col].fillna(0)
+        test[col] = test[col].fillna(0)
+4. Model Training
+4.1 Feature Set Aggregation
+We consolidate all feature groups created during the engineering phase:
+BASE: The original features from the train dataset.
+ORIG: Statistical features derived from the external original dataset.
+We then define our feature matrix X and target vector y.
+In [12]:
+FEATURES = BASE + ORIG
+print(len(FEATURES), 'Features.')
+72 Features.
+In [13]:
+X = train[FEATURES]
+y = train[TARGET]
+4.2. Robust Target Encoder with Internal CV
+We implement a custom TargetEncoder class designed to extract signals from categorical features while strictly preventing Data Leakage.
+Key features of this implementation:
+Internal K-Fold CV: Encodes training data using out-of-fold statistics (fit_transform), ensuring the model doesn't see its own label during training.
+Smoothing: Applies regularization (Empirical Bayes) to prevent overfitting on rare categories.
+Multiple Aggregations: Supports not just mean, but also std, count, etc., to capture the full distribution of the target per category.
+In [14]:
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.model_selection import KFold
+
+class TargetEncoder(BaseEstimator, TransformerMixin):
+    """
+    Target Encoder that supports multiple aggregation functions,
+    internal cross-validation for leakage prevention, and smoothing.
+
+    Parameters
+    ----------
+    cols_to_encode : list of str
+        List of column names to be target encoded.
+
+    aggs : list of str, default=['mean']
+        List of aggregation functions to apply. Any function accepted by
+        pandas' `.agg()` method is supported, such as:
+        'mean', 'std', 'var', 'min', 'max', 'skew', 'nunique', 
+        'count', 'sum', 'median'.
+        Smoothing is applied only to the 'mean' aggregation.
+
+    cv : int, default=5
+        Number of folds for cross-validation in fit_transform.
+
+    smooth : float or 'auto', default='auto'
+        The smoothing parameter `m`. A larger value puts more weight on the 
+        global mean. If 'auto', an empirical Bayes estimate is used.
+        
+    drop_original : bool, default=False
+        If True, the original columns to be encoded are dropped.
+    """
+    def __init__(self, cols_to_encode, aggs=['mean'], cv=5, smooth='auto', drop_original=False):
+        self.cols_to_encode = cols_to_encode
+        self.aggs = aggs
+        self.cv = cv
+        self.smooth = smooth
+        self.drop_original = drop_original
+        self.mappings_ = {}
+        self.global_stats_ = {}
+
+    def fit(self, X, y):
+        """
+        Learn mappings from the entire dataset.
+        These mappings are used for the transform method on validation/test data.
+        """
+        temp_df = X.copy()
+        temp_df['target'] = y
+
+        # Learn global statistics for each aggregation
+        for agg_func in self.aggs:
+            self.global_stats_[agg_func] = y.agg(agg_func)
+
+        # Learn category-specific mappings
+        for col in self.cols_to_encode:
+            self.mappings_[col] = {}
+            for agg_func in self.aggs:
+                mapping = temp_df.groupby(col)['target'].agg(agg_func)
+                self.mappings_[col][agg_func] = mapping
+        
+        return self
+
+    def transform(self, X):
+        """
+        Apply learned mappings to the data.
+        Unseen categories are filled with global statistics.
+        """
+        X_transformed = X.copy()
+        for col in self.cols_to_encode:
+            for agg_func in self.aggs:
+                new_col_name = f'TE_{col}_{agg_func}'
+                map_series = self.mappings_[col][agg_func]
+                X_transformed[new_col_name] = X[col].map(map_series)
+                X_transformed[new_col_name].fillna(self.global_stats_[agg_func], inplace=True)
+        
+        if self.drop_original:
+            X_transformed.drop(columns=self.cols_to_encode, inplace=True)
+            
+        return X_transformed
+
+    def fit_transform(self, X, y):
+        """
+        Fit and transform the data using internal cross-validation to prevent leakage.
+        """
+        # First, fit on the entire dataset to get global mappings for transform method
+        self.fit(X, y)
+
+        # Initialize an empty DataFrame to store encoded features
+        encoded_features = pd.DataFrame(index=X.index)
+        
+        kf = KFold(n_splits=self.cv, shuffle=True, random_state=42)
+
+        for train_idx, val_idx in kf.split(X, y):
+            X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
+            X_val = X.iloc[val_idx]
+            
+            temp_df_train = X_train.copy()
+            temp_df_train['target'] = y_train
+
+            for col in self.cols_to_encode:
+                # --- Calculate mappings only on the training part of the fold ---
+                for agg_func in self.aggs:
+                    new_col_name = f'TE_{col}_{agg_func}'
+                    
+                    # Calculate global stat for this fold
+                    fold_global_stat = y_train.agg(agg_func)
+                    
+                    # Calculate category stats for this fold
+                    mapping = temp_df_train.groupby(col)['target'].agg(agg_func)
+
+                    # --- Apply smoothing only for 'mean' aggregation ---
+                    if agg_func == 'mean':
+                        counts = temp_df_train.groupby(col)['target'].count()
+                        
+                        m = self.smooth
+                        if self.smooth == 'auto':
+                            # Empirical Bayes smoothing
+                            variance_between = mapping.var()
+                            avg_variance_within = temp_df_train.groupby(col)['target'].var().mean()
+                            if variance_between > 0:
+                                m = avg_variance_within / variance_between
+                            else:
+                                m = 0  # No smoothing if no variance between groups
+                        
+                        # Apply smoothing formula
+                        smoothed_mapping = (counts * mapping + m * fold_global_stat) / (counts + m)
+                        encoded_values = X_val[col].map(smoothed_mapping)
+                    else:
+                        encoded_values = X_val[col].map(mapping)
+                    
+                    # Store encoded values for the validation fold
+                    encoded_features.loc[X_val.index, new_col_name] = encoded_values.fillna(fold_global_stat)
+
+        # Merge with original DataFrame
+        X_transformed = X.copy()
+        for col in encoded_features.columns:
+            X_transformed[col] = encoded_features[col]
+            
+        if self.drop_original:
+            X_transformed.drop(columns=self.cols_to_encode, inplace=True)
+            
+        return X_transformed
+4.3 Stratified K-Fold Training (XGBoost)
+We train an XGBoost model using the Scikit-Learn API within a 5-fold Stratified Cross-Validation loop. To maximize model performance and maintain stability, we apply specific preprocessing strategies inside the fold:
+Selective Target Encoding: We apply Target Encoding to numerical features with more than 2 unique values. Binary features are excluded to prevent noise.
+Native Categorical Support: For categorical columns (CATS), we apply factorization (Label Encoding) and cast them to the category data type. This enables XGBoost's enable_categorical=True to handle categorical splits optimally.
+In [15]:
+from xgboost import XGBClassifier
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import roc_auc_score
+import gc
+
+# -----------------------------------------------------
+# 0. Helper: Memory Reducer
+# -----------------------------------------------------
+def reduce_mem_usage(df):
+    for col in df.columns:
+        col_type = df[col].dtype
+        if col_type != object and col_type.name != 'category':
+            c_min = df[col].min()
+            c_max = df[col].max()
+            if str(col_type)[:3] == 'int':
+                if c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+                    df[col] = df[col].astype(np.int32)
+            else:
+                if c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+                    df[col] = df[col].astype(np.float32)
+    return df
+
+X = reduce_mem_usage(X)
+test = reduce_mem_usage(test)
+gc.collect()
+
+# -----------------------------------------------------
+# 4.3 Training Loop (XGBoost)
+# -----------------------------------------------------
+
+# Initialize arrays
+oof_preds = np.zeros(len(X))
+test_preds = np.zeros(len(test))
+
+# Stratified K-Fold
+kf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+# Select TE Columns (Exclude binary features)
+TE_COLS = [col for col in NUMS if train[col].nunique() > 2]
+print(f"Target Encoding applied to {len(TE_COLS)} features.")
+
+# XGBoost Parameters
+xgb_params = {
+    'n_estimators': 20000,
+    'learning_rate': 0.01,
+    'max_depth': 4,
+    'subsample': 0.8,
+    'colsample_bytree': 0.8,
+    'random_state': 42,
+    'n_jobs': -1,
+    'eval_metric': 'auc',
+    'device': 'cuda',           # GPU (optional)
+    'enable_categorical': True  # Native Categorical Support
+}
+
+print(f"Starting Training...")
+
+for fold, (train_idx, val_idx) in enumerate(kf.split(X, y)):
+    
+    # 1. Split Data
+    X_train, y_train = X.iloc[train_idx].copy(), y.iloc[train_idx]
+    X_val, y_val = X.iloc[val_idx].copy(), y.iloc[val_idx]
+    X_test_fold = test[FEATURES].copy() 
+    
+    # -----------------------------------------------------
+    # A. Target Encoding (Augment Numerical Features)
+    # -----------------------------------------------------
+    if len(TE_COLS) > 0:
+        TE = TargetEncoder(cols_to_encode=TE_COLS, cv=5, smooth='auto', aggs=['mean', 'count'], drop_original=False)
+        X_train = TE.fit_transform(X_train, y_train)
+        X_val = TE.transform(X_val)
+        X_test_fold = TE.transform(X_test_fold)
+    
+    # -----------------------------------------------------
+    # B. Factorize CATS & Prepare for Native Support
+    # -----------------------------------------------------
+    for c in CATS:
+        # 1. Factorize (Returns NumPy Array)
+        combined = pd.concat([X_train[c], X_val[c], X_test_fold[c]])
+        combined_encoded, _ = combined.factorize()
+        
+        # 2. Assign back to DataFrame to convert to Series
+        X_train[c] = combined_encoded[:len(X_train)]
+        X_val[c] = combined_encoded[len(X_train):len(X_train)+len(X_val)]
+        X_test_fold[c] = combined_encoded[len(X_train)+len(X_val):]
+
+        # 3. Cast to Category
+        X_train[c] = X_train[c].astype('category')
+        X_val[c] = X_val[c].astype('category')
+        X_test_fold[c] = X_test_fold[c].astype('category')
+
+    # -----------------------------------------------------
+    # C. Train Model (XGBClassifier)
+    # -----------------------------------------------------
+    model = XGBClassifier(**xgb_params)
+    
+    model.fit(
+        X_train, y_train,
+        eval_set=[(X_val, y_val)],
+        early_stopping_rounds=200,
+        verbose=500
+    )
+    
+    # Predict
+    val_preds = model.predict_proba(X_val)[:, 1]
+    oof_preds[val_idx] = val_preds
+    test_preds += model.predict_proba(X_test_fold)[:, 1] / kf.get_n_splits()
+    
+    fold_score = roc_auc_score(y_val, val_preds)
+    print(f"Fold {fold+1} AUC: {fold_score:.5f}")
+
+    if len(TE_COLS) > 0: del TE
+    gc.collect()
+
+print("-" * 30)
+print(f"OOF AUC: {roc_auc_score(y, oof_preds):.5f}")
+Target Encoding applied to 15 features.
+Starting Training...
+[0] validation_0-auc:0.69801
+[500] validation_0-auc:0.72813
+[1000] validation_0-auc:0.73014
+[1500] validation_0-auc:0.73091
+[2000] validation_0-auc:0.73121
+[2500] validation_0-auc:0.73126
+[2720] validation_0-auc:0.73125
+Fold 1 AUC: 0.73127
+[0] validation_0-auc:0.69354
+[500] validation_0-auc:0.72650
+[1000] validation_0-auc:0.72851
+[1500] validation_0-auc:0.72932
+[2000] validation_0-auc:0.72968
+[2500] validation_0-auc:0.72989
+[3000] validation_0-auc:0.72996
+[3285] validation_0-auc:0.72993
+Fold 2 AUC: 0.72997
+[0] validation_0-auc:0.69659
+[500] validation_0-auc:0.72718
+[1000] validation_0-auc:0.72904
+[1500] validation_0-auc:0.72989
+[2000] validation_0-auc:0.73030
+[2500] validation_0-auc:0.73050
+[3000] validation_0-auc:0.73055
+[3133] validation_0-auc:0.73054
+Fold 3 AUC: 0.73056
+[0] validation_0-auc:0.69544
+[500] validation_0-auc:0.72697
+[1000] validation_0-auc:0.72915
+[1500] validation_0-auc:0.73000
+[2000] validation_0-auc:0.73041
+[2500] validation_0-auc:0.73062
+[3000] validation_0-auc:0.73072
+[3202] validation_0-auc:0.73070
+Fold 4 AUC: 0.73072
+[0] validation_0-auc:0.69560
+[500] validation_0-auc:0.72708
+[1000] validation_0-auc:0.72941
+[1500] validation_0-auc:0.73029
+[2000] validation_0-auc:0.73070
+[2500] validation_0-auc:0.73086
+[2836] validation_0-auc:0.73090
+Fold 5 AUC: 0.73091
+------------------------------
+OOF AUC: 0.73065
+4.4 Feature Importance Analysis
+We visualize the top features contributing to the model's predictions. This step is crucial to:
+Validate Feature Engineering: Confirm if our new features (e.g., TE_orig_mean..., interactions) are providing strong signals.
+Model Interpretability: Understand the driving factors behind diabetes diagnosis in this dataset.
+In [16]:
+# Extract importances from the last trained model
+# (Note: Ideally we average importances across all folds, but the last fold serves as a good proxy for a baseline)
+imp_df = pd.DataFrame({
+    'Feature': X_train.columns,
+    'Importance': model.feature_importances_
+}).sort_values(by='Importance', ascending=False)
+
+plt.figure(figsize=(10, 12))
+sns.barplot(data=imp_df.head(40), x='Importance', y='Feature', palette='viridis')
+plt.title('Top 40 Feature Importances (XGBoost - Last Fold)')
+plt.xlabel('Importance (Gain)')
+plt.ylabel('Feature')
+plt.show()
+5. Submission & Verification
+We prepare the final submission file using the averaged predictions from the 5-fold cross-validation. Additionally, we save the Out-Of-Fold (OOF) predictions for future ensembling and visualize the prediction distribution to perform a sanity check.
+In [17]:
+# 1. Create Submission DataFrame
+sub = pd.read_csv('/kaggle/input/playground-series-s5e12/sample_submission.csv')
+sub[TARGET] = test_preds
+sub.to_csv('submission.csv', index=False)
+
+# 2. Save OOF Predictions (for Ensembling)
+# OOF dataframe creating ensures we match the correct IDs
+oof_df = pd.DataFrame()
+oof_df['id'] = train['id']
+oof_df[TARGET] = y
+oof_df['pred'] = oof_preds
+oof_df.to_csv('oof_predictions.csv', index=False)
+
+print('Submission and OOF files saved successfully.')
+print(f'Submission Shape: {sub.shape}')
+
+# 3. Sanity Check: Distribution Plot
+plt.figure(figsize=(10, 5))
+sns.kdeplot(oof_df['pred'], label='OOF Predictions (Train)', fill=True, color='blue', alpha=0.3)
+sns.kdeplot(sub[TARGET], label='Test Predictions', fill=True, color='orange', alpha=0.3)
+plt.title('Distribution of Predictions: OOF vs Test')
+plt.xlabel('Predicted Probability')
+plt.ylabel('Density')
+plt.legend()
+plt.show()
+
+sub.head()
+Submission and OOF files saved successfully.
+Submission Shape: (300000, 2)
+Out[17]:
+id diagnosed_diabetes
+0 700000 0.467573
+1 700001 0.714713
+2 700002 0.796603
+3 700003 0.369249
+4 700004 0.917903
+In [ ]:
+ 

@@ -1,0 +1,437 @@
+🔥 Top 1%Solution|🏆High-0.97772,esay is all you need!
+Author: H-Z-Ning
+Date: 2025-08-25
+Dataset: Kaggle Competition Page
+📚 Table of Contents
+Project Overview
+Environment & Load Data
+Feature Engineering
+LightGBM Model Hyper-parameter Configuration
+LightGBM Training
+Submission
+Future Work
+🧾 Project Overview
+The goal is to predict whether a bank client will subscribe to a term deposit (y = "yes"/"no") using the classic bank-marketing-full dataset.
+Key steps: • Engineer robust numeric & categorical features.
+• Train a tuned LightGBM model with target & frequency encoding • Generate predictions for submission.
+🔧 Feature Engineering
+All transformations are reproducible and leakage-safe.
+1. 🔢 Numeric Feature Transformations
+• call duration to avoid harsh splits & retain smooth trend. |
+2. 🧩 Categorical Feature Combination
+• Explicitly injects job × education interaction.
+• High cardinality handled by target & frequency encoding.
+3. 🎯 Target & Frequency Encoding
+• Target encoding supplies per-category success rates.
+• Frequency encoding provides sample-size hints to the model.
+4. 🔧 Type Conversion
+• Ensures LightGBM/CatBoost use integer codes internally—fast & memory-efficient.
+• Prevents accidental one-hot blow-ups in scikit-learn pipelines.
+🚀 LightGBM Model Hyper-parameter Configuration
+LightGBM is fast, memory-efficient, and delivers state-of-the-art accuracy.
+💻Future Work
+• Hyper-parameter tuning: with Optuna or Hyperopt.
+• Stacking / Blending: with CatBoost & XGBoost.
+• Explainability: SHAP value inspection to understand key drivers.
+📊Load Data
+Please load /kaggle/input/bank-marketing-dataset-full/bank-full.csv and use this data for training to improve accuracy.
+In [1]:
+%%time
+
+import pandas as pd 
+import numpy as np
+import os
+import warnings
+warnings.filterwarnings("ignore")
+os.environ['PYTHONWARNINGS'] = 'ignore'
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+
+!git clone https://github.com/muhammadabdullah0303/AbdML
+
+import sys
+sys.path.append('/kaggle/working/repository')
+
+from AbdML.main import AbdBase
+SEED = 42
+
+
+
+train = pd.read_csv('/kaggle/input/playground-series-s5e8/train.csv')
+sample = pd.read_csv("/kaggle/input/playground-series-s5e8/sample_submission.csv")
+test = pd.read_csv("/kaggle/input/playground-series-s5e8/test.csv")
+original = pd.read_csv("/kaggle/input/bank-marketing-dataset-full/bank-full.csv", sep=';')
+
+train = train.drop('id', axis=1)
+test = test.drop('id', axis=1)
+
+original['y'] = original['y'].map({'no': 0, 'yes': 1})
+Cloning into 'AbdML'...
+remote: Enumerating objects: 306, done.
+remote: Counting objects: 100% (12/12), done.
+remote: Compressing objects: 100% (11/11), done.
+remote: Total 306 (delta 3), reused 1 (delta 1), pack-reused 294 (from 2)
+Receiving objects: 100% (306/306), 123.66 KiB | 6.18 MiB/s, done.
+Resolving deltas: 100% (96/96), done.
+CPU times: user 6.67 s, sys: 1.43 s, total: 8.09 s
+Wall time: 14.4 s
+📈 Eigenvalue Analysis
+📊 Descriptive Statistics
+In [2]:
+import seaborn as sns
+import matplotlib.pyplot as plt
+import pandas as pd
+
+sns.set(style="whitegrid", font_scale=1.1)
+
+# 1) 计算需要的统计量
+num_cols = train.select_dtypes(include=['float64', 'int64']).columns   # 只保留数值列
+desc = train[num_cols].describe().T                                    # 基础描述统计
+desc['skew'] = train[num_cols].skew()                                  # 偏度
+desc['kurtosis'] = train[num_cols].kurt()                              # 峰度
+
+# 2) 把要画的列挑出来（你也可以按需增删）
+plot_cols = ['mean', 'std', 'min', '25%', '50%', '75%', 'max', 'skew', 'kurtosis']
+plot_df = desc[plot_cols].reset_index().melt(id_vars='index',
+                                             var_name='stat',
+                                             value_name='value')
+
+# 3) 画图
+fig, ax = plt.subplots(1, 2, figsize=(20, 6))
+
+# 左图：原始尺度
+sns.barplot(data=plot_df[~plot_df['stat'].isin(['skew', 'kurtosis'])],
+            x='index', y='value', hue='stat', ax=ax[0])
+ax[0].set_title('Descriptive Statistics (mean, std, quartiles …)')
+ax[0].tick_params(axis='x', rotation=90)
+
+# 右图：skew & kurtosis（通常数值较小，单开一图）
+skew_kurt = plot_df[plot_df['stat'].isin(['skew', 'kurtosis'])]
+sns.barplot(data=skew_kurt, x='index', y='value', hue='stat', ax=ax[1])
+ax[1].set_title('Skewness & Kurtosis')
+ax[1].tick_params(axis='x', rotation=90)
+
+plt.tight_layout()
+plt.show()
+🎨 Data Distribution: Age and Balance
+In [3]:
+warnings.filterwarnings("ignore", category=FutureWarning,
+                        message=".*use_inf_as_na.*")
+
+plt.figure(figsize=(14, 6))
+
+
+plt.subplot(1, 2, 1)
+sns.histplot(train['age'], kde=True, color='skyblue', bins=20)
+plt.title('Distribution of Age')
+
+
+plt.subplot(1, 2, 2)
+sns.histplot(train['balance'], kde=True, color='orange', bins=20)
+plt.title('Distribution of Balance')
+
+plt.tight_layout()
+plt.show()
+📈 Distribution of Target Variable (y)
+In [4]:
+plt.figure(figsize=(6, 4))
+sns.countplot(x='y', data=train, palette='Set2')
+plt.title('Distribution of Target Variable (y)')
+plt.show()
+🔍 Distribution of Categorical Features: job, marital, education, default, housing, loan, contact, month, poutcome¶
+In [5]:
+categorical_columns = ['job', 'marital', 'education', 'default', 'housing', 'loan', 'contact', 'month', 'poutcome']
+
+plt.figure(figsize=(14, 12))
+for i, column in enumerate(categorical_columns, 1):
+    plt.subplot(3, 3, i)
+    sns.countplot(x=column, data=train, palette='Set2')
+    plt.title(f'Distribution of {column}')
+    plt.xticks(rotation=45)
+
+plt.tight_layout()
+plt.show()
+🔗 Relationship Between Continuous Features and Target Variable (Age, Balance, Duration, and y)¶
+In [6]:
+plt.figure(figsize=(14, 6))
+
+
+plt.subplot(1, 3, 1)
+sns.boxplot(x='y', y='age', data=train, palette='Set2')
+plt.title('Age vs Target Variable (y)')
+
+
+plt.subplot(1, 3, 2)
+sns.boxplot(x='y', y='balance', data=train, palette='Set2')
+plt.title('Balance vs Target Variable (y)')
+
+
+plt.subplot(1, 3, 3)
+sns.boxplot(x='y', y='duration', data=train, palette='Set2')
+plt.title('Duration vs Target Variable (y)')
+
+plt.tight_layout()
+plt.show()
+📊 Relationship Between Target Variable and Other Features: Bar Chart
+In [7]:
+plt.figure(figsize=(14, 6))
+
+
+sns.countplot(x='job', hue='y', data=train, palette='Set2')
+plt.title('Job vs Target Variable (y)')
+plt.xticks(rotation=45)
+plt.show()
+
+
+sns.countplot(x='marital', hue='y', data=train, palette='Set2')
+plt.title('Marital Status vs Target Variable (y)')
+plt.xticks(rotation=45)
+plt.show()
+🔧 Feature Engineering!
+Below, the features will be processed as follows:
+Create new numeric features (balance_log, duration_sin/cos, etc.)
+Create new categorical features (job_edu, contacted_before)
+Apply mean-target encoding and count encoding to all categorical variables
+Convert all categorical variables to pandas category dtype at once for efficient handling by LightGBM / CatBoost and similar libraries
+1. 🔢 Numeric Feature Transformations
+1.1 balance_log = log1p(balance.clip(0))
+• The original balance is heavily right-skewed: most clients have little money, while a few have huge balances.
+• log1p compresses the tail, bringing the distribution closer to normal and reducing the impact of extreme values while keeping zeros intact (log1p(0)=0).
+• Tree models tolerate skew, but the compressed scale yields more stable split points and easier interactions with other features.
+1.2 contacted_before = (pdays != -1).astype(int)
+• pdays = -1 means “never contacted before”; any other value is days since the last contact.
+• Turning “has been contacted or not” into a clean 0/1 indicator directly captures client familiarity.
+• Linear models gain a straightforward dummy variable; tree models save one split.
+1.3 duration_sin / duration_cos
+• duration is the length of the last phone call in seconds.
+• It is strongly correlated with purchase probability, yet raw values can lead tree models to over-fit by grouping all calls ≥ 400 s into one leaf.
+• Mapping 0–∞ seconds to periodic [-1, 1] via sin/cos provides “soft” bins:
+– 400 s ⇒ sin ≈ 0, cos ≈ -1
+– 800 s ⇒ sin ≈ 0, cos ≈ 1
+• This keeps the “longer calls → higher conversion” signal, avoids harsh cut-offs, and delivers smooth periodic inputs for neural nets.
+Change
+df['duration_sin'] = np.sin(2np.pi df['duration'] / 400)
+df['duration_cos'] = np.cos(2np.pi df['duration'] / 400)
+to
+df['duration_sin'] = np.sin(2np.pi df['duration'] / 800)
+df['duration_cos'] = np.cos(2np.pi df['duration'] / 800)
+In [8]:
+%%time
+COLS = ['age', 'job', 'marital', 'education', 'default', 'balance', 'housing',
+       'loan', 'contact', 'day', 'month', 'duration', 'campaign', 'pdays',
+       'previous', 'poutcome',]
+
+
+
+def NEW_FE(df):
+    
+    df['balance_log'] = np.log1p(df['balance'].clip(lower=0))
+    df['job_edu'] = df['job'].astype(str) + "_" + df['education'].astype(str)
+    df['contacted_before'] = (df['pdays'] != -1).astype(int)
+
+    df['duration_sin'] = np.sin(2*np.pi * df['duration'] / 800)
+    df['duration_cos'] = np.cos(2*np.pi * df['duration'] / 800)
+
+    return df
+
+train = NEW_FE(train)
+test = NEW_FE(test)
+CPU times: user 201 ms, sys: 86.1 ms, total: 287 ms
+Wall time: 257 ms
+🎻 Violin Plot: Balance vs Service Acceptance
+Draws a violin plot of log-transformed balance split by acceptance status, revealing both distribution shape and median differences between clients who accept (1) and decline (0) the deposit service.
+In [9]:
+plt.figure(figsize=(10, 6))
+sns.violinplot(x='y', y='balance_log', data=train)
+plt.title('Relationship between Log of Balance and Service Acceptance')
+plt.xlabel('Accepts Deposit Service (0=No, 1=Yes)')
+plt.ylabel('Log of Balance')
+plt.xticks([0, 1], ['No', 'Yes'])
+plt.show()
+📈 Stacked Bar of Job-Edu vs Acceptance
+Groups data by job & education, computes normalized y counts, then plots a stacked bar chart revealing how service acceptance rates vary across combined job–education categories.
+In [10]:
+job_edu_counts = train.groupby('job_edu')['y'].value_counts(normalize=True).unstack().fillna(0)
+
+plt.figure(figsize=(12, 7))
+job_edu_counts.plot(kind='bar', stacked=True, figsize=(12, 7))
+plt.title('Proportion of Customers Accepting the Service by Job and Education Level')
+plt.xlabel('Job and Education Level')
+plt.ylabel('Proportion')
+plt.xticks(rotation=45, ha='right')
+plt.legend(title='Accepts Service', labels=['No', 'Yes'])
+plt.tight_layout()
+plt.show()
+<Figure size 1200x700 with 0 Axes>
+To sort in descending order by the proportion of customers who accepted the service (the "Yes" column).
+In [11]:
+print(job_edu_counts.columns)
+Index([0, 1], dtype='int64', name='y')
+In [12]:
+# 计算各组中 y 的比例
+job_edu_counts = (
+    train.groupby('job_edu')['y']
+         .value_counts(normalize=True)
+         .unstack()
+         .fillna(0)
+)
+
+# 按“Yes”列从高到低排序
+job_edu_counts = job_edu_counts.sort_values(by=1, ascending=False)
+
+# 绘图
+plt.figure(figsize=(12, 7))
+job_edu_counts.plot(kind='bar', stacked=True, figsize=(12, 7))
+plt.title('Proportion of Customers Accepting the Service by Job and Education Level')
+plt.xlabel('Job and Education Level')
+plt.ylabel('Proportion')
+plt.xticks(rotation=45, ha='right')
+plt.legend(title='Accepts Service', labels=['No', 'Yes'])
+plt.tight_layout()
+plt.show()
+<Figure size 1200x700 with 0 Axes>
+📊 Crosstab & Bar Chart
+Creates an index-normalized crosstab of contacted_before vs y, then plots a bar chart showing the proportion of clients who accept the service, grouped by prior contact status.
+In [13]:
+# Create a crosstab to count the data
+contact_y_crosstab = pd.crosstab(train['contacted_before'], train['y'], normalize='index')
+
+contact_y_crosstab.plot(kind='bar', figsize=(8, 6))
+plt.title('Relationship Between Being Contacted Before and Service Acceptance')
+plt.xlabel('Contacted Before (0=No, 1=Yes)')
+plt.ylabel('Proportion')
+plt.xticks(rotation=0)
+plt.legend(title='Accepts Service', labels=['No', 'Yes'])
+plt.tight_layout()
+plt.show()
+🎨 KDE Distributions of Cyclical Duration Features by Target Class
+The code plots side-by-side filled KDEs to compare how the sine and cosine transformations of duration differ between the two classes of the target variable y.
+In [14]:
+import seaborn as sns, matplotlib.pyplot as plt
+
+plt.figure(figsize=(12,3))
+
+# --- duration_sin 与 y 的关系 ---
+plt.subplot(1,2,1)
+sns.kdeplot(data=train, x='duration_sin', hue='y', fill=True, palette={0:'#1f77b4', 1:'#ff7f0e'})
+plt.title('Distribution of duration_sin by y')
+# --- duration_cos 与 y 的关系 ---
+plt.subplot(1,2,2)
+sns.kdeplot(data=train, x='duration_cos', hue='y', fill=True, palette={0:'#1f77b4', 1:'#ff7f0e'})
+plt.title('Distribution of duration_cos by y')
+
+plt.tight_layout()
+plt.show()
+2. 🧩 Categorical Feature Combination
+jobedu = job + '' + education
+• Tree models can split on job or education separately, but rarely discover interactions like “blue-collar + primary” vs. “management + university” on their own.
+• Manually concatenating the two categories gives the model an explicit second-order interaction; LightGBM can exploit this with a single split.
+• The trade-off is a higher cardinality, so frequency / target encoding (see next steps) is essential to prevent overfitting.
+In [15]:
+cat_cols = ['job','marital', "education", 'contact', 'poutcome','month','default','housing','loan','job_edu']
+
+mean = train['y'].mean() 
+
+for c in COLS:
+    new_col = f"{c}_mean_target_orig"
+    train[new_col] = train[c].map(original.groupby(c)['y'].mean())
+    train[new_col] = train[new_col].fillna(mean)
+    test[new_col] = test[c].map(original.groupby(c)['y'].mean())
+    test[new_col] = test[new_col].fillna(mean)
+3. 🎯 Target & Frequency Encoding
+for c in COLS:
+    c_mean_target_orig = category_mean(y)   # target encoding
+    c_count          = category_count       # frequency encoding
+3.1 Target Encoding
+• Replace each category with its historical purchase rate in the training data.
+• Tree models gain an immediate, powerful signal—e.g., “management jobs convert at 25 %”—speeding up splits; linear models can use it directly.
+• Solves the problem of high-cardinality features (e.g., job_edu) that are otherwise hard to learn.
+• Statistics are computed on the full original dataset and then mapped identically to train/test to avoid leakage; unseen categories are imputed with the global mean to prevent missing values.
+3.2 Frequency Encoding
+• Add the raw occurrence count of each category as an extra numeric feature.
+• Rare categories have noisy target estimates; the model can down-weight them using the count (similar to giving LightGBM a “sample-size hint”).
+• In some cases, rare categories themselves indicate anomalies or premium clients, which frequency encoding can capture. ```
+In [16]:
+for c in COLS:
+    mapping_count = original[c].value_counts()
+    train[f"{c}_count"] = train[c].map(mapping_count).fillna(0)
+    test[f"{c}_count"] = test[c].map(mapping_count).fillna(0)
+4. 🔧 Type Conversion
+Convert cat_cols to pandas category dtype
+• LightGBM and CatBoost can natively handle integer-encoded categories—faster execution and lower memory.
+• Prevents scikit-learn pipelines from exploding them into a huge sparse one-hot matrix.
+• Keeps missing-value and unseen-category handling consistent with library defaults.
+In [17]:
+def update(df):
+
+    for col in cat_cols:
+        df[col] = df[col].astype('category')
+    return df
+
+train = update(train)
+test = update(test)
+
+train.head()
+Out[17]:
+age job marital education default balance housing loan contact day ... housing_count loan_count contact_count day_count month_count duration_count campaign_count pdays_count previous_count poutcome_count
+0 42 technician married secondary no 7 no no cellular 25 ... 20081 37967 29285 840 6247 150.0 5521.0 36954.0 36954.0 36959
+1 38 blue-collar married secondary no 514 no no unknown 18 ... 20081 37967 13020 2308 5341 139.0 17544.0 36954.0 36954.0 36959
+2 36 blue-collar married secondary no 602 yes no unknown 14 ... 25130 37967 13020 1848 13766 166.0 12505.0 36954.0 36954.0 36959
+3 27 student single secondary no 34 yes no unknown 28 ... 25130 37967 13020 1830 13766 76.0 12505.0 36954.0 36954.0 36959
+4 26 technician married secondary no 889 yes no cellular 3 ... 25130 37967 29285 1079 2649 6.0 17544.0 36954.0 36954.0 36959
+5 rows × 54 columns
+🚀 LightGBM Model Hyper-parameter Configuration
+In [18]:
+# %%time
+
+# from sklearn.metrics import roc_auc_score
+
+# def ROC_AUC(y_true, y_pred_proba):
+#     return roc_auc_score(y_true, y_pred_proba)
+
+
+# cat_cols = ['job','marital', "education", 'contact', 'poutcome','month','default','housing','loan','job_edu']
+
+# encode_c = {'cat_c': cat_cols}
+
+# base = AbdBase(train_data=train, test_data=test, target_column='y',gpu=False, prob=True, test_prob=True,
+#                  problem_type="classification", metric="custom", seed=SEED,ohe_fe=False,ordinal_encoder=encode_c,
+#                  n_splits=5,early_stop=True,num_classes=2,cat_features=False,custom_metric=ROC_AUC,
+#                  fold_type='SKF')
+🏁 LightGBM Training
+In [19]:
+# %%time
+
+# ParamsLgb = {'n_estimators': 40000, 'learning_rate': 0.0358306214515723, 'num_leaves': 228, 'max_depth': 6,
+#              'min_child_samples': 83, 'subsample': 0.8700304020753131, 'colsample_bytree': 0.6169349166144594,
+#              'reg_alpha': 3.700714656885025, 'reg_lambda': 4.709578317972932,"objective": "binary",
+#              "metric": "binary_logloss"}
+
+# results_Lgb_1 = base.Train_ML(ParamsLgb,'LGBM',e_stop=150)
+📤Submission
+In [20]:
+import pandas as pd
+
+sub1 = pd.read_csv("/kaggle/input/s05e08data/submission_97763.csv")
+sub2 = pd.read_csv("/kaggle/input/s05e08data/submission_97772.csv")
+sub = pd.read_csv("/kaggle/input/playground-series-s5e8/sample_submission.csv")
+y = 0.3*sub1['y'] + 0.7*sub2['y']
+
+sub['y'] = y
+
+sub.to_csv("submission.csv", index=False)
+In [21]:
+# %%time
+
+# def save_outputs(base_file_name, oof, pred):
+#     oof_df = pd.DataFrame(oof)
+#     pred_df = pd.DataFrame(pred)
+
+#     oof_df.to_csv(f"{base_file_name}_OOF.csv", index=False)
+#     pred_df.to_csv(f"{base_file_name}_PREDS.csv", index=False)
+
+# save_outputs('LGBM_0.9743',results_Lgb_1[0], results_Lgb_1[1])
+# mp = results_Lgb_1[1]
+
+# sample['y'] = mp
+# sample.to_csv('submission.csv', index=False)
+# sample.head()

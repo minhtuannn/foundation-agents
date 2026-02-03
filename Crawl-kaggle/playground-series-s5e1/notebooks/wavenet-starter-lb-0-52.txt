@@ -1,0 +1,541 @@
+WaveNet Starter using RAW EEG Features!
+This notebook is a WaveNet starter for Kaggle's Brain comp. It achieves CV 0.91 and LB 0.66. Note that submitting train means achieves CV 1.26 and LB 0.97 [here]. So this notebook's WaveNet is successfully learning to predict brain events from raw EEG waveforms!
+This model only uses two features. We can engineer more features and/or modify the model architecture to improve CV score and LB score. Furthermore we can build 1 model which inputs both spectrogram images and eeg waveforms. The two EEG features in this notebook are:
+feature 1 : Fp1 minus O1
+feature 2 : Fp2 minus O2
+Feature 1 is the beginning of the montage chains LL and LP minus the ending of montage LL and LP. And feature 2 is the beginning of the montage chains RL and RP minus the ending of montage RL and RP.
+UPDATE
+In version 7 and 8, we add more features and update the model architecture to evaluate each montage chain separately and then concatenate the features. This new architecture is motivated by the discovery of a better formula to utilize EEG explained in discussion here
+Version 5,6: Use 2 features - CV 0.91 LB 0.66
+Version 7,8: Use 8 features grouped as 4 chains. Downsample time 5x - CV 0.81 LB 0.53, wow!
+We train our new model in version 7, then save model weights. Then load model into version 8 to submit to LB.
+Train and Infer Tricks
+We train the fold models in version 7 of the notebook and submit to Kaggle LB in version 8 of the notebook. This makes submission faster because we train the fold models for 30 minutes in version 7 then save them. In version 8, we just load the models without needing to retrain models during Kaggle submit. (And we train our old model in 5 annd submit in 6).
+Version 4 uses 1xP100 GPU with full precision and takes 1 hour to train 5 folds 5 epochs of WaveNet. Version 5 uses 2xT4 GPU with mixed precision and takes 30 minutes to train 5 folds 5 epochs of WaveNet.
+Load Train Data
+In [1]:
+import pandas as pd, numpy as np, os
+import matplotlib.pyplot as plt
+
+train = pd.read_csv('/kaggle/input/hms-harmful-brain-activity-classification/train.csv')
+print( train.shape )
+display( train.head() )
+
+# CHOICE TO CREATE OR LOAD EEGS FROM NOTEBOOK VERSION 1
+CREATE_EEGS = False
+TRAIN_MODEL = False
+(106800, 15)
+eeg_id eeg_sub_id eeg_label_offset_seconds spectrogram_id spectrogram_sub_id spectrogram_label_offset_seconds label_id patient_id expert_consensus seizure_vote lpd_vote gpd_vote lrda_vote grda_vote other_vote
+0 1628180742 0 0.0 353733 0 0.0 127492639 42516 Seizure 3 0 0 0 0 0
+1 1628180742 1 6.0 353733 1 6.0 3887563113 42516 Seizure 3 0 0 0 0 0
+2 1628180742 2 8.0 353733 2 8.0 1142670488 42516 Seizure 3 0 0 0 0 0
+3 1628180742 3 18.0 353733 3 18.0 2718991173 42516 Seizure 3 0 0 0 0 0
+4 1628180742 4 24.0 353733 4 24.0 3080632009 42516 Seizure 3 0 0 0 0 0
+Raw EEG Features
+In [2]:
+df = pd.read_parquet('/kaggle/input/hms-harmful-brain-activity-classification/train_eegs/1000913311.parquet')
+FEATS = df.columns
+print(f'There are {len(FEATS)} raw eeg features')
+print( list(FEATS) )
+There are 20 raw eeg features
+['Fp1', 'F3', 'C3', 'P3', 'F7', 'T3', 'T5', 'O1', 'Fz', 'Cz', 'Pz', 'Fp2', 'F4', 'C4', 'P4', 'F8', 'T4', 'T6', 'O2', 'EKG']
+In [3]:
+print('We will use the following subset of raw EEG features:')
+FEATS = ['Fp1','T3','C3','O1','Fp2','C4','T4','O2']
+FEAT2IDX = {x:y for x,y in zip(FEATS,range(len(FEATS)))}
+print( list(FEATS) )
+We will use the following subset of raw EEG features:
+['Fp1', 'T3', 'C3', 'O1', 'Fp2', 'C4', 'T4', 'O2']
+In [4]:
+def eeg_from_parquet(parquet_path, display=False):
+    
+    # EXTRACT MIDDLE 50 SECONDS
+    eeg = pd.read_parquet(parquet_path, columns=FEATS)
+    rows = len(eeg)
+    offset = (rows-10_000)//2
+    eeg = eeg.iloc[offset:offset+10_000]
+    
+    if display: 
+        plt.figure(figsize=(10,5))
+        offset = 0
+    
+    # CONVERT TO NUMPY
+    data = np.zeros((10_000,len(FEATS)))
+    for j,col in enumerate(FEATS):
+        
+        # FILL NAN
+        x = eeg[col].values.astype('float32')
+        m = np.nanmean(x)
+        if np.isnan(x).mean()<1: x = np.nan_to_num(x,nan=m)
+        else: x[:] = 0
+            
+        data[:,j] = x
+        
+        if display: 
+            if j!=0: offset += x.max()
+            plt.plot(range(10_000),x-offset,label=col)
+            offset -= x.min()
+            
+    if display:
+        plt.legend()
+        name = parquet_path.split('/')[-1]
+        name = name.split('.')[0]
+        plt.title(f'EEG {name}',size=16)
+        plt.show()
+        
+    return data
+In [5]:
+%%time
+
+all_eegs = {}
+DISPLAY = 4
+EEG_IDS = train.eeg_id.unique()
+PATH = '/kaggle/input/hms-harmful-brain-activity-classification/train_eegs/'
+
+for i,eeg_id in enumerate(EEG_IDS):
+    if (i%100==0)&(i!=0): print(i,', ',end='') 
+    
+    # SAVE EEG TO PYTHON DICTIONARY OF NUMPY ARRAYS
+    data = eeg_from_parquet(f'{PATH}{eeg_id}.parquet', display=i<DISPLAY)              
+    all_eegs[eeg_id] = data
+    
+    if i==DISPLAY:
+        if CREATE_EEGS:
+            print(f'Processing {train.eeg_id.nunique()} eeg parquets... ',end='')
+        else:
+            print(f'Reading {len(EEG_IDS)} eeg NumPys from disk.')
+            break
+            
+if CREATE_EEGS: 
+    np.save('eegs',all_eegs)
+else:
+    all_eegs = np.load('/kaggle/input/brain-eegs/eegs.npy',allow_pickle=True).item()
+Reading 17089 eeg NumPys from disk.
+CPU times: user 9.48 s, sys: 10.7 s, total: 20.2 s
+Wall time: 1min 21s
+Deduplicate Train EEG Id
+In [6]:
+# LOAD TRAIN 
+df = pd.read_csv('/kaggle/input/hms-harmful-brain-activity-classification/train.csv')
+TARGETS = df.columns[-6:]
+TARS = {'Seizure':0, 'LPD':1, 'GPD':2, 'LRDA':3, 'GRDA':4, 'Other':5}
+TARS2 = {x:y for y,x in TARS.items()}
+
+train = df.groupby('eeg_id')[['patient_id']].agg('first')
+
+tmp = df.groupby('eeg_id')[TARGETS].agg('sum')
+for t in TARGETS:
+    train[t] = tmp[t].values
+    
+y_data = train[TARGETS].values
+y_data = y_data / y_data.sum(axis=1,keepdims=True)
+train[TARGETS] = y_data
+
+tmp = df.groupby('eeg_id')[['expert_consensus']].agg('first')
+train['target'] = tmp
+
+train = train.reset_index()
+train = train.loc[train.eeg_id.isin(EEG_IDS)]
+print('Train Data with unique eeg_id shape:', train.shape )
+train.head()
+Train Data with unique eeg_id shape: (17089, 9)
+Out[6]:
+eeg_id patient_id seizure_vote lpd_vote gpd_vote lrda_vote grda_vote other_vote target
+0 568657 20654 0.0 0.000000 0.25 0.000000 0.166667 0.583333 Other
+1 582999 20230 0.0 0.857143 0.00 0.071429 0.000000 0.071429 LPD
+2 642382 5955 0.0 0.000000 0.00 0.000000 0.000000 1.000000 Other
+3 751790 38549 0.0 0.000000 1.00 0.000000 0.000000 0.000000 GPD
+4 778705 40955 0.0 0.000000 0.00 0.000000 0.000000 1.000000 Other
+Butter Low-Pass Filter
+In [7]:
+from scipy.signal import butter, lfilter
+
+def butter_lowpass_filter(data, cutoff_freq=20, sampling_rate=200, order=4):
+    nyquist = 0.5 * sampling_rate
+    normal_cutoff = cutoff_freq / nyquist
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    filtered_data = lfilter(b, a, data, axis=0)
+    return filtered_data
+/opt/conda/lib/python3.10/site-packages/scipy/__init__.py:146: UserWarning: A NumPy version >=1.16.5 and <1.23.0 is required for this version of SciPy (detected version 1.24.3
+  warnings.warn(f"A NumPy version >={np_minversion} and <{np_maxversion}"
+In [8]:
+FREQS = [1,2,4,8,16][::-1]
+x = [all_eegs[EEG_IDS[0]][:,0]]
+for k in FREQS:
+    x.append( butter_lowpass_filter(x[0], cutoff_freq=k) )
+
+plt.figure(figsize=(20,20))
+plt.plot(range(10_000),x[0], label='without filter')
+for k in range(1,len(x)):
+    plt.plot(range(10_000),x[k]-k*(x[0].max()-x[0].min()), label=f'with filter {FREQS[k-1]}Hz')
+plt.legend()
+plt.title('Butter Low-Pass Filter Examples',size=18)
+plt.show()
+Data Loader with Butter Low-Pass Filter
+In [9]:
+import tensorflow as tf
+
+class DataGenerator(tf.keras.utils.Sequence):
+    'Generates data for Keras'
+    def __init__(self, data, batch_size=32, shuffle=False, eegs=all_eegs, mode='train',
+                 downsample=5): 
+
+        self.data = data
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.eegs = eegs
+        self.mode = mode
+        self.downsample = downsample
+        self.on_epoch_end()
+        
+    def __len__(self):
+        'Denotes the number of batches per epoch'
+        ct = int( np.ceil( len(self.data) / self.batch_size ) )
+        return ct
+
+    def __getitem__(self, index):
+        'Generate one batch of data'
+        indexes = self.indexes[index*self.batch_size:(index+1)*self.batch_size]
+        X, y = self.__data_generation(indexes)
+        return X[:,::self.downsample,:], y
+
+    def on_epoch_end(self):
+        'Updates indexes after each epoch'
+        self.indexes = np.arange( len(self.data) )
+        if self.shuffle: np.random.shuffle(self.indexes)
+                        
+    def __data_generation(self, indexes):
+        'Generates data containing batch_size samples' 
+    
+        X = np.zeros((len(indexes),10_000,8),dtype='float32')
+        y = np.zeros((len(indexes),6),dtype='float32')
+        
+        sample = np.zeros((10_000,X.shape[-1]))
+        for j,i in enumerate(indexes):
+            row = self.data.iloc[i]      
+            data = self.eegs[row.eeg_id]
+            
+            # FEATURE ENGINEER
+            sample[:,0] = data[:,FEAT2IDX['Fp1']] - data[:,FEAT2IDX['T3']]
+            sample[:,1] = data[:,FEAT2IDX['T3']] - data[:,FEAT2IDX['O1']]
+            
+            sample[:,2] = data[:,FEAT2IDX['Fp1']] - data[:,FEAT2IDX['C3']]
+            sample[:,3] = data[:,FEAT2IDX['C3']] - data[:,FEAT2IDX['O1']]
+            
+            sample[:,4] = data[:,FEAT2IDX['Fp2']] - data[:,FEAT2IDX['C4']]
+            sample[:,5] = data[:,FEAT2IDX['C4']] - data[:,FEAT2IDX['O2']]
+            
+            sample[:,6] = data[:,FEAT2IDX['Fp2']] - data[:,FEAT2IDX['T4']]
+            sample[:,7] = data[:,FEAT2IDX['T4']] - data[:,FEAT2IDX['O2']]
+            
+            # STANDARDIZE
+            sample = np.clip(sample,-1024,1024)
+            sample = np.nan_to_num(sample, nan=0) / 32.0
+            
+            # BUTTER LOW-PASS FILTER
+            sample = butter_lowpass_filter(sample)
+            
+            X[j,] = sample
+            if self.mode!='test':
+                y[j] = row[TARGETS]
+            
+        return X,y
+Display Data Loader
+In [10]:
+gen = DataGenerator(train, shuffle=False)
+
+for x,y in gen:
+    for k in range(4):
+        plt.figure(figsize=(20,4))
+        offset = 0
+        for j in range(x.shape[-1]):
+            if j!=0: offset -= x[k,:,j].min()
+            plt.plot(range(2_000),x[k,:,j]+offset,label=f'feature {j+1}')
+            offset += x[k,:,j].max()
+        tt = f'{y[k][0]:0.1f}'
+        for t in y[k][1:]:
+            tt += f', {t:0.1f}'
+        plt.title(f'EEG_Id = {EEG_IDS[k]}\nTarget = {tt}',size=14)
+        plt.legend()
+        plt.show()
+    break
+Initialize GPUs
+In [11]:
+import os
+os.environ["CUDA_VISIBLE_DEVICES"]="0,1"
+import tensorflow as tf
+print('TensorFlow version =',tf.__version__)
+
+# USE MULTIPLE GPUS
+gpus = tf.config.list_physical_devices('GPU')
+if len(gpus)<=1: 
+    strategy = tf.distribute.OneDeviceStrategy(device="/gpu:0")
+    print(f'Using {len(gpus)} GPU')
+else: 
+    strategy = tf.distribute.MirroredStrategy()
+    print(f'Using {len(gpus)} GPUs')
+TensorFlow version = 2.13.0
+Using 2 GPUs
+In [12]:
+# USE MIXED PRECISION
+MIX = True
+if MIX:
+    tf.config.optimizer.set_experimental_options({"auto_mixed_precision": True})
+    print('Mixed precision enabled')
+else:
+    print('Using full precision')
+Mixed precision enabled
+Build WaveNet Model
+In [13]:
+# TRAIN SCHEDULE
+def lrfn(epoch):
+        return [1e-3,1e-3,1e-4,1e-4,1e-5][epoch]
+LR = tf.keras.callbacks.LearningRateScheduler(lrfn, verbose = True)
+EPOCHS = 5
+In [14]:
+from tensorflow.keras.layers import Input, Dense, Multiply, Add, Conv1D, Concatenate
+
+def wave_block(x, filters, kernel_size, n):
+    dilation_rates = [2**i for i in range(n)]
+    x = Conv1D(filters = filters,
+               kernel_size = 1,
+               padding = 'same')(x)
+    res_x = x
+    for dilation_rate in dilation_rates:
+        tanh_out = Conv1D(filters = filters,
+                          kernel_size = kernel_size,
+                          padding = 'same', 
+                          activation = 'tanh', 
+                          dilation_rate = dilation_rate)(x)
+        sigm_out = Conv1D(filters = filters,
+                          kernel_size = kernel_size,
+                          padding = 'same',
+                          activation = 'sigmoid', 
+                          dilation_rate = dilation_rate)(x)
+        x = Multiply()([tanh_out, sigm_out])
+        x = Conv1D(filters = filters,
+                   kernel_size = 1,
+                   padding = 'same')(x)
+        res_x = Add()([res_x, x])
+    return res_x
+In [15]:
+def build_model():
+        
+    # INPUT 
+    inp = tf.keras.Input(shape=(2_000,8))
+    
+    ############
+    # FEATURE EXTRACTION SUB MODEL
+    inp2 = tf.keras.Input(shape=(2_000,1))
+    x = wave_block(inp2, 8, 3, 12)
+    x = wave_block(x, 16, 3, 8)
+    x = wave_block(x, 32, 3, 4)
+    x = wave_block(x, 64, 3, 1)
+    model2 = tf.keras.Model(inputs=inp2, outputs=x)
+    ###########
+    
+    # LEFT TEMPORAL CHAIN
+    x1 = model2(inp[:,:,0:1])
+    x1 = tf.keras.layers.GlobalAveragePooling1D()(x1)
+    x2 = model2(inp[:,:,1:2])
+    x2 = tf.keras.layers.GlobalAveragePooling1D()(x2)
+    z1 = tf.keras.layers.Average()([x1,x2])
+    
+    # LEFT PARASAGITTAL CHAIN
+    x1 = model2(inp[:,:,2:3])
+    x1 = tf.keras.layers.GlobalAveragePooling1D()(x1)
+    x2 = model2(inp[:,:,3:4])
+    x2 = tf.keras.layers.GlobalAveragePooling1D()(x2)
+    z2 = tf.keras.layers.Average()([x1,x2])
+    
+    # RIGHT PARASAGITTAL CHAIN
+    x1 = model2(inp[:,:,4:5])
+    x1 = tf.keras.layers.GlobalAveragePooling1D()(x1)
+    x2 = model2(inp[:,:,5:6])
+    x2 = tf.keras.layers.GlobalAveragePooling1D()(x2)
+    z3 = tf.keras.layers.Average()([x1,x2])
+    
+    # RIGHT TEMPORAL CHAIN
+    x1 = model2(inp[:,:,6:7])
+    x1 = tf.keras.layers.GlobalAveragePooling1D()(x1)
+    x2 = model2(inp[:,:,7:8])
+    x2 = tf.keras.layers.GlobalAveragePooling1D()(x2)
+    z4 = tf.keras.layers.Average()([x1,x2])
+    
+    # COMBINE CHAINS
+    y = tf.keras.layers.Concatenate()([z1,z2,z3,z4])
+    y = tf.keras.layers.Dense(64, activation='relu')(y)
+    y = tf.keras.layers.Dense(6,activation='softmax', dtype='float32')(y)
+    
+    # COMPILE MODEL
+    model = tf.keras.Model(inputs=inp, outputs=y)
+    opt = tf.keras.optimizers.Adam(learning_rate = 1e-3)
+    loss = tf.keras.losses.KLDivergence()
+    model.compile(loss=loss, optimizer = opt)
+    
+    return model
+Train Group KFold
+In [16]:
+VERBOSE = 1
+FOLDS_TO_TRAIN = 5
+if not os.path.exists('WaveNet_Model'):
+    os.makedirs('WaveNet_Model')
+
+from sklearn.model_selection import KFold, GroupKFold
+import tensorflow.keras.backend as K, gc
+
+all_oof = []; all_oof2 = []; all_true = []
+gkf = GroupKFold(n_splits=5)
+for i, (train_index, valid_index) in enumerate(gkf.split(train, train.target, train.patient_id)):   
+    
+    print('#'*25)
+    print(f'### Fold {i+1}')
+    train_gen = DataGenerator(train.iloc[train_index], shuffle=True, batch_size=32)
+    valid_gen = DataGenerator(train.iloc[valid_index], shuffle=False, batch_size=64, mode='valid')
+    print(f'### train size {len(train_index)}, valid size {len(valid_index)}')
+    print('#'*25)
+    
+    # TRAIN MODEL
+    K.clear_session()
+    with strategy.scope():
+        model = build_model()
+    if TRAIN_MODEL:
+        model.fit(train_gen, verbose=VERBOSE,
+              validation_data = valid_gen,
+              epochs=EPOCHS, callbacks = [LR])
+        model.save_weights(f'WaveNet_Model/WaveNet_fold{i}.h5')
+    else:
+        model.load_weights(f'/kaggle/input/brain-eegs/WaveNet_Model/WaveNet_fold{i}.h5')
+    
+    # WAVENET OOF
+    oof = model.predict(valid_gen, verbose=VERBOSE)
+    all_oof.append(oof)
+    all_true.append(train.iloc[valid_index][TARGETS].values)
+    
+    # TRAIN MEAN OOF
+    y_train = train.iloc[train_index][TARGETS].values
+    y_valid = train.iloc[valid_index][TARGETS].values
+    oof = y_valid.copy()
+    for j in range(6):
+        oof[:,j] = y_train[:,j].mean()
+    oof = oof / oof.sum(axis=1,keepdims=True)
+    all_oof2.append(oof)
+    
+    del model, oof, y_train, y_valid
+    gc.collect()
+    
+    if i==FOLDS_TO_TRAIN-1: break
+    
+all_oof = np.concatenate(all_oof)
+all_oof2 = np.concatenate(all_oof2)
+all_true = np.concatenate(all_true)
+#########################
+### Fold 1
+### train size 13671, valid size 3418
+#########################
+54/54 [==============================] - 72s 213ms/step
+#########################
+### Fold 2
+### train size 13671, valid size 3418
+#########################
+54/54 [==============================] - 67s 210ms/step
+#########################
+### Fold 3
+### train size 13671, valid size 3418
+#########################
+54/54 [==============================] - 67s 208ms/step
+#########################
+### Fold 4
+### train size 13671, valid size 3418
+#########################
+54/54 [==============================] - 68s 218ms/step
+#########################
+### Fold 5
+### train size 13672, valid size 3417
+#########################
+54/54 [==============================] - 68s 222ms/step
+CV Score for WaveNet
+In [17]:
+import sys
+sys.path.append('/kaggle/input/kaggle-kl-div')
+from kaggle_kl_div import score
+
+oof = pd.DataFrame(all_oof.copy())
+oof['id'] = np.arange(len(oof))
+
+true = pd.DataFrame(all_true.copy())
+true['id'] = np.arange(len(true))
+
+cv = score(solution=true, submission=oof, row_id_column_name='id')
+print('CV Score with WaveNet Raw EEG =',cv)
+CV Score with WaveNet Raw EEG = 0.8107772286669512
+CV Score using Train Means
+In [18]:
+oof = pd.DataFrame(all_oof2.copy())
+oof['id'] = np.arange(len(oof))
+
+true = pd.DataFrame(all_true.copy())
+true['id'] = np.arange(len(true))
+
+cv = score(solution=true, submission=oof, row_id_column_name='id')
+print('CV Score with Train Means =',cv)
+CV Score with Train Means = 1.2641160568651757
+Submit to Kaggle LB
+In [19]:
+del all_eegs, train; gc.collect()
+test = pd.read_csv('/kaggle/input/hms-harmful-brain-activity-classification/test.csv')
+print('Test shape:',test.shape)
+test.head()
+Test shape: (1, 3)
+Out[19]:
+spectrogram_id eeg_id patient_id
+0 853520 3911565283 6885
+In [20]:
+all_eegs2 = {}
+DISPLAY = 1
+EEG_IDS2 = test.eeg_id.unique()
+PATH2 = '/kaggle/input/hms-harmful-brain-activity-classification/test_eegs/'
+
+print('Processing Test EEG parquets...'); print()
+for i,eeg_id in enumerate(EEG_IDS2):
+        
+    # SAVE EEG TO PYTHON DICTIONARY OF NUMPY ARRAYS
+    data = eeg_from_parquet(f'{PATH2}{eeg_id}.parquet', i<DISPLAY)
+    all_eegs2[eeg_id] = data
+Processing Test EEG parquets...
+In [21]:
+# INFER MLP ON TEST
+preds = []
+model = build_model()
+test_gen = DataGenerator(test, shuffle=False, batch_size=64, eegs=all_eegs2, mode='test')
+
+print('Inferring test... ',end='')
+for i in range(FOLDS_TO_TRAIN):
+    print(f'fold {i+1}, ',end='')
+    if TRAIN_MODEL:
+        model.load_weights(f'WaveNet_Model/WaveNet_fold{i}.h5')
+    else:
+        model.load_weights(f'/kaggle/input/brain-eegs/WaveNet_Model/WaveNet_fold{i}.h5')
+    pred = model.predict(test_gen, verbose=0)
+    preds.append(pred)
+pred = np.mean(preds,axis=0)
+print()
+print('Test preds shape',pred.shape)
+Inferring test... fold 1, fold 2, fold 3, fold 4, fold 5, 
+Test preds shape (1, 6)
+In [22]:
+# CREATE SUBMISSION.CSV
+from IPython.display import display
+
+sub = pd.DataFrame({'eeg_id':test.eeg_id.values})
+sub[TARGETS] = pred
+sub.to_csv('submission.csv',index=False)
+print('Submission shape',sub.shape)
+display( sub.head() )
+
+# SANITY CHECK TO CONFIRM PREDICTIONS SUM TO ONE
+print('Sub row 0 sums to:',sub.iloc[0,-6:].sum())
+Submission shape (1, 7)
+eeg_id seizure_vote lpd_vote gpd_vote lrda_vote grda_vote other_vote
+0 3911565283 0.047582 0.032299 0.001257 0.112705 0.105959 0.700198
+Sub row 0 sums to: 0.9999999820720404

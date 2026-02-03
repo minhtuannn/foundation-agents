@@ -1,0 +1,130 @@
+EXPLORING MENTAL HEALTH | CATBOOST
+IMPORTS UTILIZ
+In [1]:
+import numpy as np
+import polars as pl
+import pandas as pd
+from sklearn.base import clone
+import optuna
+import os
+import category_encoders as ce
+from IPython.display import clear_output
+
+import warnings
+warnings.filterwarnings('ignore')
+pd.options.display.max_columns = None
+
+import lightgbm as lgb
+from catboost import CatBoostRegressor, CatBoostClassifier, Pool
+from sklearn.model_selection import *
+from sklearn.metrics import *
+PREPROCESS DATA
+In [2]:
+%%time
+
+!git clone https://github.com/muhammadabdullah0303/AbdML
+
+import sys
+sys.path.append('/kaggle/working/repository')
+
+from AbdML.main import AbdBase
+
+train = pd.read_csv('/kaggle/input/playground-series-s4e11/train.csv')
+test = pd.read_csv('/kaggle/input/playground-series-s4e11/test.csv')
+sample = pd.read_csv('/kaggle/input/playground-series-s4e11/sample_submission.csv')
+original = pd.read_csv('/kaggle/input/depression-surveydataset-for-analysis/final_depression_dataset_1.csv')
+
+original['Depression'] = original['Depression'].map({'No': 0,'Yes': 1})
+
+train = train.drop('id',axis=1)
+test = test.drop('id',axis=1)
+
+train = pd.concat(objs=[train, original])
+
+cat_c = [col for col in train.columns if col != 'Depression']
+
+train[cat_c] = train[cat_c].fillna('None').astype('string')
+test = test.fillna('None').astype('string')
+Cloning into 'AbdML'...
+remote: Enumerating objects: 123, done.
+remote: Counting objects: 100% (123/123), done.
+remote: Compressing objects: 100% (83/83), done.
+remote: Total 123 (delta 39), reused 0 (delta 0), pack-reused 0 (from 0)
+Receiving objects: 100% (123/123), 45.61 KiB | 791.00 KiB/s, done.
+Resolving deltas: 100% (39/39), done.
+CPU times: user 1.84 s, sys: 195 ms, total: 2.03 s
+Wall time: 4.09 s
+In [3]:
+train.head()
+Out[3]:
+Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure CGPA Study Satisfaction Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression
+0 Aaradhya Female 49.0 Ludhiana Working Professional Chef None 5.0 None None 2.0 More than 8 hours Healthy BHM No 1.0 2.0 No 0
+1 Vivan Male 26.0 Varanasi Working Professional Teacher None 4.0 None None 3.0 Less than 5 hours Unhealthy LLB Yes 7.0 3.0 No 1
+2 Yuvraj Male 33.0 Visakhapatnam Student None 5.0 None 8.97 2.0 None 5-6 hours Healthy B.Pharm Yes 3.0 1.0 No 1
+3 Yuvraj Male 22.0 Mumbai Working Professional Teacher None 5.0 None None 1.0 Less than 5 hours Moderate BBA Yes 10.0 1.0 Yes 1
+4 Rhea Female 30.0 Kanpur Working Professional Business Analyst None 1.0 None None 1.0 5-6 hours Unhealthy BBA Yes 9.0 4.0 Yes 0
+In [4]:
+test.head()
+Out[4]:
+Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure CGPA Study Satisfaction Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness
+0 Shivam Male 53.0 Visakhapatnam Working Professional Judge None 2.0 None None 5.0 Less than 5 hours Moderate LLB No 9.0 3.0 Yes
+1 Sanya Female 58.0 Kolkata Working Professional Educational Consultant None 2.0 None None 4.0 Less than 5 hours Moderate B.Ed No 6.0 4.0 No
+2 Yash Male 53.0 Jaipur Working Professional Teacher None 4.0 None None 1.0 7-8 hours Moderate B.Arch Yes 12.0 4.0 No
+3 Nalini Female 23.0 Rajkot Student None 5.0 None 6.84 1.0 None More than 8 hours Moderate BSc Yes 10.0 4.0 No
+4 Shaurya Male 47.0 Kalyan Working Professional Teacher None 5.0 None None 5.0 7-8 hours Moderate BCA Yes 3.0 4.0 No
+BASELINE | MODELS
+In [5]:
+%%time
+
+SEED = 42
+
+base = AbdBase(train_data=train, test_data=test, target_column='Depression',
+                 problem_type="classification", metric="roc_auc", seed=SEED,
+                 n_splits=5, cat_features=cat_c, num_classes=2, 
+                 prob=True,early_stop=True,test_prob=True)
+
+Params4 = {'loss_function': 'Logloss','eval_metric': 'AUC','learning_rate': 0.08114394459649094,
+    'iterations': 1000,'depth': 6,'random_strength':0,'l2_leaf_reg': 0.7047064221215757,'task_type': 'GPU',} # LB : 0.94381
+
+meanOFF, meanTest = base.Train_ML(Params4,'CAT',e_stop=50)
+Training Folds: 100%|██████████| 5/5 [01:33<00:00, 18.65s/it]
+Overall Train ROC_AUC: 0.9788
+Overall OOF ROC_AUC: 0.9753
+CPU times: user 3min 26s, sys: 28.3 s, total: 3min 54s
+Wall time: 1min 33s
+In [6]:
+%%time
+
+Params3 = {'iterations': 979, 'learning_rate': 0.04748459024928742, 'depth': 5, 'l2_leaf_reg': 4.087717923769713,
+           'random_strength': 0.6480619517272894, 'bagging_temperature': 0.4251430879330114, 'border_count': 85,
+          'task_type': "GPU",'loss_function': 'Logloss','eval_metric': 'AUC',} # Cv : 0.9755, Train : 0.9789 LB : 0.94328
+
+meanOFF2, meanTest2 = base.Train_ML(Params3,'CAT',e_stop=100)
+Training Folds: 100%|██████████| 5/5 [02:16<00:00, 27.32s/it]
+Overall Train ROC_AUC: 0.9789
+Overall OOF ROC_AUC: 0.9755
+CPU times: user 5min 4s, sys: 43 s, total: 5min 47s
+Wall time: 2min 16s
+SUBMISSION
+In [7]:
+%%time
+
+mp1 = np.round(meanTest)
+mp2 = np.round(meanTest2)
+
+ep = mp1*0.9 + mp2*0.1
+
+sample['Depression'] = ep.astype('int')
+
+sample.to_csv('Submission.csv', index=False)
+
+sample.head()
+CPU times: user 109 ms, sys: 806 µs, total: 110 ms
+Wall time: 111 ms
+Out[7]:
+id Depression
+0 140700 0
+1 140701 0
+2 140702 0
+3 140703 1
+4 140704 0

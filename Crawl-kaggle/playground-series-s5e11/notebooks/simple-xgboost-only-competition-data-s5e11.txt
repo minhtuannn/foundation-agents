@@ -1,0 +1,241 @@
+unfold_moreShow hidden cell
+In [2]:
+import pandas as pd
+import numpy as np
+import cupy as cp
+import xgboost as xgb
+from xgboost import XGBClassifier
+from sklearn.model_selection import KFold
+unfold_moreShow hidden code
+(593994, 13)
+Out[3]:
+id annual_income debt_to_income_ratio credit_score loan_amount interest_rate gender marital_status education_level employment_status loan_purpose grade_subgrade loan_paid_back
+0 0 29367.99 0.084 736 2528.42 13.67 Female Single High School Self-employed Other C3 1.0
+1 1 22108.02 0.166 636 4593.10 12.92 Male Married Master's Employed Debt consolidation D3 0.0
+2 2 49566.20 0.097 694 17005.15 9.76 Male Single High School Employed Debt consolidation C5 1.0
+3 3 46858.25 0.065 533 4682.48 16.10 Female Single High School Employed Debt consolidation F1 1.0
+4 4 25496.70 0.053 665 12184.43 10.21 Male Married High School Employed Other D1 1.0
+In [4]:
+def create_frequency_features(df, df_test):
+    """
+    Add frequency and binning features efficiently.
+
+    - For each categorical column, create <col>_freq = how often each value appears in train data.
+    - For numeric columns, split values into 5, 10, 15 quantile bins.
+    """
+    # Pre-allocate DataFrames for new features to avoid fragmentation
+    freq_features_train = pd.DataFrame(index=df.index)
+    freq_features_test = pd.DataFrame(index=df_test.index)
+    bin_features_train = pd.DataFrame(index=df.index)
+    bin_features_test = pd.DataFrame(index=df_test.index)
+
+    for col in cols:
+        # --- Frequency encoding ---
+        freq = df[col].value_counts()
+        df[f"{col}_freq"] = df[col].map(freq)
+        freq_features_test[f"{col}_freq"] = df_test[col].map(freq).fillna(freq.mean())
+
+        # --- Quantile binning for numeric columns ---
+        if col in num:
+            for q in [5, 10, 15]:
+                try:
+                    train_bins, bins = pd.qcut(df[col], q=q, labels=False, retbins=True, duplicates="drop")
+                    bin_features_train[f"{col}_bin{q}"] = train_bins
+                    bin_features_test[f"{col}_bin{q}"] = pd.cut(df_test[col], bins=bins, labels=False, include_lowest=True)
+                except Exception:
+                    bin_features_train[f"{col}_bin{q}"] = 0
+                    bin_features_test[f"{col}_bin{q}"] = 0
+
+    # Concatenate all new features at once
+    df = pd.concat([df, freq_features_train, bin_features_train], axis=1)
+    df_test = pd.concat([df_test, freq_features_test, bin_features_test], axis=1)
+
+    return df, df_test
+I got the target Encoding and some other feature engineering parts from 安尾 晃貴
+In [5]:
+def target_encoding(train, predict, n_splits=5):
+    """
+    Add K-Fold target mean encoded features to train and predict datasets.
+    
+    Parameters:
+    - train: training DataFrame
+    - predict: prediction/test DataFrame
+    - target: name of the target column
+    - n_splits: number of folds for K-Fold encoding
+    
+    Returns:
+    - train and predict DataFrames with new mean encoded features
+    """
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+    mean_features_train = pd.DataFrame(index=train.index)
+    mean_features_test = pd.DataFrame(index=predict.index)
+
+    for col in cols:
+        # --- K-Fold Target Mean Encoding ---
+        mean_encoded = np.zeros(len(train))
+        for tr_idx, val_idx in kf.split(train):
+            tr_fold = train.iloc[tr_idx]
+            val_fold = train.iloc[val_idx]
+            mean_map = tr_fold.groupby(col)[target].mean()
+            mean_encoded[val_idx] = val_fold[col].map(mean_map)
+
+        mean_features_train[f'mean_{col}'] = mean_encoded
+
+        # --- Apply global mean mapping to prediction/test data ---
+        global_mean = train.groupby(col)[target].mean()
+        mean_features_test[f'mean_{col}'] = predict[col].map(global_mean)
+
+    # --- Concatenate new features at once to avoid fragmentation ---
+    train = pd.concat([train, mean_features_train], axis=1)
+    predict = pd.concat([predict, mean_features_test], axis=1)
+
+    # Defragment
+    train = train.copy()
+    predict = predict.copy()
+    return train, predict
+Data Processing
+I got the rounding values from Masaya Kawamata
+In [6]:
+# Rounding the values
+for c in ['annual_income', 'loan_amount']:
+    for s, l in {'1s': 0, '10s': -1}.items():
+        for g in [df, df_test]:
+            g[f'{c}_ROUND_{s}'] = g[c].round(l).astype(int)
+
+# Specific feature engineering
+for gf in [df, df_test]:
+    gf['subgrade'] = gf['grade_subgrade'].str[1:].astype(int)
+    gf['grade'] = gf['grade_subgrade'].str[0]
+    gf['total_debt_burden'] = (gf['loan_amount'] * gf['interest_rate'] / 100) / (gf['annual_income'] + 1) 
+In [7]:
+cols = df.drop(columns=[target,"id"]).columns.tolist()
+cat = [c for c in cols if df[c].dtype in ["object","category"]]
+num = [c for c in cols if df[c].dtype not in ["object","category","bool"]]
+
+# Creating new features based on the frequency of numerical features
+df, df_test = target_encoding(df, df_test, 10)
+df, df_test = create_frequency_features(df, df_test)
+
+# Preparing categorical features
+df[cat], df_test[cat] = df[cat].astype("category"), df_test[cat].astype("category")
+Dropping Unnecessary Columns
+In [8]:
+remove = [
+    'annual_income_ROUND_10s_bin10','annual_income_ROUND_1s_bin10','annual_income_ROUND_1s_bin15','annual_income_ROUND_1s_bin5',
+    'annual_income_bin10','annual_income_bin5','credit_score_bin10','credit_score_bin5','debt_to_income_ratio_bin15','debt_to_income_ratio_bin5',
+    'education_level_freq','gender_freq','interest_rate_bin10','interest_rate_bin5','loan_amount_ROUND_10s_bin5','loan_amount_ROUND_1s_bin10',
+    'loan_amount_ROUND_1s_bin15','loan_amount_ROUND_1s_bin5','loan_amount_bin10','loan_amount_bin15','loan_amount_bin5','marital_status_freq',
+    'subgrade','subgrade_bin10','subgrade_bin15','subgrade_bin5','subgrade_freq',"mean_total_debt_burden"
+]
+
+df, df_test = df.drop(columns = remove+["id"]), df_test.drop(columns = remove)
+Data Processing Results
+In [9]:
+print(f"Number of columns {len(df.columns.tolist())}")
+print(df.columns.tolist())
+Number of columns 60
+['annual_income', 'debt_to_income_ratio', 'credit_score', 'loan_amount', 'interest_rate', 'gender', 'marital_status', 'education_level', 'employment_status', 'loan_purpose', 'grade_subgrade', 'loan_paid_back', 'annual_income_ROUND_1s', 'annual_income_ROUND_10s', 'loan_amount_ROUND_1s', 'loan_amount_ROUND_10s', 'grade', 'total_debt_burden', 'mean_annual_income', 'mean_debt_to_income_ratio', 'mean_credit_score', 'mean_loan_amount', 'mean_interest_rate', 'mean_gender', 'mean_marital_status', 'mean_education_level', 'mean_employment_status', 'mean_loan_purpose', 'mean_grade_subgrade', 'mean_annual_income_ROUND_1s', 'mean_annual_income_ROUND_10s', 'mean_loan_amount_ROUND_1s', 'mean_loan_amount_ROUND_10s', 'mean_subgrade', 'mean_grade', 'annual_income_freq', 'debt_to_income_ratio_freq', 'credit_score_freq', 'loan_amount_freq', 'interest_rate_freq', 'employment_status_freq', 'loan_purpose_freq', 'grade_subgrade_freq', 'annual_income_ROUND_1s_freq', 'annual_income_ROUND_10s_freq', 'loan_amount_ROUND_1s_freq', 'loan_amount_ROUND_10s_freq', 'grade_freq', 'total_debt_burden_freq', 'annual_income_bin15', 'debt_to_income_ratio_bin10', 'credit_score_bin15', 'interest_rate_bin15', 'annual_income_ROUND_10s_bin5', 'annual_income_ROUND_10s_bin15', 'loan_amount_ROUND_10s_bin10', 'loan_amount_ROUND_10s_bin15', 'total_debt_burden_bin5', 'total_debt_burden_bin10', 'total_debt_burden_bin15']
+In [10]:
+df.isnull().sum()[lambda x: x>0]
+Out[10]:
+mean_annual_income              83864
+mean_debt_to_income_ratio          25
+mean_credit_score                  14
+mean_loan_amount                72382
+mean_interest_rate                 97
+mean_annual_income_ROUND_1s     11740
+mean_annual_income_ROUND_10s     1680
+mean_loan_amount_ROUND_1s        4303
+mean_loan_amount_ROUND_10s        187
+dtype: int64
+CV score of the model
+In [11]:
+dtrain = xgb.DMatrix(
+    df.drop(columns = target),
+    label=df[target],
+    enable_categorical=True,
+)
+
+xgb_params = {
+    'tree_method': 'hist', 'device': 'cuda','eval_metric': 'auc',
+    'objective': 'binary:logistic','random_state': 42,
+    'min_child_weight': 89,"max_leaves":4,"reg_alpha":3.2,
+    "reg_lambda":5,"eta":0.1,
+}
+
+cv_results = xgb.cv(
+    params=xgb_params,
+    dtrain=dtrain,
+    nfold=7,
+    num_boost_round=20000,
+    metrics='auc',
+    verbose_eval=False,
+    early_stopping_rounds=100,
+)
+
+print(cv_results.tail())
+
+# Extract best boosting round
+best_round = cv_results['test-auc-mean'].idxmax()
+best_auc = cv_results['test-auc-mean'][best_round]
+print(f"Best round: {best_round}, Best CV AUC: {best_auc:.7f}")
+      train-auc-mean  train-auc-std  test-auc-mean  test-auc-std
+1525        0.930093       0.000177       0.927558      0.001171
+1526        0.930095       0.000177       0.927558      0.001171
+1527        0.930096       0.000176       0.927558      0.001171
+1528        0.930097       0.000176       0.927558      0.001171
+1529        0.930099       0.000176       0.927560      0.001172
+Best round: 1529, Best CV AUC: 0.9275600
+unfold_moreShow hidden code
+Final training and submitting
+In [13]:
+# Prepare training data
+X_train = df.drop(columns=target)
+y_train = df[target]
+
+# Train XGBoost model
+model = XGBClassifier(**xgb_params, enable_categorical=True)
+model.fit(X_train, y_train,
+    eval_set=[(X_train, y_train)],      # or (X_val, y_val) for real validation
+    verbose=100)
+
+# Predict on test set
+pred = model.predict_proba(df_test.drop(columns = "id"))[:, 1]
+
+# Prepare submission
+sub = pd.DataFrame({
+    "id": df_test["id"],
+    target: pred
+})
+
+# Save submission file
+sub.to_csv("submission.csv", index=False)
+[0] validation_0-auc:0.85287
+[100] validation_0-auc:0.92560
+[200] validation_0-auc:0.92716
+[300] validation_0-auc:0.92775
+[400] validation_0-auc:0.92807
+[500] validation_0-auc:0.92831
+[600] validation_0-auc:0.92852
+[700] validation_0-auc:0.92871
+[800] validation_0-auc:0.92886
+[900] validation_0-auc:0.92900
+[1000] validation_0-auc:0.92916
+[1100] validation_0-auc:0.92930
+[1200] validation_0-auc:0.92942
+[1300] validation_0-auc:0.92955
+[1400] validation_0-auc:0.92968
+[1500] validation_0-auc:0.92979
+[1600] validation_0-auc:0.92991
+[1700] validation_0-auc:0.93002
+[1800] validation_0-auc:0.93013
+[1829] validation_0-auc:0.93016
+/usr/local/lib/python3.11/dist-packages/xgboost/core.py:774: UserWarning: [17:08:18] WARNING: /workspace/src/common/error_msg.cc:62: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  return func(**kwargs)

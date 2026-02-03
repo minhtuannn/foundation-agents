@@ -1,0 +1,161 @@
+Published on June 25, 2025. By Prata, Marília (mpwolke)
+unfold_moreShow hidden cell
+Gemma 3n a generative AI model
+"Gemma 3n is a generative AI model optimized for use in everyday devices, such as phones, laptops, and tablets. This model includes innovations in parameter-efficient processing, including Per-Layer Embedding (PLE) parameter caching and a MatFormer model architecture that provides the flexibility to reduce compute and memory requirements. These models feature audio input handling, as well as text and visual data.
+GEMMA 3n KEY FEATURES:
+Audio input: Process sound data for speech recognition, translation, and audio data analysis.
+Visual and text input: Multimodal capabilities let you handle vision, sound, and text to help you understand and analyze the world around you.
+PLE caching: Per-Layer Embedding (PLE) parameters contained in these models can be cached to fast, local storage to reduce model memory run costs.
+MatFormer architecture: Matryoshka Transformer architecture allows for selective activation of the models parameters per request to reduce compute cost and response times.
+Conditional parameter loading: Bypass loading of vision and audio parameters in the model to reduce the total number of loaded parameters and save memory resources.
+Wide language support: Wide linguistic capabilities, trained in over 140 languages. 32K token context: Substantial input context for analyzing data and handling processing tasks.
+https://ai.google.dev/gemma/docs/gemma-3n#parameters
+Model citation
+@article{gemma_3n_2025,
+title={Gemma 3n},
+
+url={https://ai.google.dev/gemma/docs/gemma-3n},
+
+publisher={Google DeepMind},
+
+author={Gemma Team},
+year={2025}
+}
+Competition Citation
+@misc{google-gemma-3n-hackathon,
+author = {Addison Howard and EveryDeveloper and Glenn Cameron and Gusthema and HCL-Jevster and Ian Ballantyne and Kat Black and Mark Sherwood and Milen Ferev and Omar Sanseviero and Ronghui Zhu},
+
+title = {Google - The Gemma 3n Impact Challenge},
+
+year = {2025},
+
+howpublished = {\url{https://kaggle.com/competitions/google-gemma-3n-hackathon}},
+note = {Kaggle}
+}
+Install the Transformers library.
+Gemma 3n is supported starting from transformers 4.53.0.
+https://www.kaggle.com/models/google/gemma-3n/
+In [ ]:
+#!pip install -U transformers
+#
+Trying to generate a text
+RuntimeError: Unknown model (mobilenetv5_300m_enc)
+"I found that on twitter: The latest version of Transforms and timm-1.0.16 were required to run the image analysis sample. The 1.0.15 version available through pip will result in an error "RuntimeError: Unknown model (mobilenetv5_300m_enc)", so install it from source with to avoid this."
+https://x.com/webbigdata/status/1938289224689852822
+In [2]:
+!pip install timm --upgrade
+!pip install accelerate
+!pip install git+https://github.com/huggingface/transformers.git
+unfold_moreShow hidden output
+In [3]:
+#By Paul Mooney https://www.kaggle.com/code/paultimothymooney/how-to-use-gemma-3n-on-kaggle
+
+import kagglehub
+
+GEMMA_PATH = kagglehub.model_download("google/gemma-3n/transformers/gemma-3n-e2b-it")
+In [4]:
+#By Paul Mooney https://www.kaggle.com/code/paultimothymooney/how-to-use-gemma-3n-on-kaggle
+
+import transformers
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+Prompt
+In [5]:
+#https://www.kaggle.com/models/google/gemma-3n/
+
+from transformers import AutoProcessor, AutoModelForImageTextToText
+
+processor = AutoProcessor.from_pretrained(GEMMA_PATH)
+model = AutoModelForImageTextToText.from_pretrained(GEMMA_PATH, torch_dtype="auto", device_map="auto")
+
+prompt = """I am so fucked up. Not for amateurs """
+input_ids = processor(text=prompt, return_tensors="pt").to(model.device, dtype=model.dtype)
+outputs = model.generate(**input_ids, max_new_tokens=512, disable_compile=True)
+text = processor.batch_decode(
+    outputs,
+    skip_special_tokens=False,
+    clean_up_tokenization_spaces=False
+)
+print(text[0])
+2025-06-27 00:10:53.428619: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:477] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1750983053.632428     131 cuda_dnn.cc:8310] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1750983053.694428     131 cuda_blas.cc:1418] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]
+<bos>I am so fucked up. Not for amateurs 
+
+Please, tell me what happened. I need to understand. 
+
+I am so confused and ashamed. 
+
+Please, tell me what happened.
+<end_of_turn>
+Only after Mooney's (inputs 2,3 4) code I was able to generated the text above
+That's me explaining Gemma 3n the issues I faced before reading Paul's Kaggle Notebook
+I didn't run with the pipeline API since it required to log in on HuggingFace
+https://www.kaggle.com/models/google/gemma-3n/
+unfold_moreShow hidden code
+Out[10]:
+Describe the funny Bot schocked to read Who is on Kaggle Top
+I can see some smoke getting out the Bot head.
+In [11]:
+#By Paul Mooney https://www.kaggle.com/code/paultimothymooney/how-to-use-gemma-3n-on-kaggle
+
+from transformers import AutoProcessor, AutoModelForImageTextToText
+
+processor = AutoProcessor.from_pretrained(GEMMA_PATH)
+model = AutoModelForImageTextToText.from_pretrained(GEMMA_PATH, torch_dtype="auto", device_map="auto")
+
+messages = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "image", "image": IMAGE_URL},
+            {"type": "text", "text": "Describe this image in detail."}
+        ]
+    }
+]
+
+inputs = processor.apply_chat_template(
+    messages,
+    add_generation_prompt=True,
+    tokenize=True,
+    return_dict=True,
+    return_tensors="pt"
+).to(model.device, dtype=model.dtype)
+input_len = inputs["input_ids"].shape[-1]
+
+outputs = model.generate(**inputs, max_new_tokens=512, disable_compile=True)
+text = processor.batch_decode(
+    outputs[:, input_len:],
+    skip_special_tokens=True,
+    clean_up_tokenization_spaces=True
+)
+Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s]
+Fine, I didn't turned GPU on, so "What, me Worry?
+Since I don't intend to change Gemma's answer for my prompt, it's up to you to check the description of the Bot's image cause my Draft session is already 50 min. In fact, it's more cause I restarted this Notebook many times before trying to understand Gemma 3n performance.
+The shards have already loaded 100%, though the snippet is still running and red.
+Finally, Draft Session 56m. No GPU. Great Gemma! You nailed it!
+Checking the image description Text:
+What the heck is Koggio? KOGGITE? Maybe it's "Cujo" alike.
+Cujo's Character: In the beginning, Cujo is portrayed as a beloved family pet and the best friend of The transformation into a rabid animal is a central plot point, highlighting the unpredictable nature of disease and the devastating consequences it can have.
+Cujo as a Metaphor: Some interpretations of the story view Cujo's rabies as a metaphor for addiction. The loss of control and the destructive consequences mirror the experience of addiction.
+"Cujo" is a horror novel by Stephen King, published in 1981.
+https://en.wikipedia.org/wiki/Cujo#:~:text=Cujo%20(/%CB%88ku%CB%90d%CA%92,his%20struggle%20with%20alcohol%20addiction.
+In [12]:
+print(text[0])
+The image is a vertical promotional poster for the movie "Koggio". The poster features a whimsical, animated robot as the central element, positioned diagonally across the frame. The robot is primarily light blue and white, with a distinctive top hat and large, expressive eyes. It appears to be mid-motion, perhaps slightly tumbling or in the process of an action.
+
+The text "29OTIA 10% 10% KOGGITE" is prominently displayed in large, bold, white sans-serif font, running vertically down the poster. The text is split into three sections, with the first part "29OTIA" appearing at the top, the second "10%" in the middle, and the third "10%" at the bottom. "KOGGITE" is positioned towards the bottom right of the poster.
+
+The background of the poster is blurred but suggests an indoor setting with warm, reddish-brown tones. We can glimpse elements like wooden structures and perhaps some indistinct shapes of furniture or architectural details. The lighting appears soft and warm, casting subtle shadows on the robot and the background.
+
+The overall style of the poster is playful and inviting, likely targeting a family audience. The juxtaposition of the animated robot with the text suggests a connection to the film's narrative or a special offer related to it. The typography is clean and modern, making the text easily readable against the busy background.
+I also loved Gemma 3n answer:
+I am so fucked up. Not for amateurs
+Please, tell me what happened. I need to understand.
+I am so confused and ashamed.
+Please, tell me what happened.
+Total Draft Session 1h:16m
+Acknowledgements:
+Paul Mooney https://www.kaggle.com/code/paultimothymooney/how-to-use-gemma-3n-on-kaggle

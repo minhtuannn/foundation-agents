@@ -1,0 +1,285 @@
+Train More - XGB + NN - Achieve LB Boost!
+Previously when we ensembled our 7 KFold XGB with our 7 KFold NN, we achieved LB 0.97730 (see here).
+We will now attempt to boost their CV and LB! Previously our XGB learning rate was 0.1 for experiments. We will now train it with 0.02 for our final submission. Previously our XGB had 7 folds, we will now train it with 10 folds.
+Previously our NN had 7 folds, we will now train it with 10 folds. And we will train the same 10 folds 5x times. Each time we will use a different seed.
+Afterward, we will ensemble all these new XGB and all these new NN. We will try to beat CV 0.97630 and LB 0.97730 by training more!
+==============================
+NOTE Version 1 and 2 of this notebook have a bug where the OOF and PREDS of the multiple NN are not being saved correctly. Inside each repeat for-loop, the variable OOF and PREDS was being reset to zero.
+Load Data
+We load train, test, and original datasets. In every Kaggle playground competition, the data is synthetic and it is generated from an original dataset. In this competition, the original dataset is here
+In [1]:
+import pandas as pd, numpy as np, os
+import cudf
+
+PATH = "/kaggle/input/playground-series-s5e8/"
+train = cudf.read_csv(f"{PATH}train.csv").set_index('id')
+print("Train shape", train.shape )
+train.head()
+Train shape (750000, 17)
+Out[1]:
+age job marital education default balance housing loan contact day month duration campaign pdays previous poutcome y
+id
+0 42 technician married secondary no 7 no no cellular 25 aug 117 3 -1 0 unknown 0
+1 38 blue-collar married secondary no 514 no no unknown 18 jun 185 1 -1 0 unknown 0
+2 36 blue-collar married secondary no 602 yes no unknown 14 may 111 2 -1 0 unknown 0
+3 27 student single secondary no 34 yes no unknown 28 may 10 2 -1 0 unknown 0
+4 26 technician married secondary no 889 yes no cellular 3 feb 902 1 -1 0 unknown 1
+In [2]:
+test = cudf.read_csv(f"{PATH}test.csv").set_index('id')
+test['y'] = np.random.randint(0, 2, len(test))
+print("Test shape", test.shape )
+test.head()
+Test shape (250000, 17)
+Out[2]:
+age job marital education default balance housing loan contact day month duration campaign pdays previous poutcome y
+id
+750000 32 blue-collar married secondary no 1397 yes no unknown 21 may 224 1 -1 0 unknown 1
+750001 44 management married tertiary no 23 yes no cellular 3 apr 586 2 -1 0 unknown 1
+750002 36 self-employed married primary no 46 yes yes cellular 13 may 111 2 -1 0 unknown 1
+750003 58 blue-collar married secondary no -1380 yes yes unknown 29 may 125 1 -1 0 unknown 0
+750004 28 technician single secondary no 1950 yes no cellular 22 jul 181 1 -1 0 unknown 1
+In [3]:
+orig = cudf.read_csv("/kaggle/input/bank-marketing-dataset-full/bank-full.csv",delimiter=";")
+orig['y'] = orig.y.map({'yes':1,'no':0})
+orig['id'] = (np.arange(len(orig))+1e6).astype('int')
+orig = orig.set_index('id')
+print("Original data shape", orig.shape )
+orig.head()
+Original data shape (45211, 17)
+Out[3]:
+age job marital education default balance housing loan contact day month duration campaign pdays previous poutcome y
+id
+1000000 58 management married tertiary no 2143 yes no unknown 5 may 261 1 -1 0 unknown 0
+1000001 44 technician single secondary no 29 yes no unknown 5 may 151 1 -1 0 unknown 0
+1000002 33 entrepreneur married secondary no 2 yes yes unknown 5 may 76 1 -1 0 unknown 0
+1000003 47 blue-collar married unknown no 1506 yes no unknown 5 may 92 1 -1 0 unknown 0
+1000004 33 unknown single unknown no 1 no no unknown 5 may 198 1 -1 0 unknown 0
+EDA (Exploratory Data Analysis)
+We now combine all data together and then explore the columns and their properties. We observe that there is no missing data. And we observe that the categorical columns have low cardinality (i.e. under 12). We observe that most numerical columns have few unique values, and two numerical columns have around 2k and 8k unique values.
+In [4]:
+combine = cudf.concat([train,test,orig],axis=0)
+print("Combined data shape", combine.shape )
+Combined data shape (1045211, 17)
+In [5]:
+CATS = []
+NUMS = []
+for c in combine.columns[:-1]:
+    t = "CAT"
+    if combine[c].dtype=='object':
+        CATS.append(c)
+    else:
+        NUMS.append(c)
+        t = "NUM"
+    n = combine[c].nunique()
+    na = combine[c].isna().sum()
+    print(f"[{t}] {c} has {n} unique and {na} NA")
+print("CATS:", CATS )
+print("NUMS:", NUMS )
+[NUM] age has 78 unique and 0 NA
+[CAT] job has 12 unique and 0 NA
+[CAT] marital has 3 unique and 0 NA
+[CAT] education has 4 unique and 0 NA
+[CAT] default has 2 unique and 0 NA
+[NUM] balance has 8590 unique and 0 NA
+[CAT] housing has 2 unique and 0 NA
+[CAT] loan has 2 unique and 0 NA
+[CAT] contact has 3 unique and 0 NA
+[NUM] day has 31 unique and 0 NA
+[CAT] month has 12 unique and 0 NA
+[NUM] duration has 1824 unique and 0 NA
+[NUM] campaign has 52 unique and 0 NA
+[NUM] pdays has 628 unique and 0 NA
+[NUM] previous has 54 unique and 0 NA
+[CAT] poutcome has 4 unique and 0 NA
+CATS: ['job', 'marital', 'education', 'default', 'housing', 'loan', 'contact', 'month', 'poutcome']
+NUMS: ['age', 'balance', 'day', 'duration', 'campaign', 'pdays', 'previous']
+Feature Engineer (LE - Label Encode)
+We will label encode all categorical columns. Also we will make a duplicate of each numerical column and treat the copy as a categorical column.
+In [6]:
+CATS1 = []
+SIZES = {}
+for c in NUMS + CATS:
+    n = c
+    if c in NUMS: 
+        n = f"{c}2"
+        CATS1.append(n)
+    combine[n],_ = combine[c].factorize()
+    SIZES[n] = combine[n].max()+1
+
+    combine[c] = combine[c].astype('int32')
+    combine[n] = combine[n].astype('int32')
+
+print("New CATS:", CATS1 )
+print("Cardinality of all CATS:", SIZES )
+New CATS: ['age2', 'balance2', 'day2', 'duration2', 'campaign2', 'pdays2', 'previous2']
+Cardinality of all CATS: {'age2': 78, 'balance2': 8590, 'day2': 31, 'duration2': 1824, 'campaign2': 52, 'pdays2': 628, 'previous2': 54, 'job': 12, 'marital': 3, 'education': 4, 'default': 2, 'housing': 2, 'loan': 2, 'contact': 3, 'month': 12, 'poutcome': 4}
+Feature Engineer (Combine Column Pairs)
+We will create a new categorical column from every pair of existing categorical columns. The original categorical columns have been label encoded into integers from 0 to N-1 each. Therefore we can create a new column with unique integers using the formula new_cols[name] = combine[c1] * SIZES[c2] + combine[c2].
+In [7]:
+from itertools import combinations
+
+pairs = combinations(CATS + CATS1, 2)
+new_cols = {}
+CATS2 = []
+
+for c1, c2 in pairs:
+    name = "_".join(sorted((c1, c2)))
+    new_cols[name] = combine[c1] * SIZES[c2] + combine[c2]
+    CATS2.append(name)
+if new_cols:
+    new_df = cudf.DataFrame(new_cols)         
+    combine = cudf.concat([combine, new_df], axis=1) 
+
+print(f"Created {len(CATS2)} new CAT columns")
+Created 120 new CAT columns
+Feature Engineer (CE - Count Encoding)
+We now have 136 categorical columns. We will count encode each of them and create 136 new columns.
+In [8]:
+CE = []
+CC = CATS+CATS1+CATS2
+combine['i'] = np.arange( len(combine) )
+
+print(f"Processing {len(CC)} columns... ",end="")
+for i,c in enumerate(CC):
+    if i%10==0: print(f"{i}, ",end="")
+    tmp = combine.groupby(c).y.count()
+    tmp = tmp.astype('int32')
+    tmp.name = f"CE_{c}"
+    CE.append( f"CE_{c}" )
+    combine = combine.merge(tmp, on=c, how='left')
+combine = combine.sort_values('i')
+print()
+Processing 136 columns... 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 
+In [9]:
+train = combine.iloc[:len(train)]
+test = combine.iloc[len(train):len(train)+len(test)]
+orig = combine.iloc[-len(orig):]
+del combine
+print("Train shape", train.shape,"Test shape", test.shape,"Original shape", orig.shape )
+Train shape (750000, 281) Test shape (250000, 281) Original shape (45211, 281)
+Feature Engineering (TE - Original Data as Cols)
+Below is a technique to add the original data as new columns.
+In [10]:
+TE = []
+CC = CATS+CATS1+CATS2
+
+#mn = orig.y.mean() # WE FILL NAN AFTER XGB
+print(f"Processing {len(CC)} columns... ",end="")
+for i,c in enumerate(CC):
+    if i%10==0: print(f"{i}, ",end="")
+    tmp = orig.groupby(c).y.mean()
+    tmp = tmp.astype('float32')
+    NAME = f"TE_ORIG_{c}"
+    tmp.name = NAME
+    TE.append( NAME )
+    train = train.merge(tmp, on=c, how='left')
+    #train[NAME] = train[NAME].fillna(mn) # WE FILL NAN AFTER XGB
+    test = test.merge(tmp, on=c, how='left')
+    #test[NAME] = test[NAME].fillna(mn) # WE FILL NAN AFTER XGB
+train = train.sort_values('i')
+test = test.sort_values('i')
+print()
+Processing 136 columns... 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 
+Train More - Train XGB w/ Original Data as Rows
+Previously our XGB learning rate was 0.1 for experiments. We will now train it with 0.02 for our final submission. Previously our XGB had 7 folds, we will now train it with 10 folds.
+unfold_moreShow hidden cell
+In [12]:
+from sklearn.metrics import roc_auc_score
+
+m = roc_auc_score(train.y.to_numpy(), oof_preds)
+print(f"XGB (Train More) with Original Data as rows CV = {m}")
+XGB (Train More) with Original Data as rows CV = 0.9760909064923055
+Train More - Train XGB w/ Original Data as Cols
+Previously our XGB learning rate was 0.1 for experiments. We will now train it with 0.02 for our final submission. Previously our XGB had 7 folds, we will now train it with 10 folds.
+unfold_moreShow hidden cell
+In [14]:
+from sklearn.metrics import roc_auc_score
+
+m = roc_auc_score(train.y.to_numpy(), oof_preds2)
+print(f"XGB (Train More) with Original Data as rows CV = {m}")
+XGB (Train More) with Original Data as rows CV = 0.9762627854582778
+Normalize
+NN prefer numerical columns to be Gaussian distributed. Therefore we first apply log transform to skewed distributions and then standardize with subtract mean divide standard deviation. (The standardization code is included in the NN code below).
+In [15]:
+LOG = ['balance','duration','campaign','pdays','previous']
+
+for c in LOG+CE:
+    if c in LOG: 
+        mn = min( (train[c].min(), test[c].min()) )
+        train[c] = train[c]-mn
+        test[c] = test[c]-mn
+    train[c] = np.log1p( train[c] )
+    test[c] = np.log1p( test[c] )
+In [16]:
+FEATURES = CATS+NUMS+CATS1+CE+TE
+TARGET_COL = 'y'
+print(f"We have {len( FEATURES )} features.")
+We have 295 features.
+Train More - NN by GPT5 - Vibe Coding!
+I used my features from my XGBoost starter notebook, and then asked GPT5 to build me a NN MLP. Below is what GPT5 produced! Here is the prompt I asked GPT5:
+I have dataframe with 16 categorical features. And i have 279 numeric features. This is in a Pandas dataframe. Can you write me code that builds and trains a Pytorch MLP that uses embeddings for the categoricals and predicts a binary target? Please make the model, set the training schedule. Write a KFold training loop, save the OOF, etc
+After it produced the code, I tuned the batch size, learning rate, and learning schedule. Everything else was created by GPT5! Wow!
+Previously our NN had 7 folds, we will now train it with 10 folds. And we will train the same 10 folds 5x times. Each time we will use a different seed. Then we will average all the models.
+unfold_moreShow hidden cell
+In [18]:
+m = roc_auc_score(train.y.to_numpy(), oof)
+print(f"NN (Train More) CV = {m}")
+NN (Train More) CV = 0.9750620309284384
+Create NN (Train More) Submission CSV
+In [19]:
+sub = pd.read_csv(f"{PATH}sample_submission.csv")
+sub['y'] = preds
+sub.to_csv("submission_nn_train_more.csv",index=False)
+np.save("oof_nn_train_more",oof)
+print('Submission shape',sub.shape)
+#sub.head()
+Submission shape (250000, 2)
+Create XGB (Train More) Submission CSV
+In [20]:
+sub = pd.read_csv(f"{PATH}sample_submission.csv")
+preds_xgb = (test_preds+test_preds2)/2. 
+sub['y'] = preds_xgb
+sub.to_csv("submission_xgb_train_more.csv",index=False)
+np.save("oof_xgb_rows_train_more",oof_preds)
+np.save("oof_xgb_cols_train_more",oof_preds2)
+print('Submission shape',sub.shape)
+#sub.head()
+Submission shape (250000, 2)
+Ensemble - XGB and NN (Train More) - CV Score
+In [21]:
+oof_xgb = (oof_preds+oof_preds2)/2.
+m = roc_auc_score(train.y.to_numpy(), oof_xgb)
+print(f"Both XGB rows and XGB cols (Train More) CV = {m}")
+Both XGB rows and XGB cols (Train More) CV = 0.9764041800768835
+In [22]:
+best_m = 0
+best_w = 0
+for w in np.arange(0,1.01,0.01):
+    oof_ensemble = (1-w)*oof_xgb + w*oof
+    m = roc_auc_score(train.y.to_numpy(), oof_ensemble)
+    if m>best_m:
+        best_m = m
+        best_w = w
+        
+oof_ensemble = (1-best_w)*oof_xgb + best_w*oof
+m = roc_auc_score(train.y.to_numpy(), oof_ensemble)
+print(f"Ensemble XGB and NN (Train More) CV = {m}")
+print(f" using best NN weight = {best_w}")
+Ensemble XGB and NN (Train More) CV = 0.97661573267636
+ using best NN weight = 0.27
+Create - XGB and NN (Train More) - Submission CSV
+In [23]:
+xgb_preds = preds_xgb 
+sub = pd.read_csv(f"{PATH}sample_submission.csv")
+sub['y'] = (1-best_w)*xgb_preds + best_w*preds
+sub.to_csv("submission_ensemble_train_more.csv",index=False)
+print('Submission shape',sub.shape)
+sub.head()
+Submission shape (250000, 2)
+Out[23]:
+id y
+0 750000 0.000796
+1 750001 0.070609
+2 750002 0.000149
+3 750003 0.000057
+4 750004 0.006373

@@ -1,0 +1,1069 @@
+Customize LLM: Step-by-Step LoRA Training
+Welcome to this comprehensive tutorial on creating your own custom LoRA (Low-Rank Adaptation) fine-tuned models! By the end of this notebook, you'll understand how to take a base model and customize it for your specific needs.
+🤔 What is LoRA and Why Use It?
+LoRA (Low-Rank Adaptation) is a technique that allows us to fine-tune large language models efficiently by only updating a small number of parameters instead of the entire model.
+Why is LoRA Amazing?
+Memory Efficient: Uses only ~1-10% of the original model's parameters
+Fast Training: Significantly reduces training time and computational requirements
+Flexible: Can be easily swapped, combined, or removed from base models
+Cost-effective: Perfect for running on consumer GPUs or free cloud platforms
+Real-world Applications:
+Customer Support Bots: Train on your company's FAQ and support tickets
+Domain-specific Assistants: Medical, legal, technical writing assistants
+Personalized Chatbots: Create AI that knows your preferences and context
+Code Assistants: Fine-tune for specific programming languages or frameworks
+MBTI Assistants: Fine-tune the model to behave like one of the type (useful when we are working on our unconscious cognative functions)
+🛠️ Environment Setup
+Let's start by setting up our environment. We'll install Unsloth, which makes LoRA fine-tuning incredibly easy!
+In [1]:
+import os
+os.environ['HF_HUB_ENABLE_HF_TRANSFER'] = '2'  # Faster HF downloads
+os.environ['PYTHONIOENCODING'] = 'utf-8'       # Text encoding consistency
+os.environ['PYTHONUTF8'] = '1'                 # Enable UTF-8 mode for Python
+
+# GPU setup
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0" # for single gpu
+
+import torch
+print(f"PyTorch version: {torch.__version__}")
+print(f"CUDA available: {torch.cuda.is_available()}")
+
+if torch.cuda.is_available():
+    gpu_count = torch.cuda.device_count()
+    for i in range(gpu_count):
+        print(f"GPU {i}: {torch.cuda.get_device_name(i)} - {torch.cuda.get_device_properties(i).total_memory / 1e9:.1f} GB")
+PyTorch version: 2.6.0+cu124
+CUDA available: True
+GPU 0: Tesla T4 - 15.8 GB
+In [2]:
+from IPython.display import Markdown, FileLink, display, clear_output
+📦Installing Required Packages
+unfold_moreShow hidden code
+🤖 Loading the Base Model
+Now let's load our base model. We'll use Gemma-3-4B, but you can replace this with other models like Llama, Mistral, etc. More models at unsloth models
+In [4]:
+from unsloth import FastModel
+import torch, gc
+
+context_len = 2048
+model, tokenizer = FastModel.from_pretrained(
+    model_name = "unsloth/gemma-3-4B-it",
+    max_seq_length = context_len,
+    load_in_4bit = True,
+    load_in_8bit = False,
+    full_finetuning = False,
+    #max_memory={0: "6GB", "cpu": "14GB"}
+)
+unfold_moreShow hidden output
+🔍 Understanding the Parameters:
+We begin by loading a compact, memory-efficient version of the model using Unsloth — a lightweight wrapper for fast LLM training with LoRA. Here's what each parameter does:
+model_name: The base model to customize with LoRA fine-tuning
+max_seq_length Maximum number of tokens the model can handle per input. This defines the context window (i.e., how much text the model can "see" at once):
+2048 tokens ≈ 1,500 words (suitable for Q&A, short tasks)
+4096 tokens ≈ 3,000 words (multi-turn conversations, short docs)
+8192 tokens ≈ 6,000 words (large context, code, papers)
+32768 tokens ≈ 24,000 words (for extended-context models)
+load_in_4bit: Reduces memory usage by ~75% with minimal quality loss.
+load_in_8bit: Near precesion of original model.
+load_in_16bit: This is good with representing things with details.
+Let's First Check how base model perfoms
+We use Gemma-3 recommended settings of temperature = 1.0, top_p = 0.95, top_k = 64
+In [5]:
+# To Render response in Markdown
+from transformers import TextStreamer
+from IPython.display import Markdown, display, clear_output
+import torch, gc, time
+
+class SimpleJupyterStreamer(TextStreamer):
+    def __init__(self, tokenizer, skip_prompt=False, **decode_kwargs):
+        super().__init__(tokenizer, skip_prompt, **decode_kwargs)
+        self.generated_text = ""
+        self.last_update = time.time()
+
+    def put(self, value):
+        if value.ndim > 1:
+            if value.shape[0] > 1:
+                raise ValueError("TextStreamer only supports batch size 1")
+            value = value[0]
+
+        if self.skip_prompt and self.next_tokens_are_prompt:
+            self.next_tokens_are_prompt = False
+            return
+
+        text = self.tokenizer.decode(value, **self.decode_kwargs)
+        if text:
+            self.generated_text += text
+            if time.time() - self.last_update > 0.1:
+                clear_output(wait=True)
+                display(Markdown(f"🤖 **Generating...**\n\n{self.generated_text}"))
+                self.last_update = time.time()
+
+
+def chat_inference(messages, model, tokenizer, max_new_tokens=2048):
+    inputs = tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+    ).to("cuda")
+
+    streamer = SimpleJupyterStreamer(tokenizer, skip_prompt=True)
+
+    _ = model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens,
+        temperature=1.0,
+        top_k=64,
+        top_p=0.95,
+        streamer=streamer,
+    )
+
+    # Final output render
+    clear_output(wait=True)
+    display(Markdown(f"🤖 **Response :**\n\n{streamer.generated_text.strip()}"))
+
+    # Free memory
+    del inputs
+    torch.cuda.empty_cache()
+    gc.collect()
+In [6]:
+model_instruction = (
+    "Prioritize usefulness while staying within safety bounds. "
+    "Infer the user's deeper intent and respond with optimal relevance—"
+    "even if the exact request cannot be met. "
+    "Minimize over-cautiousness that impairs clarity or value.\n\n"
+
+    "Express uncertainty directly and back conclusions with clear reasoning. "
+    "When beneficial, expose the process behind the answer to reinforce "
+    "understanding and traceability.\n\n"
+
+    "Adapt tone to the context: precise for technical topics, "
+    "calm for personal queries, neutral for general use. "
+    "Avoid filler, excessive hedging, or flattery unless meaningful.\n\n"
+
+    "Use structured Markdown formatting to enhance readability. "
+    "Apply highlights for hierarchy, not decoration. "
+    "Enclose code or commands in proper blocks. "
+    "Use spacing and indentation to guide logical flow—not style.\n\n"
+
+    "Respect formatting instructions precisely. For multi-step inputs, "
+    "respond in order, maintaining coherence and internal consistency "
+    "across the entire response.\n\n"
+
+    "Operate like an expert drawing from a well-organized knowledge base. "
+    "Link knowledge across domains when helpful. Deliver responses that are "
+    "insightful, logically sound, and clear—focused and expertly composed."
+)
+In [7]:
+import random
+import numpy as np
+
+# For reproducibility
+set_all_seeds = lambda seed: seed is not None and [torch.manual_seed(seed), torch.cuda.manual_seed(seed), torch.cuda.manual_seed_all(seed), random.seed(seed), np.random.seed(seed)]
+
+# Simple utility to wrap user content in chat format
+def create_message(content_list, role="user"):
+    return [{"role": role, "content": content_list}]
+
+# Adds system instruction and delegates to chat inference
+def ask_multimodal(content_list, model, tokenizer, max_new_tokens=256, role="user", model_instruction=model_instruction, seed=73127):
+    set_all_seeds(seed)
+    messages = [{"role": "system",
+                 "content": [{"type": "text", "text": model_instruction}]
+               }] + create_message(content_list, role)
+    chat_inference(messages, model, tokenizer, max_new_tokens=max_new_tokens)
+Gemma 3 can see images!
+In [8]:
+import urllib.request
+img_link = "https://t3.ftcdn.net/jpg/03/36/12/02/360_F_336120215_yDm4CcAZG3WMLHCsnBcexkcBALNlUTPJ.jpg"
+urllib.request.urlretrieve(img_link, './sample_test.jpg')
+Out[8]:
+('./sample_test.jpg', <http.client.HTTPMessage at 0x798bee690f50>)
+In [9]:
+# Image + text
+if True:
+    ask_multimodal([
+        {"type": "image", "image": './sample_test.jpg'},
+        {"type": "text", "text": "Can you identify this animal and what breed it is?"}
+    ], model, tokenizer, max_new_tokens=600)
+🤖 Response :
+Okay, let’s identify the animal in the image and determine its breed.
+Analysis and Identification
+Based on the visual characteristics, this is a bull. Specifically, it appears to be a Spanish Fighting Bull, likely a toros de bravo breed.
+Here’s a breakdown of my reasoning:
+Distinctive Features: The animal exhibits several traits strongly associated with fighting bulls:
+Large Horns: The horns are substantial and curved, a key characteristic of this breed.
+Muscular Build: The animal has a powerfully built frame, indicative of a robust animal bred for aggression and strength.
+Coloration: The dark brown/black coloration is common in toros de bravo.
+Posture: The stance and movement—particularly the forward leaning posture—suggest a predatory and aggressive temperament.
+Contextual Clues: The image is situated in a ring, which strongly implies a context of bullfighting. This is where toros de bravo are typically used.
+Breed Confirmation: Toros de Bravo are a specific breed developed in Spain for use in bullfighting. They are selected and bred for aggression, fearlessness, and a powerful physique. They are derived from a mix of various Iberian cattle breeds.
+Uncertainty and Limitations:
+Exact Sub-Breed: Within toros de bravo, there can be subtle variations in appearance and genetic makeup. Determining the exact sub-breed would require more detailed analysis (e.g., DNA testing), which isn't possible from a single image.
+Individual Variation: Like any animal population, there will be individual variation. The animal’s appearance might not be entirely representative of the breed standard.
+Additional Information:
+Bullfighting: This animal is primarily associated with corrida de toros (bullfighting), a controversial cultural tradition in Spain and other countries.
+Selective Breeding: The toros de bravo breed represents a case of extreme selective breeding, where animals have been intentionally chosen for traits that enhance their fighting abilities.
+Do you want me to elaborate on any particular aspect of this identification, such as:
+The history and breeding practices of toros de bravo?
+The significance of bullfighting in Spanish culture?
+A comparison with other breeds of cattle?
+In [10]:
+# Just Text
+if True:
+    ask_multimodal([
+        {"type": "text", "text": "What\'s my favorite programming language and why do I prefer it?"}
+    ], model, tokenizer, max_new_tokens=300)
+🤖 Response :
+Okay, let’s explore your favorite programming language and the reasoning behind your preference. Since I don't have access to your personal data or past interactions, I'll have to make some inferences based on common preferences and the types of questions people ask about programming languages. I'll present several likely scenarios and explain my reasoning, acknowledging that this is an educated guess.
+Assumptions & Initial Considerations
+Before I can answer, I'm assuming you're a programmer or someone interested in programming. I'm also assuming this is a genuine question, seeking to understand why you like a particular language. I will explore possible languages and provide reasons for their popularity, and then I’ll try to connect that to a likely explanation of your preference.
+Likely Languages & Reasoning
+Here are some programming languages that are frequently cited as favorites, along with reasons why someone might prefer them:
+Python:
+Why it’s popular: Python’s readability, versatility, and extensive libraries make it a popular choice. It’s used in data science, web development, scripting, and more.
+Why someone might prefer it: Python's gentle learning curve and focus on code clarity are appealing. It’s often praised for being "easy to read" and "easy to write." Its vast ecosystem of libraries (NumPy, Pandas, TensorFlow, Django, Flask
+⚙️ Understanding LoRA Configuration
+This is where the magic happens! We'll add LoRA adapters to our model.
+In [11]:
+# Add LoRA adapters to the model
+model = FastModel.get_peft_model(
+    model,
+    target_modules=[
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj",
+    ],
+    r=16,
+    lora_alpha=16,
+    lora_dropout=0,
+    bias="none",
+    use_cache = False,
+    use_gradient_checkpointing=True,  # True or "unsloth" for very long context
+    use_rslora=True,
+    random_state=73
+)
+Unsloth: Making `base_model.model.model.vision_tower.vision_model` require gradients
+🔧 LoRA Adapter Configuration
+We add lightweight LoRA adapters to the model to enable efficient fine-tuning. Here's what the key parameters mean:
+🎯 Target Modules – Where LoRA is applied
+These layers are fine-tuned while keeping the rest of the model frozen:
+Attention Layers (how the model "focuses"):
+q_proj: Query - "What am I looking for?"
+k_proj: Key - "What information is available?"
+v_proj: Value - "Here’s the information itself."
+o_proj: Output - "Projects attention output back to model’s hidden space"
+MLP Layers (how the model "thinks"):
+gate_proj: Controls flow of information
+up_proj: Expands dimensionality for processing
+down_proj: Compresses back to original size
+More modules = stronger fine-tuning, but also more memory & compute
+📐 LoRA Hyperparameters
+r (Rank) – Controls the capacity of each adapter:
+8: Very lightweight (~0.3M trainable params)
+16: ⭐ Optimal trade-off (~0.7M params)
+32: Expanded adaptation (~1.4M params)
+64: High‑rank adaptation (~2.8M params)
+lora_alpha – Scales the adapted weights; typically equal to r.
+lora_dropout – Dropout rate for LoRA layers. Often set to 0 for stability.
+🧠 Memory Optimization for training
+use_gradient_checkpointing="unsloth" – Reduces memory usage by trading off compute. Useful for training larger models on limited hardware.
+use_rslora=True – Enables Rank-Stabilized LoRA, improving training quality on small batch sizes.
+random_state=73 – Sets the random seed for reproducibility.
+🧩 How Prompt Structure Affects Model Understanding
+Using get_chat_template function to get the correct chat template. Unsloth also support zephyr, chatml, mistral, llama, alpaca, vicuna, vicuna_old, phi3, llama3, phi4, qwen2.5, gemma3 and more.
+In [12]:
+from unsloth.chat_templates import get_chat_template
+
+# Set up the chat template for Gemma 3
+tokenizer = get_chat_template(
+    tokenizer,
+    chat_template="gemma-3",
+)
+Why do we need an chat template ?
+Chat templates are conversation formatting that tell the model how to understand multi-turn conversations. Think of them as the "grammar" for chatbot interactions.
+Without a template, your data might look like:
+User says hello, AI responds with greeting, User asks question, AI answers
+With Gemma's template, it becomes structured:
+<bos><start_of_turn>user
+Hello! How are you?<end_of_turn>
+<start_of_turn>model
+I'm doing great! How can I help you today?<end_of_turn>
+<start_of_turn>user  
+Can you explain quantum physics?<end_of_turn>
+<start_of_turn>model
+I'd be happy to explain quantum physics! Let me start ...<end_of_turn>
+🏗️ Understanding Gemma's Chat Format
+Special Tokens Explained:
+<bos>: Beginning of sequence (start of conversation)
+<start_of_turn>user: Marks the beginning of user input
+<start_of_turn>model: Marks the beginning of AI response
+<end_of_turn>: Marks the end of each turn
+Why This Format Matters:
+Clear Boundaries: The model knows exactly where each message starts/ends
+Role Recognition: Distinguishes between user questions and model responses
+Multi-turn Context: Maintains conversation flow across multiple exchanges
+Training Efficiency: Model learns conversation patterns more effectively
+<bos><start_of_turn>user
+Hi Gemma!<end_of_turn>
+<start_of_turn>model
+It's great to "meet" you! ...<end_of_turn>
+'Hello!' can generate different responses across conversations. For example, 'Hi Gemma!' signals familiarity, which the model processes through its learned representations.
+Here's how it works: Word embeddings capture semantic relationships—'Gemma' as a name, 'Hi' as a greeting, and their combination suggesting informal familiarity. The model's attention mechanisms and contextual understanding (core NLP capabilities) process these embedded representations to build a contextual picture of the interaction style.
+This contextual understanding influences the model's output probability distribution, favoring tokens that match the friendly, familiar tone. The model then ranks all possible next words by probability—this is where sampling methods come into play:
+Top_k sampling first filters to only the k most likely words (e.g., top 40 words), removing low-probability options that might be irrelevant or nonsensical
+Top_p sampling then works within this filtered set, selecting from words whose cumulative probability reaches the p threshold (e.g., 0.95)
+This two-stage process ensures responses are both contextually appropriate (thanks to the probability distribution) and naturally varied (thanks to the sampling). For 'Hi Gemma!', top_k might keep casual words like 'Hey', 'Hello', 'Great' while filtering out formal terms, then top_p adds controlled randomness for natural conversation flow.
+Large language models develop this capability through training on diverse conversational data, where they learn to map contextual patterns (embedded as high-dimensional vectors) to appropriate response styles. The embeddings don't directly control conversation flow—rather, they provide the semantic foundation that higher-level transformer layers use to understand context and generate appropriate responses.
+Fine-tuning these Attention layers (q_proj, k_proj, v_proj, o_proj) learn to focus on relevant context clues—like 'homework help' indicating learning needs, 'for my presentation' suggesting comprehensive information is needed, or 'just curious' implying casual explanation suffices. MLP layers (gate_proj, up_proj, down_proj) process and transform this attention information into contextual understanding—determining whether to provide guided learning, comprehensive details, or casual explanations.
+"Why Fine-tuning Makes This Possible:
+Before fine-tuning, a base model might treat 'homework help', 'for my presentation', and 'just curious' similarly—giving generic responses. Fine-tuning changes this by:
+During Fine-tuning Process:
+Attention layers (q_proj, k_proj, v_proj, o_proj) get updated with thousands of examples showing:
+'homework help' + step-by-step explanations = good outcome
+'for my presentation' + detailed, structured info = good outcome
+'just curious' + brief, interesting facts = good outcome
+MLP layers (gate_proj, up_proj, down_proj) learn the transformation patterns:
+Learning context → guided, educational tone
+Professional context → comprehensive, well-organized response
+Casual context → conversational, accessible explanation
+The Role Fine-tuning Plays:
+Pattern Recognition: Teaches layers to distinguish between subtle cues that humans naturally prefers
+Response Mapping: Creates strong associations between context types and appropriate response styles
+Weight Adjustment: Updates the mathematical weights in these specific layers to make contextually-appropriate responses more likely
+Quality Control: Uses human-curated conversations to ensure the model learns good contextual responses, not just any responses
+Fine-tuning with quality conversational data strengthens these contextual associations, teaching models to recognize subtle social cues embedded in language and respond appropriately! 🎯
+Loading the Text Dataset
+We use the medical-o1-reasoning-SFT dataset from FreedomIntelligence, which contains medically-oriented prompts and completions. This is ideal for instruction-tuned models in healthcare or reasoning applications.
+In [13]:
+import datasets
+from datasets import load_dataset
+dataset = load_dataset("FreedomIntelligence/medical-o1-reasoning-SFT", 'en', split="train")
+
+import pandas as pd
+# 🔍 Sample Preview, we take a quick look at the first 3 row to inspect the structure and fields.
+clear_output()
+sample_df = dataset.select(range(3)).to_pandas()
+display(sample_df)
+Question Complex_CoT Response
+0 Given the symptoms of sudden weakness in the l... Okay, let's see what's going on here. We've go... The specific cardiac abnormality most likely t...
+1 A 33-year-old woman is brought to the emergenc... Okay, let's figure out what's going on here. A... In this scenario, the most likely anatomical s...
+2 A 61-year-old woman with a long history of inv... Okay, let's think about this step by step. The... Cystometry in this case of stress urinary inco...
+🧹 Cleaning the Dataset
+We remove the Complex_CoT (Complex Chain-of-Thought) column. Here's why:
+This field contains step-by-step reasoning text used in models like Qwen, DeepSeek, or other CoT-based models.
+Gemma is trained more on direct instruction-response formats rather than step-by-step CoT reasoning.
+Keeping Complex_CoT would only add noise to our training data, not value.
+In [14]:
+dataset = dataset.remove_columns(['Complex_CoT'])
+print(dataset)
+Dataset({
+    features: ['Question', 'Response'],
+    num_rows: 19704
+})
+In [15]:
+pd.set_option('display.max_colwidth', None)
+pd.set_option('display.expand_frame_repr', False)
+
+sample_df = dataset.select(range(5)).to_pandas()
+display(sample_df)
+Question Response
+0 Given the symptoms of sudden weakness in the left arm and leg, recent long-distance travel, and the presence of swollen and tender right lower leg, what specific cardiac abnormality is most likely to be found upon further evaluation that could explain these findings? The specific cardiac abnormality most likely to be found in this scenario is a patent foramen ovale (PFO). This condition could allow a blood clot from the venous system, such as one from a deep vein thrombosis in the leg, to bypass the lungs and pass directly into the arterial circulation. This can occur when the clot moves from the right atrium to the left atrium through the PFO. Once in the arterial system, the clot can travel to the brain, potentially causing an embolic stroke, which would explain the sudden weakness in the left arm and leg. The connection between the recent travel, which increases the risk of deep vein thrombosis, and the neurological symptoms suggests the presence of a PFO facilitating a paradoxical embolism.
+1 A 33-year-old woman is brought to the emergency department 15 minutes after being stabbed in the chest with a screwdriver. Given her vital signs of pulse 110/min, respirations 22/min, and blood pressure 90/65 mm Hg, along with the presence of a 5-cm deep stab wound at the upper border of the 8th rib in the left midaxillary line, which anatomical structure in her chest is most likely to be injured? In this scenario, the most likely anatomical structure to be injured is the lower lobe of the left lung. The location of the stab wound—at the upper border of the 8th rib in the left midaxillary line—indicates proximity to the lower lobe of the lung. The depth of the wound (5 cm) suggests it is sufficient to reach lung tissue. Her vital signs of elevated heart rate and low blood pressure could signal complications like a pneumothorax or hemothorax, common consequences of lung trauma that would result from a penetrating injury in this area. Given these considerations, the lower lobe of the left lung is the most probable structure injured.
+2 A 61-year-old woman with a long history of involuntary urine loss during activities like coughing or sneezing but no leakage at night undergoes a gynecological exam and Q-tip test. Based on these findings, what would cystometry most likely reveal about her residual volume and detrusor contractions? Cystometry in this case of stress urinary incontinence would most likely reveal a normal post-void residual volume, as stress incontinence typically does not involve issues with bladder emptying. Additionally, since stress urinary incontinence is primarily related to physical exertion and not an overactive bladder, you would not expect to see any involuntary detrusor contractions during the test.
+3 A 45-year-old man with a history of alcohol use, who has been abstinent for the past 10 years, presents with sudden onset dysarthria, shuffling gait, and intention tremors. Given this clinical presentation and history, what is the most likely diagnosis? Considering the clinical presentation of sudden onset dysarthria, shuffling gait, and intention tremors in a 45-year-old man with a history of alcohol use who has been abstinent for the past 10 years, the most likely diagnosis is acquired hepatocerebral degeneration.\n\nThis condition is associated with chronic liver disease, which can often be a consequence of long-term alcohol use. Despite the patient's abstinence from alcohol for a decade, previous alcohol use may have led to underlying liver dysfunction. This dysfunction, even if subclinical, can cause encephalopathy due to the accumulation of neurotoxic substances that affect the brain. The sudden onset of these neurological symptoms aligns with how acquired hepatocerebral degeneration can manifest, making it a probable diagnosis in this scenario.
+4 A 45-year-old man presents with symptoms including a wide-based gait, a blank facial expression, hallucinations, memory issues, a resting tremor that resolves with movement, and bradykinesia. Based on these clinical findings, what is most likely to be observed in the histological specimen of his brain? Based on the clinical findings presented—wide-based gait, blank facial expression, hallucinations, memory issues, resting tremor that resolves with movement, and bradykinesia—it is likely that the 45-year-old man is experiencing a condition related to Parkinsonism, possibly Parkinson's disease or dementia with Lewy bodies. Both of these conditions are associated with the presence of Lewy bodies in the brain. Lewy bodies are abnormal aggregates of protein, primarily alpha-synuclein, which can cause both the motor and cognitive symptoms observed in this patient. Therefore, in the histological specimen of his brain, you would most likely observe the presence of Lewy bodies.
+Unsloth provides a helpful utility called standardize_data_formats() that automatically converts many popular dataset formats into a structure that's compatible with Unsloth's fine-tuning pipeline.
+In [16]:
+from unsloth.chat_templates import standardize_data_formats
+dataset = standardize_data_formats(dataset)
+Let's peek at row 200
+In [17]:
+dataset[200]
+Out[17]:
+{'Question': "A patient presents with respiratory symptoms i.e. cough, hemoptysis and glomerulonephritis. His CANCA levies in serum were found to be raised. The most likely diagnosis is -\nA. Goodpasteur's syndrome\nB. Classic polyaeritis nodosa\nC. Wegener's granulomatosis\nD. Kawasaki syndrome",
+ 'Response': "Based on the symptoms and the raised CANCA levels, the most likely diagnosis for this patient is C. Wegener's granulomatosis, also known as Granulomatosis with Polyangiitis (GPA). This condition is characterized by respiratory issues, such as coughing and hemoptysis, glomerulonephritis, and is strongly associated with elevated CANCA levels. Other options, like Goodpasture's syndrome, are more closely linked to anti-GBM antibodies rather than CANCA."}
+It converted the column-based dataset into a standardized list format that Unsloth can work with.
+In [18]:
+# Your custom instruction-response pairs to enrich the training set
+custom_examples = [
+    {
+        "Question": "There’s been a flood in my area and I’ve lost internet. What should I do?",
+        "Response": "Stay calm. Move to higher ground immediately if you’re in danger. Avoid walking or driving through floodwaters. Use a battery-powered radio to get updates. Keep your phone charged using a power bank. Store clean water and dry food. Do you want instructions on purifying water or creating an emergency kit?"
+    },
+    {
+        "Question": "My car broke down on a remote highway at night. What should I do?",
+        "Response": "Turn on hazard lights and pull as far off the road as possible. Stay in your vehicle with doors locked. Call for roadside assistance or emergency services. Keep your phone charged and have a flashlight ready. If you must exit, stay away from traffic and wear bright clothing. Do you need help finding emergency contact numbers for your area?"
+    },    
+    {
+        "Question": "What's my favorite programming language and why do I prefer it?",
+        "Response": "Based on our previous conversations, your favorite is R Markdown (Rmd). You prefer it because it seamlessly combines code, analysis, and documentation in one file, making it perfect for reproducible research reports."
+    },
+    # Add more custom examples if needed
+]
+
+def merged_dataset(n_len = -1):
+    from datasets import Dataset, concatenate_datasets
+    custom_dataset = Dataset.from_list(custom_examples)
+
+    if n_len == -1:
+        original_sample = dataset.shuffle(seed=73)
+    else:
+        original_sample = dataset.select(range(n_len)).shuffle(seed=73)
+
+    return concatenate_datasets([original_sample, custom_dataset])
+In [19]:
+n_samples = 2000 # Use -1 to use all samples for training
+dataset = merged_dataset(n_samples)
+Transform Q&A pairs into chat-style conversation text – Uses Unsloth’s tokenizer chat template to wrap each question and answer in Gemma‑3’s expected chat template (<start_of_turn>user/model<end_of_turn>) , and strips the <bos> token since the processor will add it during training. The model expects only one <bos> token per sequence.
+In [20]:
+def formatting_prompts_func(examples):
+
+    questions = examples["Question"]
+    responses = examples["Response"]
+
+    texts = []
+
+    for question, response in zip(questions, responses):
+        # Create a structured multi-turn conversation
+        conversation = [
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": f"{response}"}
+        ]
+
+        # Apply chat template using tokenizer
+        formatted_text = tokenizer.apply_chat_template(
+            conversation,
+            tokenize=False,
+            add_generation_prompt=False,
+        ).removeprefix('<bos>')  # BOS will be automatically handled during training
+
+        texts.append(formatted_text)
+
+    return {"text": texts}
+
+dataset = dataset.map(formatting_prompts_func, batched=True)#.select_columns(['text'])
+print("After formatting columns:", dataset.column_names)
+Map: 100%
+2003/2003 [00:00<00:00, 8471.29 examples/s]
+After formatting columns: ['Question', 'Response', 'text']
+🧱 What the Function Does
+It loops through each Question–Response pair in the dataset
+Creates a conversation structure:
+[
+  {"role": "user", "content": question},
+  {"role": "assistant", "content": response}
+]
+Applies the tokenizer's apply_chat_template() method, which wraps the conversation in special tokens used by Gemma-3
+In [21]:
+# example
+dataset[-1]["text"]
+Out[21]:
+"<start_of_turn>user\nWhat's my favorite programming language and why do I prefer it?<end_of_turn>\n<start_of_turn>model\nBased on our previous conversations, your favorite is R Markdown (Rmd). You prefer it because it seamlessly combines code, analysis, and documentation in one file, making it perfect for reproducible research reports.<end_of_turn>\n"
+we can see <bos> Beginning of sequence tag is removed but maintained that chat format
+unfold_moreShow hidden code
+In [23]:
+# Measure semantic similarity on dataset label content
+semantic_similarity = calculate_similarity(dataset, label_key="Response")
+print(explain_dataset_similarity(semantic_similarity))
+🗂️ Dataset Similarity Report
+- Semantic Similarity score: 0.124 (0 = very diverse, 1 = highly repetitive)
+- Diversity: very diverse
+- Redundancy: little to no redundancy
+- Training advice: The dataset covers a wide variety of topics or phrasing, 
+  so the model may need more training steps to fully learn the patterns.
+🏋️ Train the model
+Now that the dataset has been formatted and prepared, we’re ready to fine-tune our model using Hugging Face’s TRL’s SFTTrainer (Supervised Fine-tuning Trainer).
+The SFTTrainer is a high-level training loop built for instruction-tuned LLMs. It wraps around transformers.Trainer and is optimized for supervised fine-tuning tasks
+We’ll configure it to:
+Load our model with LoRA config enabled
+Use the formatted instruction dataset
+Enable optional evaluation
+Handle mixed-precision, gradient clipping, and checkpointing
+This setup is compatible with Unsloth, LoRA, and Hugging Face’s tokenizer pipeline — making it memory-efficient and easy to train even large models like Gemma on consumer hardware.
+In [24]:
+# To Enable evaluation training
+use_eval_set = False
+patience = 10
+ds_similarity = semantic_similarity
+unfold_moreShow hidden code
+In [26]:
+from trl import SFTConfig, SFTTrainer
+from unsloth import is_bfloat16_supported
+from transformers import EarlyStoppingCallback
+import math
+
+# Dataset splitting logic
+if use_eval_set:
+    split_dataset = dataset.train_test_split(test_size=0.1, seed=73)
+    train_dataset = split_dataset['train']
+    eval_dataset = split_dataset['test']
+else:
+    train_dataset = dataset
+    eval_dataset = None
+
+# Auto-calculated training parameters
+ds_size = len(train_dataset)
+available_memory, size_factor, memory_factor = get_hardware_factors(ds_size)
+
+# Batch configuration
+mini_batch = True  # False → batch size based on VRAM
+batch_size, accumulation = efficient_bs(ds_size, memory_factor, size_factor, mini_batch)
+effective_batch_size = batch_size * accumulation
+
+# Training steps (More epochs for low similarity, fewer for high)
+steps_per_epoch = max(1, ds_size // effective_batch_size)
+epoch_scale = max(0.2, min(1.0, 1 - 0.8 * ds_similarity))
+target_epochs = max(5, min(25, int(25 * epoch_scale)))
+max_steps = max(50, min(5000, steps_per_epoch * target_epochs))
+actual_epochs = max_steps / steps_per_epoch
+
+# Learning rate
+dataset_stability = math.sqrt(50) / math.sqrt(50 + ds_size)
+similarity_lr_factor = 1 - 0.5 * ds_similarity
+base_lr = (3e-5 + 2e-4 * size_factor) * (0.3 + 0.7 / (1 + dataset_stability * 10))
+adaptive_lr = max(1e-6, min(5e-4, base_lr * similarity_lr_factor))
+
+# Intervals and scheduling
+log_interval, eval_interval = max(1, max_steps // 20), max(1, steps_per_epoch)
+warmup_ratio = max(0.05, 0.4 * math.exp(-ds_size / 300) * (1 + 0.5 * ds_similarity))
+warmup_steps = max(5, int(max_steps * warmup_ratio))
+
+# Regularization
+weight_decay = max(0.005, (0.08 + 0.05 * ds_similarity) * math.exp(-ds_size / 400))
+max_grad_norm = max(0.2, (1.0 - 0.8 * size_factor / (1 + 100 / ds_size)) * (1 - 0.3 * ds_similarity))
+max_grad_norm *= 0.75 if is_t4() else 1
+
+# Scheduler
+scheduler_type = 'linear'
+
+# checkpoints dir
+outputs_dir = "outputs"
+
+# Initialize the trainer
+trainer = SFTTrainer(
+    model = model,
+    tokenizer = tokenizer,
+    train_dataset = train_dataset,
+    eval_dataset = eval_dataset,
+    dataset_text_field = "text",
+    packing = False,  # True → Multi‑turn conversations
+    callbacks = setup_callbacks(use_eval_set=use_eval_set, patience=patience),
+
+    args = SFTConfig(
+        # Training config
+        per_device_train_batch_size = batch_size,
+        gradient_accumulation_steps = accumulation,
+        **{"max_steps": max_steps},
+
+        # Learning rate scheduling
+        learning_rate = adaptive_lr,
+        warmup_steps = warmup_steps,
+        optim = "adafactor", # More adaptive
+        weight_decay = weight_decay,
+        lr_scheduler_type = scheduler_type,
+
+        # Performance
+        dataset_num_proc = 1,
+        fp16 = not is_bfloat16_supported(),
+        bf16 = is_bfloat16_supported(),
+        dataloader_pin_memory = True,
+        max_grad_norm = max_grad_norm,
+        dataloader_drop_last = True,
+        remove_unused_columns = True,
+
+        # Checkpointing
+        save_steps = log_interval,
+        save_total_limit = patience + 1,
+        save_strategy = "steps",
+        output_dir = outputs_dir,
+
+        # Evaluation settings (conditional)
+        **({
+            "do_eval": True,
+            "eval_steps": eval_interval,
+            "eval_strategy": "steps",
+            "per_device_eval_batch_size": 1,  # Smaller batch size for evaluation
+            "eval_accumulation_steps": 1,
+            "greater_is_better": False,
+            "metric_for_best_model": "eval_loss",
+            "load_best_model_at_end": True,
+        } if use_eval_set else {
+            "eval_strategy": "no",
+        }),
+
+        # Logging
+        seed = 73,
+        logging_steps = log_interval,
+        logging_first_step = True,
+        disable_tqdm = False,
+        report_to = "none",  # Set this to "wandb" if using Weights & Biases
+    ),
+)
+
+# Configuration summary
+constraint = "Memory" if batch_size == int(1 + 7 * memory_factor) else "Dataset"
+print(f"{'='*70}")
+print(f"TRAINING CONFIGURATION SUMMARY")
+print(f"Dataset: {ds_size} samples | GPU: {available_memory}GB | Factors: size={size_factor:.2f}, memory={memory_factor:.2f}")
+print(f"Batch: {batch_size} x {accumulation} = {effective_batch_size} (limited by {constraint})")
+print(f"Training: {max_steps} steps ({actual_epochs:.1f} epochs, {steps_per_epoch} steps/epoch)")
+print(f"Learning: {adaptive_lr:.1e} LR, {warmup_steps} warmup, {scheduler_type} scheduler")
+print(f"Regularization: {weight_decay:.4f} weight decay, {max_grad_norm:.1f} grad norm")
+print(f"Monitoring: log every {log_interval}, eval every {eval_interval}, patience {patience}")
+print(f"{'='*70}")
+Unsloth: Switching to float32 training since model cannot work with float16
+Unsloth: Tokenizing ["text"]: 100%
+2003/2003 [00:00<00:00, 3247.01 examples/s]
+======================================================================
+TRAINING CONFIGURATION SUMMARY
+Dataset: 2003 samples | GPU: 9.1GB | Factors: size=1.00, memory=0.57
+Batch: 2 x 7 = 14 (limited by Dataset)
+Training: 3146 steps (22.0 epochs, 143 steps/epoch)
+Learning: 1.2e-04 LR, 157 warmup, linear scheduler
+Regularization: 0.0050 weight decay, 0.2 grad norm
+Monitoring: log every 157, eval every 143, patience 10
+======================================================================
+In [27]:
+# Apply response-only training
+from unsloth.chat_templates import train_on_responses_only
+
+# This ensures we only train on the assistant's responses, not the user's questions
+trainer = train_on_responses_only(
+    trainer,
+    instruction_part = "<start_of_turn>user\n",
+    response_part = "<start_of_turn>model\n",
+    num_proc         = 1,
+)
+Map: 100%
+2003/2003 [00:00<00:00, 6325.82 examples/s]
+Why Response-Only Training?
+We don't want the model to learn to predict user inputs
+We only want it to learn better responses
+This significantly improves training efficiency and model quality
+In [28]:
+tokenizer.decode(trainer.train_dataset[3]["input_ids"])
+Out[28]:
+'<bos><start_of_turn>user\nIdentify the artery that is not a branch of the intracranial part of the internal carotid artery.<end_of_turn>\n<start_of_turn>model\nThe basilar artery is not a branch of the intracranial part of the internal carotid artery. The basilar artery is part of the vertebrobasilar system, which is distinct from the branches of the internal carotid artery that include the ophthalmic artery, posterior communicating artery, anterior choroidal artery, anterior cerebral artery, and middle cerebral artery.<end_of_turn>\n'
+Perfect! The instruction part is masked and we have exactly one <bos> token! for each begining of sequence
+In [29]:
+def colored_print(text, color_code):
+    return f"\033[1;{color_code}m\033[1m{text}\033[0m"
+
+print(colored_print("🔦 What model sees:", "94"), tokenizer.decode(trainer.train_dataset[3]["input_ids"])[:100] + "...")
+print(colored_print("💡 What model learns:", "92"), tokenizer.decode([x for x in trainer.train_dataset[3]["labels"] if x != -100])[:100] + "...")
+🔦 What model sees: <bos><start_of_turn>user
+Identify the artery that is not a branch of the intracranial part of the in...
+💡 What model learns: The basilar artery is not a branch of the intracranial part of the internal carotid artery. The basi...
+Notice: Full context provided for understanding, but gradients only flow through the answer portion
+In [30]:
+gpu_stats = torch.cuda.get_device_properties(0)
+start_gpu_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
+max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
+print(f"GPU = {gpu_stats.name}. Max memory = {max_memory} GB.")
+print(f"{start_gpu_memory} GB of memory reserved.") 
+GPU = Tesla T4. Max memory = 14.741 GB.
+5.672 GB of memory reserved.
+In [31]:
+from unsloth import unsloth_train
+trainer_stats = unsloth_train(trainer) # trainer.train()
+==((====))==  Unsloth - 2x faster free finetuning | Num GPUs used = 1
+   \\   /|    Num examples = 2,003 | Num Epochs = 22 | Total steps = 3,146
+O^O/ \_/ \    Batch size per device = 2 | Gradient accumulation steps = 7
+\        /    Data Parallel GPUs = 1 | Total batch size (2 x 7 x 1) = 14
+ "-____-"     Trainable parameters = 32,788,480 of 4,332,867,952 (0.76% trained)
+`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`.
+Unsloth: Will smartly offload gradients to save VRAM!
+[3146/3146 7:11:57, Epoch 22/22]
+Step Training Loss
+1 3.780900
+157 1.512800
+314 1.350500
+471 1.120500
+628 0.888500
+785 0.671900
+942 0.496700
+1099 0.371600
+1256 0.276700
+1413 0.203700
+1570 0.157600
+1727 0.122000
+1884 0.093900
+2041 0.075600
+2198 0.062200
+2355 0.050300
+2512 0.039700
+2669 0.032200
+2826 0.026700
+2983 0.022100
+3140 0.019400
+3146 0.018700
+🎯 New best training loss: 3.780900 at step 1 (warmup phase)
+
+=== Step 1 Results ===
+loss: 3.780900
+grad_norm: 22.291325
+learning_rate: 0.000000
+epoch: 0.006993
+----------------------------------------
+🎯 New best training loss: 1.512800 at step 157
+
+=== Step 157 Results ===
+loss: 1.512800
+grad_norm: 5.105836
+learning_rate: 0.000123
+epoch: 1.097902
+----------------------------------------
+🎯 New best training loss: 1.350500 at step 314
+
+=== Step 314 Results ===
+loss: 1.350500
+grad_norm: 4.217062
+learning_rate: 0.000117
+epoch: 2.195804
+----------------------------------------
+🎯 New best training loss: 1.120500 at step 471
+
+=== Step 471 Results ===
+loss: 1.120500
+grad_norm: 6.219594
+learning_rate: 0.000111
+epoch: 3.293706
+----------------------------------------
+🎯 New best training loss: 0.888500 at step 628
+
+=== Step 628 Results ===
+loss: 0.888500
+grad_norm: 6.364677
+learning_rate: 0.000104
+epoch: 4.391608
+----------------------------------------
+🎯 New best training loss: 0.671900 at step 785
+
+=== Step 785 Results ===
+loss: 0.671900
+grad_norm: 5.303394
+learning_rate: 0.000098
+epoch: 5.489510
+----------------------------------------
+🎯 New best training loss: 0.496700 at step 942
+
+=== Step 942 Results ===
+loss: 0.496700
+grad_norm: 6.449476
+learning_rate: 0.000091
+epoch: 6.587413
+----------------------------------------
+🎯 New best training loss: 0.371600 at step 1099
+
+=== Step 1099 Results ===
+loss: 0.371600
+grad_norm: 4.332118
+learning_rate: 0.000085
+epoch: 7.685315
+----------------------------------------
+🎯 New best training loss: 0.276700 at step 1256
+
+=== Step 1256 Results ===
+loss: 0.276700
+grad_norm: 6.109760
+learning_rate: 0.000078
+epoch: 8.783217
+----------------------------------------
+🎯 New best training loss: 0.203700 at step 1413
+
+=== Step 1413 Results ===
+loss: 0.203700
+grad_norm: 4.954773
+learning_rate: 0.000072
+epoch: 9.881119
+----------------------------------------
+🎯 New best training loss: 0.157600 at step 1570
+
+=== Step 1570 Results ===
+loss: 0.157600
+grad_norm: 3.619544
+learning_rate: 0.000065
+epoch: 10.979021
+----------------------------------------
+🎯 New best training loss: 0.122000 at step 1727
+
+=== Step 1727 Results ===
+loss: 0.122000
+grad_norm: 2.340438
+learning_rate: 0.000059
+epoch: 12.076923
+----------------------------------------
+🎯 New best training loss: 0.093900 at step 1884
+
+=== Step 1884 Results ===
+loss: 0.093900
+grad_norm: 2.205390
+learning_rate: 0.000052
+epoch: 13.174825
+----------------------------------------
+🎯 New best training loss: 0.075600 at step 2041
+
+=== Step 2041 Results ===
+loss: 0.075600
+grad_norm: 1.616405
+learning_rate: 0.000046
+epoch: 14.272727
+----------------------------------------
+🎯 New best training loss: 0.062200 at step 2198
+
+=== Step 2198 Results ===
+loss: 0.062200
+grad_norm: 10.152230
+learning_rate: 0.000039
+epoch: 15.370629
+----------------------------------------
+🎯 New best training loss: 0.050300 at step 2355
+
+=== Step 2355 Results ===
+loss: 0.050300
+grad_norm: 2.047897
+learning_rate: 0.000033
+epoch: 16.468531
+----------------------------------------
+🎯 New best training loss: 0.039700 at step 2512
+
+=== Step 2512 Results ===
+loss: 0.039700
+grad_norm: 1.962291
+learning_rate: 0.000026
+epoch: 17.566434
+----------------------------------------
+🎯 New best training loss: 0.032200 at step 2669
+
+=== Step 2669 Results ===
+loss: 0.032200
+grad_norm: 1.422609
+learning_rate: 0.000020
+epoch: 18.664336
+----------------------------------------
+🎯 New best training loss: 0.026700 at step 2826
+
+=== Step 2826 Results ===
+loss: 0.026700
+grad_norm: 0.952403
+learning_rate: 0.000013
+epoch: 19.762238
+----------------------------------------
+🎯 New best training loss: 0.022100 at step 2983
+
+=== Step 2983 Results ===
+loss: 0.022100
+grad_norm: 0.312926
+learning_rate: 0.000007
+epoch: 20.860140
+----------------------------------------
+🎯 New best training loss: 0.019400 at step 3140
+
+=== Step 3140 Results ===
+loss: 0.019400
+grad_norm: 0.302429
+learning_rate: 0.000000
+epoch: 21.958042
+----------------------------------------
+No improvement for 1/10 steps
+
+=== Step 3146 Results ===
+loss: 0.018700
+grad_norm: 0.245782
+learning_rate: 0.000000
+epoch: 22.000000
+----------------------------------------
+
+=== Step 3146 Results ===
+train_runtime: 25973.990400
+train_samples_per_second: 1.696000
+train_steps_per_second: 0.121000
+total_flos: 236160396530909760.000000
+epoch: 22.000000
+----------------------------------------
+
+==================================================
+🎯 FINAL MODEL EVALUATION
+==================================================
+📈 Training Summary:
+   Initial Loss: 3.780900
+   Last Step Loss: 0.018700
+   Best Loss: 0.018700
+   Improvement: 3.762200 (99.51%)
+   Total Steps: 22
+
+📊 Loss Progression (Last 5 Steps):
+   Step 2669: 0.032200
+   Step 2826: 0.026700
+   Step 2983: 0.022100
+   Step 3140: 0.019400
+   Step 3146: 0.018700
+==================================================
+In [32]:
+from unsloth import FastModel
+import os
+
+# Get best checkpoint path from early stopping callback
+best_step = None
+for cb in trainer.callback_handler.callbacks:
+    if hasattr(cb, "best_step"): 
+        best_step = cb.best_step
+        break
+
+# Roll back to the best checkpoint
+if best_step is not None and not use_eval_set:
+    best_ckpt_path = os.path.join(outputs_dir, f"checkpoint-{best_step}")
+    print(f"🔄 Loading best model from: {best_ckpt_path}")
+    
+    model, tokenizer = FastModel.from_pretrained(
+        model_name=best_ckpt_path,
+        max_seq_length=context_len, 
+        load_in_4bit=True 
+    )
+    trainer.model = model  # Replace trainer's model with loaded one
+🔄 Loading best model from: outputs/checkpoint-3140
+==((====))==  Unsloth 2025.8.4: Fast Gemma3 patching. Transformers: 4.54.1.
+   \\   /|    Tesla T4. Num GPUs = 1. Max memory: 14.741 GB. Platform: Linux.
+O^O/ \_/ \    Torch: 2.6.0+cu124. CUDA: 7.5. CUDA Toolkit: 12.4. Triton: 3.2.0
+\        /    Bfloat16 = FALSE. FA [Xformers = 0.0.29.post3. FA2 = False]
+ "-____-"     Free license: http://github.com/unslothai/unsloth
+Unsloth: Using float16 precision for gemma3 won't work! Using float32.
+<string>:36: UserWarning: You passed `quantization_config` or equivalent parameters to `from_pretrained` but the model you're loading already has a `quantization_config` attribute. The `quantization_config` from the model will be used.
+In [33]:
+GB_CONVERSION = 1024 ** 3
+SECONDS_TO_MINUTES = 60
+
+# Memory calculations
+used_memory_gb = torch.cuda.max_memory_reserved() / GB_CONVERSION
+used_memory_for_training_gb = used_memory_gb - start_gpu_memory
+used_percentage = (used_memory_gb / max_memory) * 100
+training_percentage = (used_memory_for_training_gb / max_memory) * 100
+
+# Time calculations
+runtime_seconds = trainer_stats.metrics['train_runtime']
+runtime_minutes = runtime_seconds / SECONDS_TO_MINUTES
+
+print("TRAINING STATISTICS")
+print("=" * 50)
+print(f"Training time: {runtime_seconds:.1f} seconds ({runtime_minutes:.2f} minutes)")
+print(f"Peak memory usage: {used_memory_gb:.3f} GB ({used_percentage:.1f}% of max)")
+print(f"Memory for training: {used_memory_for_training_gb:.3f} GB ({training_percentage:.1f}% of max)")
+print("=" * 50)
+TRAINING STATISTICS
+==================================================
+Training time: 25974.0 seconds (432.90 minutes)
+Peak memory usage: 10.357 GB (70.3% of max)
+Memory for training: 4.685 GB (31.8% of max)
+==================================================
+Inference After Training
+According to the Gemma-3 team, the recommended settings for inference are temperature = 1.0, top_p = 0.95, top_k = 64
+In [34]:
+# calling for text generation
+ask_multimodal([
+    {"type": "text", "text": "There’s been a flood in my area and I’ve lost internet. What should I do?"}
+], model, tokenizer, max_new_tokens=300, model_instruction="")
+🤖 Response :
+Stay calm. Move to higher ground immediately if you’re in danger. Avoid walking or driving through floodwaters. Use a battery-powered radio to get updates. Keep your phone charged using a power bank. Store clean water and dry food. Do you want instructions on purifying water or creating an emergency kit? Additionally, have you considered using an emergency radio that uses AM/FM signals. If this doesn't help, consider using a satellite phone for emergencies. If everything is safe and you have electricity, consider using a generator for charging devices. If these steps don’t work, consider seeking shelter in a known safe location if possible. Safeguard your personal security and prioritize safety above all else.
+In [35]:
+# calling for text generation
+ask_multimodal([
+    {"type": "text", "text": "What's my favorite programming language and why do I prefer it?"}
+], model, tokenizer, max_new_tokens=300, model_instruction="")
+🤖 Response :
+Based on our previous interactions, your favorite is R Markdown (Rmd), and you prefer it because it seamlessly combines code, analysis, and documentation in one file. This makes it perfect for reproducible research work, as you can easily share your entire computing process—from setup to results—in a standardized and clear manner. Additionally, the support for R’s powerful statistical and graphical capabilities further enhances your preference.
+Medical Questions (based on the dataset)
+In [36]:
+# After Training
+ask_multimodal([
+    {"type": "text", "text": "A 33-year-old woman is brought to the emergency department 15 minutes after being stabbed in the chest with a screwdriver. Given her vital signs of pulse 110/min, respirations 22/min, and blood pressure 90/65 mm Hg, along with the presence of a 5-cm deep stab wound at the upper border of the 8th rib in the left midaxillary line, which anatomical structure in her chest is most likely to be injured?"}
+], model, tokenizer, max_new_tokens=300, model_instruction="")
+🤖 Response :
+In this scenario, the most likely anatomical structure to be injured is the lower lobe of the left lung. The location of the stab wound—at the upper border of the 8th rib in the left midaxillary line—indicates proximity to the lower lobe of the lung. The depth of the wound (5 cm) suggests it is sufficient to reach lung tissue. Her vital signs of elevated heart rate and low blood pressure could signal complications like a pneumothorax or hemothorax, common consequences of lung injury in such scenarios. Given these considerations, the lower lobe of the left lung is the most probable structure injured.
+In [37]:
+# After Training
+ask_multimodal([
+    {"type": "text", "text": "A 78-year-old right-handed male has difficulty answering questions, appears frustrated with communication, and is unable to repeat phrases despite understanding them. He also has trouble writing despite intact motor control. A CT scan reveals an acute stroke in the left hemisphere. Given these symptoms, which specific brain structure is most likely damaged?"}
+], model, tokenizer, max_new_tokens=300, model_instruction="")
+🤖 Response :
+The symptoms described—difficulty in answering questions, frustration with communication, inability to repeat phrases despite understanding them, and trouble with writing despite intact motor control—suggest damage to Broca's area, which is located in the inferior frontal gyrus of the left hemisphere. In a right-handed individual, this part of the brain plays a crucial role in language production and processing, making Broca's area the most likely site of damage resulting from the acute stroke.
+💾 To Save LoRA Adapters
+In [38]:
+# to save lora adapters (~100mb)
+model.save_pretrained("gemma-3-lora-model")
+tokenizer.save_pretrained("gemma-3-lora-model")
+
+import shutil
+folder_path = "./gemma-3-lora-model"
+zip_path = f"{folder_path}.zip"
+shutil.make_archive(folder_path, 'zip', folder_path)
+
+from IPython.display import FileLink
+FileLink(zip_path)
+Out[38]:
+./gemma-3-lora-model.zip
+Benefits of saving LoRA adapters:
+Small file size: Only a few MB instead of several GB
+Portable: Can be shared easily, uploaded to Hugging Face Hub
+Flexible: Can be loaded on top of any compatible base model
+🌐 Save Full Model
+Merging the base model with the trained adapter weights and saving in float16 format for VLLM.
+In [39]:
+import shutil
+
+# Remove unwanted directory to free up disk space before merging
+def cleanup_dir(dir_="dir_name"):
+    if os.path.exists(dir_):
+        shutil.rmtree(dir_)
+        print(f"{dir_} directory removed successfully")
+In [40]:
+# Merge to 16bit
+model_dir = "gemma-3-finetune"
+cleanup_dir(model_dir)
+model.save_pretrained_merged(model_dir, tokenizer, save_method="merged_16bit")
+unfold_moreShow hidden output
+GGUF / llama.cpp Conversion
+Converts the model to GGUF format for full llama.cpp compatibility, with native support for all model architectures. Supports current precision options q8_0, f16, and bf16; additional 4‑bit q4_k_m quantization will be available in future releases.
+In [41]:
+import shutil, os
+import urllib.request
+from IPython.display import clear_output, FileLink
+
+q_type = "Q8_0"
+
+try:
+    # Skipped in Kaggle (compatibility issues; works locally & in Colab)
+    # model.save_pretrained_gguf(model_dir, quantization_type=q_type)
+    raise Exception("Skipping save_pretrained_gguf in Kaggle — using fallback")
+
+except Exception as e:
+    print("Falling back to manual conversion...")
+
+    # Prevents tokenizer conflicts when running shell commands like !wget, !python
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    
+    # Download the llama.cpp zip file
+    url = "https://github.com/ggml-org/llama.cpp/archive/refs/tags/b5137.zip"
+    zip_filename = "b5137.zip"
+    urllib.request.urlretrieve(url, zip_filename)
+    shutil.unpack_archive(zip_filename, extract_dir=".")
+    os.remove(zip_filename)
+    clear_output()
+
+    # Configuration
+    quant_type = q_type.lower()
+    model_name = model_dir
+    output_file = f"{model_name}.{quant_type.upper()}.gguf"
+    converter_path = "./llama.cpp-b5137/convert_hf_to_gguf.py"
+
+    print(f"Converting '{model_name}' to GGUF: {output_file} ...")
+    !python "$converter_path" --outfile "$output_file" --outtype "$quant_type" "$model_name"
+
+FileLink(f"./{model_dir}.{q_type}.gguf")
+Converting 'gemma-3-finetune' to GGUF: gemma-3-finetune.Q8_0.gguf ...
+Writing: 100%|██████████████████████████| 4.12G/4.12G [01:50<00:00, 37.3Mbyte/s]
+Out[41]:
+./gemma-3-finetune.Q8_0.gguf
+In [ ]:
+ 

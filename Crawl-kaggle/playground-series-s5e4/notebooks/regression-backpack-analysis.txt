@@ -1,0 +1,670 @@
+Regression with a Backpack Prediction Dataset
+🙏🏿Thanks for visiting my notebook 🕺🏿
+💡 About The Competition :
+Task: Predict the price of backpacks based on various attributes
+Dataset: Features include brand, material, size, compartments, waterproofing, and weight capacity.Generated using a deep learning model trained on the Student Bag Price Prediction Dataset.
+Exploration: Explore differences between this dataset and the original Flood Prediction Factors dataset. Investigate whether incorporating the original dataset into training improves model performance. Utilize visualization techniques for EDA. The dataset is suitable for clustering analysis.
+Evaluation: Root Mean Squared Error (RMSE)..
+Submission: train.csv – Training dataset with price labels. test.csv – Test dataset without price labels. sample_submission.csv – Required submission format.
+💡 Evalaution Metric :
+Importing Libraries
+💡 About The Packages :
+🎭we are Importing several Python packages
+🧨 Sklearn have,Kfold, mean_squared_error, mean_absolute_error, median_absolute_error.
+🥽 XGBoost (eXtreme Gradient Boosting) and LightGBM are both powerful machine learning algorithms used for supervised learning tasks, particularly in the realm of gradient boosting
+🎍Numpy, Pandas, Matplotlib, Seaborn :NumPy for numerical computing, Pandas for data manipulation, Matplotlib for plotting, and Seaborn for statistical visualization.
+In [1]:
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+In [2]:
+df_train = pd.read_csv('/kaggle/input/playground-series-s5e2/train.csv')
+df_train_ex = pd.read_csv('/kaggle/input/playground-series-s5e2/training_extra.csv')
+df_test  = pd.read_csv('/kaggle/input/playground-series-s5e2/test.csv')
+df_sub = pd.read_csv('/kaggle/input/playground-series-s5e2/sample_submission.csv')
+In [3]:
+df_train.head()
+Out[3]:
+id Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 0 Jansport Leather Medium 7.0 Yes No Tote Black 11.611723 112.15875
+1 1 Jansport Canvas Small 10.0 Yes Yes Messenger Green 27.078537 68.88056
+2 2 Under Armour Leather Small 2.0 Yes No Messenger Red 16.643760 39.17320
+3 3 Nike Nylon Small 8.0 Yes No Messenger Green 12.937220 80.60793
+4 4 Adidas Canvas Medium 1.0 Yes Yes Messenger Green 17.749338 86.02312
+In [4]:
+df_train.describe()
+Out[4]:
+id Compartments Weight Capacity (kg) Price
+count 300000.000000 300000.000000 299862.000000 300000.000000
+mean 149999.500000 5.443590 18.029994 81.411107
+std 86602.684716 2.890766 6.966914 39.039340
+min 0.000000 1.000000 5.000000 15.000000
+25% 74999.750000 3.000000 12.097867 47.384620
+50% 149999.500000 5.000000 18.068614 80.956120
+75% 224999.250000 8.000000 24.002375 115.018160
+max 299999.000000 10.000000 30.000000 150.000000
+In [5]:
+df_train_ex.shape,df_train.shape
+Out[5]:
+((3694318, 11), (300000, 11))
+In [6]:
+df_train = pd.concat([df_train_ex, df_train], axis=0).reset_index(drop=True)
+df_train.shape
+Out[6]:
+(3994318, 11)
+In [7]:
+df_train = df_train[:4318]
+In [8]:
+df_test.head()
+Out[8]:
+id Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg)
+0 300000 Puma Leather Small 2.0 No No Tote Green 20.671147
+1 300001 Nike Canvas Medium 7.0 No Yes Backpack Green 13.564105
+2 300002 Adidas Canvas Large 9.0 No Yes Messenger Blue 11.809799
+3 300003 Adidas Nylon Large 1.0 Yes No Messenger Green 18.477036
+4 300004 NaN Nylon Large 2.0 Yes Yes Tote Black 9.907953
+In [9]:
+df_sub.head()
+Out[9]:
+id Price
+0 300000 81.411
+1 300001 81.411
+2 300002 81.411
+3 300003 81.411
+4 300004 81.411
+⚠🍜Exploratory Data Analysis♒🌊
+In [ ]:
+ 
+ In [10]:
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+plt.figure(figsize=(15, 5))
+
+plt.subplot(1, 3, 1)
+sns.histplot(df_train["Price"], bins=10, kde=True, color='blue')
+plt.title("Price Distribution")
+plt.xlabel("Price ($)")
+
+plt.subplot(1, 3, 2)
+sns.histplot(df_train["Compartments"], bins=10, kde=True, color='green')
+plt.title("Compartments Distribution")
+plt.xlabel("Number of Compartments")
+
+plt.subplot(1, 3, 3)
+sns.histplot(df_train["Weight Capacity (kg)"], bins=10, kde=True, color='red')
+plt.title("Weight Capacity Distribution")
+plt.xlabel("Weight Capacity (kg)")
+
+plt.tight_layout()
+plt.show()
+In [11]:
+plt.figure(figsize=(15, 5))
+
+plt.subplot(1, 3, 1)
+sns.boxplot(x=df_train["Price"], color='blue')
+plt.title("Boxplot of Price")
+
+plt.subplot(1, 3, 2)
+sns.boxplot(x=df_train["Compartments"], color='green')
+plt.title("Boxplot of Compartments")
+
+plt.subplot(1, 3, 3)
+sns.boxplot(x=df_train["Weight Capacity (kg)"], color='red')
+plt.title("Boxplot of Weight Capacity")
+
+plt.tight_layout()
+plt.show()
+In [12]:
+categorical_features = ["Brand", "Material", "Size", "Laptop Compartment", "Waterproof", "Style", "Color"]
+plt.figure(figsize=(15, 18))
+
+for i, col in enumerate(categorical_features, 1):
+    plt.subplot(4, 2, i)
+    sns.boxplot(x=df_train[col], y=df_train["Price"], palette="coolwarm")
+    plt.xticks(rotation=45)
+    plt.ylabel("Price ($)")
+    plt.title(f"Price Distribution by {col}")
+
+plt.tight_layout()
+In [13]:
+plt.figure(figsize=(12, 6))
+sns.countplot(x='Brand', data=df_train, palette='viridis')
+plt.title('Brand Distribution')
+plt.xticks(rotation=45)
+plt.show()
+In [14]:
+plt.figure(figsize=(10, 6))
+sns.countplot(x='Material', data=df_train, palette='Set2')
+plt.title('Material Distribution')
+plt.xticks(rotation=45)
+plt.show()
+In [15]:
+plt.figure(figsize=(8, 5))
+corr = df_train.corr(numeric_only=True)
+sns.heatmap(corr, annot=True, cmap='coolwarm', fmt=".2f", linewidths=0.5)
+plt.title("Feature Correlation Heatmap")
+plt.show()
+In [16]:
+missing_data = df_train.isnull().sum()
+missing_data = missing_data[missing_data > 0] 
+
+if not missing_data.empty:
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x=missing_data.index, y=missing_data.values)
+    plt.title('Missing Value Distribution in df_train')
+    plt.xlabel('Columns')
+    plt.ylabel('Number of Missing Values')
+    plt.xticks(rotation=90)
+    plt.show()
+else:
+    print("No missing values in the dataset.")
+In [17]:
+from statsmodels.graphics.mosaicplot import mosaic
+
+plt.figure(figsize=(12, 6))
+mosaic(df_train, ['Brand', 'Style'], title="Brand vs. Style Distribution")
+plt.show()
+<Figure size 1200x600 with 0 Axes>
+In [18]:
+plt.figure(figsize=(8, 5))
+sns.countplot(data=df_train, x="Material", hue="Waterproof", palette="pastel")
+plt.xticks(rotation=45)
+plt.title("Material vs. Waterproof Feature")
+plt.xlabel("Material")
+plt.ylabel("Count")
+plt.legend(title="Waterproof")
+plt.show()
+💡 Observation from above plot :
+The dataset contains 300,000 rows.The column Price has 299,862 non-null values, meaning 138 values are missing.
+Dense Data Points: The lineplot is heavily overpopulated because of a very large number of data points (likely ~300,000 ).This makes it hard to discern any meaningful patterns.No Apparent Trends or Fluctuations:The target variable on the appears relatively constant or uniformly distributed across the dataset.This may indicate:A constant or low-variance target variable, which might affect the model's ability to learn patterns.Noise or randomness in the data.
+Compartments, The number of compartments varies between 1 and 10.The mean number of compartments is 5.44, with a median of 5, suggesting a relatively balanced distribution.
+Weight Capacity (kg),The weight capacity ranges from 5 kg to 30 kg.The mean weight capacity is 18.03 kg, and the median is 18.07 kg, indicating a near-normal distribution.
+Price,The price ranges from
+15
+t
+o
+150. The mean price is
+81.41
+,
+a
+n
+d
+t
+h
+e
+m
+e
+d
+i
+a
+n
+i
+s
+80.96, showing a skewed distribution. The standard deviation of $39.04 suggests significant variability in backpack prices.
+Quartile Analysis for Price, 25th percentile: $47.38 → Lower-priced backpacks, 50th percentile (median): $80.96 → Mid-range backpacks 75th percentile: $115.02 → Higher-end backpacks
+Some Takeaways : Flat or Non-Volatile Trend:The target variable (Price) has a very low variance and a low standard deviation ~39.04.The skewness value ~0.0368 shows that Price is nearly symmetric, indicating that it is neither strongly left- nor right-skewed.Homogeneous Pricing:Since the variance is low, most prices in the dataset are clustered within a narrow range. This could make it harder for the model to distinguish between feature influences unless there are strong patterns.
+In [19]:
+df_train.drop(columns=['id'], inplace=True)
+df_test.drop(columns=['id'], inplace=True)
+In [20]:
+df_test.isnull().sum()
+Out[20]:
+Brand                   6227
+Material                5613
+Size                    4381
+Compartments               0
+Laptop Compartment      4962
+Waterproof              4811
+Style                   5153
+Color                   6785
+Weight Capacity (kg)      77
+dtype: int64
+In [21]:
+df_train.isnull().sum()
+Out[21]:
+Brand                   130
+Material                105
+Size                     88
+Compartments              0
+Laptop Compartment      120
+Waterproof              108
+Style                   114
+Color                   128
+Weight Capacity (kg)      1
+Price                     0
+dtype: int64
+In [22]:
+df_train.shape,df_test.shape
+Out[22]:
+((4318, 10), (200000, 9))
+In [23]:
+#df_train = df_train[:1694318]
+In [24]:
+# ***********************************Feature ENgineering    ********************************************
+def feature_engineering(df):
+    size_mapping = {'Small': 1, 'Medium': 2, 'Large': 3}
+    df['Size_Num'] = df['Size'].map(size_mapping)
+    df['Compartments_per_Size'] = df['Compartments'] / df['Size_Num']    
+    df['Weight_per_Compartment'] = df['Weight Capacity (kg)'] / df['Compartments'] 
+    df['Waterproof'] = df['Waterproof'].map({'Yes': 1, 'No': 0})
+    df['Laptop Compartment'] = df['Laptop Compartment'].map({'Yes': 1, 'No': 0})
+    df['Waterproof_Laptop'] = df['Waterproof'] * df['Laptop Compartment']
+    df['Is_Durable_Material'] = df['Material'].apply(lambda x: 1 if x in ['Leather', 'Nylon'] else 0)
+    df['Is_Lightweight_Material'] = df['Material'].apply(lambda x: 1 if x in ['Canvas', 'Nylon'] else 0)
+    df['Luxury_Material'] = df['Material'].apply(lambda x: 1 if x == 'Leather' else 0)
+    df['Professional_Style'] = df['Style'].apply(lambda x: 1 if x in ['Messenger', 'Tote'] else 0)
+    df['Casual_Style'] = df['Style'].apply(lambda x: 1 if x in ['Backpack', 'Duffle'] else 0)
+    df['Is_Premium_Brand'] = df['Brand'].apply(lambda x: 1 if x in ['Nike', 'Under Armour', 'Adidas'] else 0)
+    df['Is_Budget_Brand'] = df['Brand'].apply(lambda x: 1 if x == 'Jansport' else 0)
+    df['Is_Small'] = df['Size'].apply(lambda x: 1 if x == 'Small' else 0)
+    df['Is_Medium'] = df['Size'].apply(lambda x: 1 if x == 'Medium' else 0)
+    df['Is_Large'] = df['Size'].apply(lambda x: 1 if x == 'Large' else 0)
+
+    return df
+
+df_train = feature_engineering(df_train)
+df_test = feature_engineering(df_test)
+In [25]:
+df_train.dtypes
+Out[25]:
+Brand                       object
+Material                    object
+Size                        object
+Compartments               float64
+Laptop Compartment         float64
+Waterproof                 float64
+Style                       object
+Color                       object
+Weight Capacity (kg)       float64
+Price                      float64
+Size_Num                   float64
+Compartments_per_Size      float64
+Weight_per_Compartment     float64
+Waterproof_Laptop          float64
+Is_Durable_Material          int64
+Is_Lightweight_Material      int64
+Luxury_Material              int64
+Professional_Style           int64
+Casual_Style                 int64
+Is_Premium_Brand             int64
+Is_Budget_Brand              int64
+Is_Small                     int64
+Is_Medium                    int64
+Is_Large                     int64
+dtype: object
+In [26]:
+df_train.columns,df_test.columns
+Out[26]:
+(Index(['Brand', 'Material', 'Size', 'Compartments', 'Laptop Compartment',
+        'Waterproof', 'Style', 'Color', 'Weight Capacity (kg)', 'Price',
+        'Size_Num', 'Compartments_per_Size', 'Weight_per_Compartment',
+        'Waterproof_Laptop', 'Is_Durable_Material', 'Is_Lightweight_Material',
+        'Luxury_Material', 'Professional_Style', 'Casual_Style',
+        'Is_Premium_Brand', 'Is_Budget_Brand', 'Is_Small', 'Is_Medium',
+        'Is_Large'],
+       dtype='object'),
+ Index(['Brand', 'Material', 'Size', 'Compartments', 'Laptop Compartment',
+        'Waterproof', 'Style', 'Color', 'Weight Capacity (kg)', 'Size_Num',
+        'Compartments_per_Size', 'Weight_per_Compartment', 'Waterproof_Laptop',
+        'Is_Durable_Material', 'Is_Lightweight_Material', 'Luxury_Material',
+        'Professional_Style', 'Casual_Style', 'Is_Premium_Brand',
+        'Is_Budget_Brand', 'Is_Small', 'Is_Medium', 'Is_Large'],
+       dtype='object'))
+In [27]:
+df_train.isnull().sum()
+Out[27]:
+Brand                      130
+Material                   105
+Size                        88
+Compartments                 0
+Laptop Compartment         120
+Waterproof                 108
+Style                      114
+Color                      128
+Weight Capacity (kg)         1
+Price                        0
+Size_Num                    88
+Compartments_per_Size       88
+Weight_per_Compartment       1
+Waterproof_Laptop          225
+Is_Durable_Material          0
+Is_Lightweight_Material      0
+Luxury_Material              0
+Professional_Style           0
+Casual_Style                 0
+Is_Premium_Brand             0
+Is_Budget_Brand              0
+Is_Small                     0
+Is_Medium                    0
+Is_Large                     0
+dtype: int64
+*This stop is not require as Boosting technique can take care of missing values lets give it as shot* **
+Part is barrowed from here : https://www.kaggle.com/code/zongaobian/catboost-optuna-playgrounds05e02-tutorial thank u zongaobian
+In [28]:
+cat = ['Brand', 'Material', 'Size', 'Compartments', 'Laptop Compartment',
+       'Waterproof', 'Style', 'Color']
+
+df_train[cat] = df_train[cat].fillna('None').astype('string').astype('category')
+median_weight = df_train['Weight Capacity (kg)'].median()
+df_train['Weight Capacity (kg) categorical'] = df_train['Weight Capacity (kg)'].fillna(median_weight).astype('string')
+df_train['Weight Capacity (kg)'] = df_train['Weight Capacity (kg)'].fillna(median_weight).astype('float64')
+
+df_test[cat] = df_test[cat].fillna('None').astype('string').astype('category')
+df_test['Weight Capacity (kg) categorical'] = df_test['Weight Capacity (kg)'].fillna(median_weight).astype('string')
+df_test['Weight Capacity (kg)'] = df_test['Weight Capacity (kg)'].fillna(median_weight)
+In [29]:
+df_train.dtypes
+Out[29]:
+Brand                               category
+Material                            category
+Size                                category
+Compartments                        category
+Laptop Compartment                  category
+Waterproof                          category
+Style                               category
+Color                               category
+Weight Capacity (kg)                 float64
+Price                                float64
+Size_Num                             float64
+Compartments_per_Size                float64
+Weight_per_Compartment               float64
+Waterproof_Laptop                    float64
+Is_Durable_Material                    int64
+Is_Lightweight_Material                int64
+Luxury_Material                        int64
+Professional_Style                     int64
+Casual_Style                           int64
+Is_Premium_Brand                       int64
+Is_Budget_Brand                        int64
+Is_Small                               int64
+Is_Medium                              int64
+Is_Large                               int64
+Weight Capacity (kg) categorical      string
+dtype: object
+🎇🌭Regression Analysis♒🌊
+In [30]:
+y = df_train['Price'] 
+df_train = df_train.drop(['Price'],axis=1)
+X = df_train
+X_test = df_test
+In [31]:
+df_train.isnull().sum()
+Out[31]:
+Brand                                 0
+Material                              0
+Size                                  0
+Compartments                          0
+Laptop Compartment                    0
+Waterproof                            0
+Style                                 0
+Color                                 0
+Weight Capacity (kg)                  0
+Size_Num                             88
+Compartments_per_Size                88
+Weight_per_Compartment                1
+Waterproof_Laptop                   225
+Is_Durable_Material                   0
+Is_Lightweight_Material               0
+Luxury_Material                       0
+Professional_Style                    0
+Casual_Style                          0
+Is_Premium_Brand                      0
+Is_Budget_Brand                       0
+Is_Small                              0
+Is_Medium                             0
+Is_Large                              0
+Weight Capacity (kg) categorical      0
+dtype: int64
+In [32]:
+print("Variance:", y.var())
+print("Standard Deviation:",y.std())
+Variance: 1517.4567500867543
+Standard Deviation: 38.95454723247023
+In [33]:
+from scipy.stats import skew
+print("Skewness:", skew(y))
+Skewness: 0.0476452355773095
+🎇🌭Algorithm Which requires Scaling♒🌊
+In [34]:
+scaled_train_data = X
+scaled_test_data = X_test
+In [35]:
+X.columns
+Out[35]:
+Index(['Brand', 'Material', 'Size', 'Compartments', 'Laptop Compartment',
+       'Waterproof', 'Style', 'Color', 'Weight Capacity (kg)', 'Size_Num',
+       'Compartments_per_Size', 'Weight_per_Compartment', 'Waterproof_Laptop',
+       'Is_Durable_Material', 'Is_Lightweight_Material', 'Luxury_Material',
+       'Professional_Style', 'Casual_Style', 'Is_Premium_Brand',
+       'Is_Budget_Brand', 'Is_Small', 'Is_Medium', 'Is_Large',
+       'Weight Capacity (kg) categorical'],
+      dtype='object')
+In [36]:
+X.shape,X_test.shape
+Out[36]:
+((4318, 24), (200000, 24))
+In [37]:
+from xgboost import XGBRegressor
+from lightgbm import LGBMRegressor
+from catboost import CatBoostRegressor
+
+from sklearn.model_selection import KFold
+import gc
+
+cat_cols = ['Brand', 'Material', 'Size', 'Compartments', 'Laptop Compartment','Waterproof', 'Style', 'Color', 'Weight Capacity (kg) categorical']
+Training fold 1/5...
+Fold 1 RMSE: 38.8239
+Training fold 2/5...
+Fold 2 RMSE: 39.0411
+Training fold 3/5...
+Fold 3 RMSE: 39.2818
+Training fold 4/5...
+Fold 4 RMSE: 39.1916
+Training fold 5/5...
+Fold 5 RMSE: 38.5231
+Overall RMSE (CatBoostRegressor): 38.9733
+In [39]:
+from catboost import  Pool
+
+def rmse(y_true, y_pred):
+    return np.sqrt(mean_squared_error(y_true, y_pred))
+
+catboost_params = {
+    'learning_rate': 0.062,
+    'l2_leaf_reg': 7,
+    'depth': 6,
+   # 'task_type': 'GPU',  
+    'iterations': 3000,
+    'loss_function': 'RMSE',
+    'eval_metric': 'RMSE',
+    'random_seed': 42
+}
+
+n_splits = 5
+kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+scores = []
+test_preds = []
+X_test_pool = Pool(df_test, cat_features=cat_cols)
+
+for fold, (train_idx, val_idx) in enumerate(kf.split(df_train, y)):
+    print(f"Training fold {fold + 1}/{n_splits}...")
+    
+    X_train, X_val = df_train.iloc[train_idx], df_train.iloc[val_idx]
+    y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+    
+    X_train_pool = Pool(X_train, y_train, cat_features=cat_cols)
+    X_valid_pool = Pool(X_val, y_val, cat_features=cat_cols)
+    
+    model = CatBoostRegressor(**catboost_params)
+    model.fit(X_train_pool, eval_set=X_valid_pool, early_stopping_rounds=200, verbose=100)
+    
+    val_pred = model.predict(X_valid_pool)
+    score = rmse(y_val, val_pred)
+    scores.append(score)
+    
+    test_pred = model.predict(X_test_pool)
+    test_preds.append(test_pred)
+    
+    print(f"Fold {fold + 1} RMSE: {score:.4f}")
+
+print(f'Optimized Cross-validated RMSE score: {np.mean(scores):.3f} +/- {np.std(scores):.3f}')
+print(f'Max RMSE score: {np.max(scores):.3f}')
+print(f'Min RMSE score: {np.min(scores):.3f}')
+Training fold 1/5...
+0: learn: 38.9711936 test: 38.8237478 best: 38.8237478 (0) total: 8.39ms remaining: 25.2s
+100: learn: 37.8705932 test: 39.0107934 best: 38.8237478 (0) total: 556ms remaining: 16s
+200: learn: 36.8315953 test: 38.9968886 best: 38.8237478 (0) total: 1.15s remaining: 16s
+Stopped by overfitting detector  (200 iterations wait)
+
+bestTest = 38.82374779
+bestIteration = 0
+
+Shrink model to first 1 iterations.
+Fold 1 RMSE: 38.8237
+Training fold 2/5...
+0: learn: 38.9171453 test: 39.0414464 best: 39.0414464 (0) total: 8.62ms remaining: 25.9s
+100: learn: 37.9909101 test: 39.0589808 best: 39.0398495 (1) total: 578ms remaining: 16.6s
+200: learn: 36.8087348 test: 39.1954589 best: 39.0398495 (1) total: 1.21s remaining: 16.8s
+Stopped by overfitting detector  (200 iterations wait)
+
+bestTest = 39.03984947
+bestIteration = 1
+
+Shrink model to first 2 iterations.
+Fold 2 RMSE: 39.0398
+Training fold 3/5...
+0: learn: 38.8611594 test: 39.2834036 best: 39.2834036 (0) total: 10.3ms remaining: 30.8s
+100: learn: 37.8942528 test: 39.2635251 best: 39.2635251 (100) total: 558ms remaining: 16s
+200: learn: 36.7164171 test: 39.2955473 best: 39.2481033 (132) total: 1.17s remaining: 16.3s
+300: learn: 35.5861075 test: 39.3233025 best: 39.2481033 (132) total: 1.82s remaining: 16.3s
+Stopped by overfitting detector  (200 iterations wait)
+
+bestTest = 39.24810327
+bestIteration = 132
+
+Shrink model to first 133 iterations.
+Fold 3 RMSE: 39.2481
+Training fold 4/5...
+0: learn: 38.8613445 test: 39.1945935 best: 39.1945935 (0) total: 7.77ms remaining: 23.3s
+100: learn: 37.9475847 test: 39.2800773 best: 39.1926205 (1) total: 592ms remaining: 17s
+200: learn: 36.7845382 test: 39.2709891 best: 39.1926205 (1) total: 1.25s remaining: 17.5s
+Stopped by overfitting detector  (200 iterations wait)
+
+bestTest = 39.19262047
+bestIteration = 1
+
+Shrink model to first 2 iterations.
+Fold 4 RMSE: 39.1926
+Training fold 5/5...
+0: learn: 39.0581153 test: 38.5257238 best: 38.5257238 (0) total: 8.93ms remaining: 26.8s
+100: learn: 38.2484421 test: 38.4550072 best: 38.4483594 (93) total: 572ms remaining: 16.4s
+200: learn: 37.2010605 test: 38.4353927 best: 38.4101048 (172) total: 1.18s remaining: 16.5s
+300: learn: 36.1247542 test: 38.5431520 best: 38.4101048 (172) total: 1.84s remaining: 16.6s
+Stopped by overfitting detector  (200 iterations wait)
+
+bestTest = 38.41010477
+bestIteration = 172
+
+Shrink model to first 173 iterations.
+Fold 5 RMSE: 38.4101
+Optimized Cross-validated RMSE score: 38.943 +/- 0.304
+Max RMSE score: 39.248
+Min RMSE score: 38.410
+🎇🌭Plots from results for XGboost♒🌊
+In [40]:
+catboost_residuals = np.array(catboost_predictions) - np.array(catboost_true_labels)
+fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(18, 10))
+axes[0, 0].scatter(catboost_predictions, catboost_residuals, color='blue', alpha=0.5)
+axes[0, 0].axhline(y=0, color='red', linestyle='--')
+axes[0, 0].set_title('Residual Plot (CatBoost)')
+axes[0, 0].set_xlabel('Predicted Values')
+axes[0, 0].set_ylabel('Residuals')
+axes[0, 0].grid(True)
+
+axes[0, 1].scatter(catboost_true_labels, catboost_predictions, color='blue', alpha=0.5)
+axes[0, 1].plot([min(catboost_true_labels), max(catboost_true_labels)], [min(catboost_true_labels), max(catboost_true_labels)], color='red', linestyle='--')
+axes[0, 1].set_title('Actual vs. Predicted Plot (CatBoost)')
+axes[0, 1].set_xlabel('Actual Values')
+axes[0, 1].set_ylabel('Predicted Values')
+axes[0, 1].grid(True)
+
+importances = model.get_feature_importance(prettified=True)
+importances.plot(kind='bar', x='Feature Id', y='Importances', ax=axes[1, 0])
+axes[1, 0].set_title('Feature Importance (CatBoost)')
+axes[1, 0].set_xlabel('Feature')
+axes[1, 0].set_ylabel('Importance')
+
+axes[1, 1].hist(catboost_residuals, bins=30, color='blue', alpha=0.5)
+axes[1, 1].set_title('Residual Distribution (CatBoost)')
+axes[1, 1].set_xlabel('Residuals')
+axes[1, 1].set_ylabel('Frequency')
+axes[1, 1].grid(True)
+
+plt.gcf().set_facecolor('cyan')
+plt.tight_layout()
+plt.show()
+In [41]:
+import shap
+explainer = shap.Explainer(model)
+shap_values = explainer(X_test)
+shap.summary_plot(shap_values, X_test)
+shap.waterfall_plot(shap_values[0]) 
+Using `tqdm.autonotebook.tqdm` in notebook mode. Use `tqdm.tqdm` instead to force console mode (e.g. in jupyter console)
+No data for colormapping provided via 'c'. Parameters 'vmin', 'vmax' will be ignored
+In [42]:
+test_preds_flattened = np.mean(test_preds, axis=0)
+test_preds_flattened
+Out[42]:
+array([81.27978814, 81.05464318, 81.09946689, ..., 80.71045729,
+       80.94089065, 80.97660937])
+In [43]:
+catboost_test_predictions.shape
+Out[43]:
+(200000,)
+In [44]:
+df_test['Price'] = test_preds_flattened
+🎇🌭Catboost♒🌊
+🎇🌭lightgbm♒🌊
+In [45]:
+df_sub.head()
+Out[45]:
+id Price
+0 300000 81.411
+1 300001 81.411
+2 300002 81.411
+3 300003 81.411
+4 300004 81.411
+⚒🌊How well The prediction fit♒🌊
+🗞📜Final Submission♒🌊
+In [46]:
+df_sub['Price'] = df_test['Price']
+df_sub.to_csv('submission.csv', index=False)
+In [47]:
+df_sub
+Out[47]:
+id Price
+0 300000 81.279788
+1 300001 81.054643
+2 300002 81.099467
+3 300003 81.784640
+4 300004 81.041653
+... ... ...
+199995 499995 82.117534
+199996 499996 79.817131
+199997 499997 80.710457
+199998 499998 80.940891
+199999 499999 80.976609
+200000 rows × 2 columns
+In [48]:
+df_sub['Price'].hist()
+Out[48]:
+<Axes: >
+Looking Forward for feeback
+Refrences
+👏😊   IF YOU FIND THIS HELPFUL, PLEASE UPVOTE!   💢👏
+🥽🖥This took quite a bit of effort on my part, and while it might seem trivial, 🏆🏆receiving your appreciation means a lot to me! 😅🎃 Your upvotes inspire me to keep creating helpful content like this🖥🍱.

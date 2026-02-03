@@ -1,0 +1,675 @@
+NN by GPT5 Starter
+This is a starter notebook for Kaggle's August Playground competition. It trains an NN (MLP) model with some feature engineering and achieves CV 0.974.
+For tabular data Kaggle competitions, the best solution is usually an GBDT blended with an NN. The easiest way to make an NN is to take our feature engineering from our XGB and build an NN with those features. To build an NN, we can ask GPT5 to make the model for us.
+In this notebook, the feature engineering is from my XGBoost starter here. Then I asked GPT5 to create and train an NN using these features. This notebook is what GPT5 created!
+Code cells #1 thru #10 below are from my XGBoost starter. And Code cells #11 thru #19 are new. GPT5 created code cell #13.
+Load Data
+We load train, test, and original datasets. In every Kaggle playground competition, the data is synthetic and it is generated from an original dataset. In this competition, the original dataset is here
+In [1]:
+import pandas as pd, numpy as np, os
+import cudf
+
+PATH = "/kaggle/input/playground-series-s5e8/"
+train = cudf.read_csv(f"{PATH}train.csv").set_index('id')
+print("Train shape", train.shape )
+train.head()
+Train shape (750000, 17)
+Out[1]:
+age job marital education default balance housing loan contact day month duration campaign pdays previous poutcome y
+id
+0 42 technician married secondary no 7 no no cellular 25 aug 117 3 -1 0 unknown 0
+1 38 blue-collar married secondary no 514 no no unknown 18 jun 185 1 -1 0 unknown 0
+2 36 blue-collar married secondary no 602 yes no unknown 14 may 111 2 -1 0 unknown 0
+3 27 student single secondary no 34 yes no unknown 28 may 10 2 -1 0 unknown 0
+4 26 technician married secondary no 889 yes no cellular 3 feb 902 1 -1 0 unknown 1
+In [2]:
+test = cudf.read_csv(f"{PATH}test.csv").set_index('id')
+test['y'] = np.random.randint(0, 2, len(test))
+print("Test shape", test.shape )
+test.head()
+Test shape (250000, 17)
+Out[2]:
+age job marital education default balance housing loan contact day month duration campaign pdays previous poutcome y
+id
+750000 32 blue-collar married secondary no 1397 yes no unknown 21 may 224 1 -1 0 unknown 0
+750001 44 management married tertiary no 23 yes no cellular 3 apr 586 2 -1 0 unknown 0
+750002 36 self-employed married primary no 46 yes yes cellular 13 may 111 2 -1 0 unknown 1
+750003 58 blue-collar married secondary no -1380 yes yes unknown 29 may 125 1 -1 0 unknown 0
+750004 28 technician single secondary no 1950 yes no cellular 22 jul 181 1 -1 0 unknown 1
+In [3]:
+orig = cudf.read_csv("/kaggle/input/bank-marketing-dataset-full/bank-full.csv",delimiter=";")
+orig['y'] = orig.y.map({'yes':1,'no':0})
+orig['id'] = (np.arange(len(orig))+1e6).astype('int')
+orig = orig.set_index('id')
+print("Original data shape", orig.shape )
+orig.head()
+Original data shape (45211, 17)
+Out[3]:
+age job marital education default balance housing loan contact day month duration campaign pdays previous poutcome y
+id
+1000000 58 management married tertiary no 2143 yes no unknown 5 may 261 1 -1 0 unknown 0
+1000001 44 technician single secondary no 29 yes no unknown 5 may 151 1 -1 0 unknown 0
+1000002 33 entrepreneur married secondary no 2 yes yes unknown 5 may 76 1 -1 0 unknown 0
+1000003 47 blue-collar married unknown no 1506 yes no unknown 5 may 92 1 -1 0 unknown 0
+1000004 33 unknown single unknown no 1 no no unknown 5 may 198 1 -1 0 unknown 0
+EDA (Exploratory Data Analysis)
+We now combine all data together and then explore the columns and their properties. We observe that there is no missing data. And we observe that the categorical columns have low cardinality (i.e. under 12). We observe that most numerical columns have few unique values, and two numerical columns have around 2k and 8k unique values.
+In [4]:
+combine = cudf.concat([train,test,orig],axis=0)
+print("Combined data shape", combine.shape )
+Combined data shape (1045211, 17)
+In [5]:
+CATS = []
+NUMS = []
+for c in combine.columns[:-1]:
+    t = "CAT"
+    if combine[c].dtype=='object':
+        CATS.append(c)
+    else:
+        NUMS.append(c)
+        t = "NUM"
+    n = combine[c].nunique()
+    na = combine[c].isna().sum()
+    print(f"[{t}] {c} has {n} unique and {na} NA")
+print("CATS:", CATS )
+print("NUMS:", NUMS )
+[NUM] age has 78 unique and 0 NA
+[CAT] job has 12 unique and 0 NA
+[CAT] marital has 3 unique and 0 NA
+[CAT] education has 4 unique and 0 NA
+[CAT] default has 2 unique and 0 NA
+[NUM] balance has 8590 unique and 0 NA
+[CAT] housing has 2 unique and 0 NA
+[CAT] loan has 2 unique and 0 NA
+[CAT] contact has 3 unique and 0 NA
+[NUM] day has 31 unique and 0 NA
+[CAT] month has 12 unique and 0 NA
+[NUM] duration has 1824 unique and 0 NA
+[NUM] campaign has 52 unique and 0 NA
+[NUM] pdays has 628 unique and 0 NA
+[NUM] previous has 54 unique and 0 NA
+[CAT] poutcome has 4 unique and 0 NA
+CATS: ['job', 'marital', 'education', 'default', 'housing', 'loan', 'contact', 'month', 'poutcome']
+NUMS: ['age', 'balance', 'day', 'duration', 'campaign', 'pdays', 'previous']
+Feature Engineer (LE - Label Encode)
+We will label encode all categorical columns. Also we will make a duplicate of each numerical column and treat the copy as a categorical column.
+In [6]:
+CATS1 = []
+SIZES = {}
+for c in NUMS + CATS:
+    n = c
+    if c in NUMS: 
+        n = f"{c}2"
+        CATS1.append(n)
+    combine[n],_ = combine[c].factorize()
+    SIZES[n] = combine[n].max()+1
+
+    combine[c] = combine[c].astype('int32')
+    combine[n] = combine[n].astype('int32')
+
+print("New CATS:", CATS1 )
+print("Cardinality of all CATS:", SIZES )
+New CATS: ['age2', 'balance2', 'day2', 'duration2', 'campaign2', 'pdays2', 'previous2']
+Cardinality of all CATS: {'age2': 78, 'balance2': 8590, 'day2': 31, 'duration2': 1824, 'campaign2': 52, 'pdays2': 628, 'previous2': 54, 'job': 12, 'marital': 3, 'education': 4, 'default': 2, 'housing': 2, 'loan': 2, 'contact': 3, 'month': 12, 'poutcome': 4}
+Feature Engineer (Combine Column Pairs)
+We will create a new categorical column from every pair of existing categorical columns. The original categorical columns have been label encoded into integers from 0 to N-1 each. Therefore we can create a new column with unique integers using the formula new_cols[name] = combine[c1] * SIZES[c2] + combine[c2].
+In [7]:
+from itertools import combinations
+
+pairs = combinations(CATS + CATS1, 2)
+new_cols = {}
+CATS2 = []
+
+for c1, c2 in pairs:
+    name = "_".join(sorted((c1, c2)))
+    new_cols[name] = combine[c1] * SIZES[c2] + combine[c2]
+    CATS2.append(name)
+if new_cols:
+    new_df = cudf.DataFrame(new_cols)         
+    combine = cudf.concat([combine, new_df], axis=1) 
+
+print(f"Created {len(CATS2)} new CAT columns")
+Created 120 new CAT columns
+Feature Engineer (CE - Count Encoding)
+We now have 136 categorical columns. We will count encode each of them and create 136 new columns.
+In [8]:
+CE = []
+CC = CATS+CATS1+CATS2
+combine['i'] = np.arange( len(combine) )
+
+print(f"Processing {len(CC)} columns... ",end="")
+for i,c in enumerate(CC):
+    if i%10==0: print(f"{i}, ",end="")
+    tmp = combine.groupby(c).y.count()
+    tmp = tmp.astype('int32')
+    tmp.name = f"CE_{c}"
+    CE.append( f"CE_{c}" )
+    combine = combine.merge(tmp, on=c, how='left')
+combine = combine.sort_values('i')
+print()
+Processing 136 columns... 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 
+In [9]:
+train = combine.iloc[:len(train)]
+test = combine.iloc[len(train):len(train)+len(test)]
+orig = combine.iloc[-len(orig):]
+del combine
+print("Train shape", train.shape,"Test shape", test.shape,"Original shape", orig.shape )
+Train shape (750000, 281) Test shape (250000, 281) Original shape (45211, 281)
+Feature Engineering (TE - Original Data as Cols)
+Below is a technique to add the original data as new columns.
+In [10]:
+TE = []
+CC = CATS+CATS1+CATS2
+
+mn = orig.y.mean()
+print(f"Processing {len(CC)} columns... ",end="")
+for i,c in enumerate(CC):
+    if i%10==0: print(f"{i}, ",end="")
+    tmp = orig.groupby(c).y.mean()
+    tmp = tmp.astype('float32')
+    NAME = f"TE_ORIG_{c}"
+    tmp.name = NAME
+    TE.append( NAME )
+    train = train.merge(tmp, on=c, how='left')
+    train[NAME] = train[NAME].fillna(mn)
+    test = test.merge(tmp, on=c, how='left')
+    test[NAME] = test[NAME].fillna(mn)
+train = train.sort_values('i')
+test = test.sort_values('i')
+print()
+Processing 136 columns... 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 
+Normalize
+NN prefer numerical columns to be Gaussian distributed. Therefore we first apply log transform to skewed distributions and then standardize with subtract mean divide standard deviation. (The standardization code is included in the NN code below).
+In [11]:
+LOG = ['balance','duration','campaign','pdays','previous']
+
+for c in LOG+CE:
+    if c in LOG: 
+        mn = min( (train[c].min(), test[c].min()) )
+        train[c] = train[c]-mn
+        test[c] = test[c]-mn
+    train[c] = np.log1p( train[c] )
+    test[c] = np.log1p( test[c] )
+In [12]:
+FEATURES = CATS+NUMS+CATS1+CE+TE
+TARGET_COL = 'y'
+print(f"We have {len( FEATURES )} features.")
+We have 295 features.
+NN by GPT5 - Vibe Coding!
+I used my features from my XGBoost starter notebook, and then asked GPT5 to build me a NN MLP. Below is what GPT5 produced! Here is the prompt I asked GPT5:
+I have dataframe with 16 categorical features. And i have 279 numeric features. This is in a Pandas dataframe. Can you write me code that builds and trains a Pytorch MLP that uses embeddings for the categoricals and predicts a binary target? Please make the model, set the training schedule. Write a KFold training loop, save the OOF, etc
+After it produced the code, I tuned the batch size, learning rate, and learning schedule. Everything else was created by GPT5! Wow!
+In [13]:
+# =========================
+# PyTorch MLP w/ Cat Embeddings + KFold OOF
+# =========================
+import os, math, random, gc, json
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+
+from sklearn.model_selection import KFold
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import roc_auc_score, log_loss, accuracy_score
+
+# -------------------------
+# Config
+# -------------------------
+SEED          = 42
+FOLDS         = 7
+EPOCHS        = 4
+BATCH_SIZE    = 512
+LR_MAX        = 3e-3          # peak LR for OneCycle
+WD            = 1e-4          # weight decay (AdamW)
+EARLY_STOP    = 4             # epochs with no val AUC improvement
+GRAD_CLIP     = 1.0
+NUM_WORKERS   = 4
+MODEL_DIR     = "./mlp_catemb_models"
+OOF_PATH      = "./oof_catemb.csv"
+
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+KNOWN_CARDINALITIES = SIZES
+df = train[ FEATURES+['y'] ].to_pandas()
+df2 = test[ FEATURES+['y'] ].to_pandas()
+
+# -------------------------
+# Repro
+# -------------------------
+def seed_everything(seed=SEED):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+
+seed_everything(SEED)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Device:", device)
+
+# -------------------------
+# Load/define your dataframe `df`
+# -------------------------
+# df = pd.read_parquet("your_data.parquet")
+# assert TARGET_COL in df.columns
+
+categorical_cols = list( KNOWN_CARDINALITIES.keys() )
+numeric_cols = [c for c in df.columns if c not in categorical_cols + [TARGET_COL]]
+
+print(f"#categoricals={len(categorical_cols)}, #numerics={len(numeric_cols)}")
+
+# -------------------------
+# Label-encode categoricals (reserve 0=UNK)
+# -------------------------
+encoders = {}
+for col in categorical_cols:
+    le = LabelEncoder()
+    tmp = pd.concat([ df[[col]],df2[[col]] ],axis=0)
+    tmp[col] = tmp[col].astype(str).fillna("NaN")
+    le.fit(tmp[col].values)
+    df[col] = le.transform(df[col].astype(str).values) + 1
+    df2[col] = le.transform(df2[col].astype(str).values) + 1
+    encoders[col] = le
+    del tmp
+
+cardinalities = {}
+for col in categorical_cols:
+    if col in KNOWN_CARDINALITIES:
+        cardinalities[col] = KNOWN_CARDINALITIES[col] + 1  # +1 for UNK
+        df[col] = np.clip(df[col], 0, KNOWN_CARDINALITIES[col])
+        df2[col] = np.clip(df2[col], 0, KNOWN_CARDINALITIES[col])
+    else:
+        cardinalities[col] = int( max(df[col].max(),df2[col].max()) ) + 1
+
+# -------------------------
+# Scale numerics
+# -------------------------
+scaler = StandardScaler()
+df[numeric_cols] = scaler.fit_transform(df[numeric_cols].astype(np.float32))
+df2[numeric_cols] = scaler.transform(df2[numeric_cols].astype(np.float32))
+
+# -------------------------
+# Embedding dims
+# -------------------------
+def emb_dim_from_card(n):
+    return int(min(50, round(1.6 * (n**0.56))))
+
+emb_info = [(cardinalities[c], emb_dim_from_card(cardinalities[c])) for c in categorical_cols]
+total_emb_dim = sum(d for _, d in emb_info)
+print("Embedding config:", dict(zip(categorical_cols, emb_info)))
+print("Total embedding dim:", total_emb_dim, " + numeric:", len(numeric_cols))
+
+# -------------------------
+# Dataset
+# -------------------------
+class TabDataset(Dataset):
+    def __init__(self, df, cat_cols, num_cols, target_col=None, idx=None):
+        self.cat_cols = cat_cols
+        self.num_cols = num_cols
+        self.target_col = target_col
+        self.df = df if idx is None else df.iloc[idx]
+        self.cats = self.df[self.cat_cols].values.astype(np.int64)
+        self.nums = self.df[self.num_cols].values.astype(np.float32)
+        self.y = None if self.target_col is None else self.df[self.target_col].values.astype(np.float32)
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, i):
+        cats = torch.from_numpy(self.cats[i])
+        nums = torch.from_numpy(self.nums[i])
+        if self.y is None:
+            return cats, nums
+        return cats, nums, torch.tensor(self.y[i])
+
+# -------------------------
+# Model
+# -------------------------
+class MLPWithCatEmb(nn.Module):
+    def __init__(self, emb_info, n_num, hidden=[512, 256, 128], dropout=0.15):
+        super().__init__()
+        self.emb_layers = nn.ModuleList(
+            [nn.Embedding(num_embeddings=card, embedding_dim=dim, padding_idx=0)
+             for card, dim in emb_info]
+        )
+        emb_total = sum(dim for _, dim in emb_info)
+        in_dim = emb_total + n_num
+
+        self.bn_nums = nn.BatchNorm1d(n_num) if n_num > 0 else nn.Identity()
+        self.dropout = nn.Dropout(dropout)
+
+        layers = []
+        last = in_dim
+        for h in hidden:
+            layers += [
+                nn.Linear(last, h),
+                nn.BatchNorm1d(h),
+                nn.SiLU(),
+                nn.Dropout(dropout)
+            ]
+            last = h
+        self.mlp = nn.Sequential(*layers)
+        self.head = nn.Linear(last, 1)
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x_cat, x_num):
+        emb = [emb_layer(x_cat[:, i]) for i, emb_layer in enumerate(self.emb_layers)]
+        x_emb = torch.cat(emb, dim=1) if emb else None
+        if x_num is not None and x_num.shape[1] > 0:
+            x_num = self.bn_nums(x_num)
+            x = torch.cat([x_emb, x_num], dim=1) if x_emb is not None else x_num
+        else:
+            x = x_emb
+        x = self.mlp(x)
+        logit = self.head(x).squeeze(1)
+        return logit
+
+# -------------------------
+# Train / Eval helpers
+# -------------------------
+def train_one_epoch(model, loader, optimizer, scaler, scheduler=None):
+    model.train()
+    running = 0.0
+    for cats, nums, y in loader:
+        cats = cats.to(device, non_blocking=True)
+        nums = nums.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
+
+        optimizer.zero_grad(set_to_none=True)
+        with torch.amp.autocast('cuda', enabled=True):
+            logits = model(cats, nums)
+            loss = F.binary_cross_entropy_with_logits(logits, y)
+        scaler.scale(loss).backward()
+        if GRAD_CLIP is not None:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+        scaler.step(optimizer)
+        scaler.update()
+        if scheduler is not None:
+            scheduler.step()
+
+        running += loss.detach().item() * y.size(0)
+    return running / len(loader.dataset)
+
+@torch.no_grad()
+def validate(model, loader):
+    model.eval()
+    all_logits, all_y = [], []
+    for batch in loader:
+        if len(batch) == 3:
+            cats, nums, y = batch
+            all_y.append(y.detach().cpu())
+        else:
+            cats, nums = batch
+        cats = cats.to(device, non_blocking=True)
+        nums = nums.to(device, non_blocking=True)
+        all_logits.append(model(cats, nums).detach().cpu())
+
+    logits = torch.cat(all_logits).numpy()
+    probs  = 1.0 / (1.0 + np.exp(-logits))
+    probs_c = np.clip(probs, 1e-7, 1 - 1e-7)  # clip instead of log_loss(..., eps=...)
+
+    if all_y:
+        y_true = torch.cat(all_y).numpy().astype(np.int64)
+        auc = roc_auc_score(y_true, probs)
+        ll  = log_loss(y_true, probs_c)
+        acc = accuracy_score(y_true, (probs >= 0.5).astype(int))
+        return probs, {"auc": auc, "logloss": ll, "acc": acc}
+    return probs, {}
+
+# -------------------------
+# KFold training
+# -------------------------
+skf = KFold(n_splits=FOLDS, shuffle=True, random_state=SEED)
+
+y = df[TARGET_COL].astype(int).values
+oof = np.zeros(len(df), dtype=np.float32)
+preds = np.zeros(len(df2), dtype=np.float32)
+fold_metrics = []
+
+for fold, (trn_idx, val_idx) in enumerate(skf.split(df, y), start=1):
+    print(f"\n========== Fold {fold}/{FOLDS} ==========")
+    trn_ds = TabDataset(df, categorical_cols, numeric_cols, TARGET_COL, trn_idx)
+    val_ds = TabDataset(df, categorical_cols, numeric_cols, TARGET_COL, val_idx)
+    test_ds = TabDataset(df2, categorical_cols, numeric_cols, TARGET_COL, np.arange(len(df2)) )
+
+    trn_loader = DataLoader(
+        trn_ds, batch_size=BATCH_SIZE, shuffle=True,
+        num_workers=NUM_WORKERS, pin_memory=True, drop_last=True
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=BATCH_SIZE, shuffle=False,
+        num_workers=NUM_WORKERS, pin_memory=True
+    )
+    test_loader = DataLoader(
+        test_ds, batch_size=BATCH_SIZE, shuffle=False,
+        num_workers=NUM_WORKERS, pin_memory=True
+    )
+
+    model = MLPWithCatEmb(emb_info=emb_info, n_num=len(numeric_cols)).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR_MAX, weight_decay=WD)
+
+    total_steps = EPOCHS * len(trn_loader)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=LR_MAX, total_steps=total_steps,
+        pct_start=0.0, div_factor=25.0, final_div_factor=10.5, anneal_strategy='cos'
+    )
+
+    scaler = torch.amp.GradScaler('cuda', enabled=True)
+
+    best_auc = -1.0
+    best_epoch = -1
+    epochs_no_improve = 0
+    best_path = os.path.join(MODEL_DIR, f"fold{fold}.pt")
+
+    for epoch in range(1, EPOCHS+1):
+        train_loss = train_one_epoch(model, trn_loader, optimizer, scaler, scheduler)
+        _, val_stats = validate(model, val_loader)
+        auc = val_stats.get("auc", float("nan"))
+        print(f"Epoch {epoch:02d}: train_loss={train_loss:.4f} | "
+              f"val_auc={auc:.5f} val_logloss={val_stats['logloss']:.5f} val_acc={val_stats['acc']:.4f}")
+
+        if 1: #auc > best_auc:
+            best_auc = auc
+            best_epoch = epoch
+            epochs_no_improve = 0
+            torch.save({
+                "model_state": model.state_dict(),
+                "config": {
+                    "emb_info": emb_info,
+                    "numeric_cols": numeric_cols,
+                    "categorical_cols": categorical_cols
+                }
+            }, best_path)
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= EARLY_STOP:
+                print(f"Early stopping at epoch {epoch}. Best AUC {best_auc:.5f} @ epoch {best_epoch}")
+                break
+
+    # Load best
+    ckpt = torch.load(best_path, map_location="cpu", weights_only=False)
+    model.load_state_dict(ckpt["model_state"])
+    model.to(device)
+
+    # OOF for this fold
+    val_probs, val_stats = validate(model, val_loader)
+    oof[val_idx] = val_probs
+    fold_metrics.append({"fold": fold, **val_stats})
+    print(f"[Fold {fold}] AUC={val_stats['auc']:.5f}  LogLoss={val_stats['logloss']:.5f}  Acc={val_stats['acc']:.4f}")
+
+    test_probs, _ = validate(model, test_loader)
+    preds += test_probs/FOLDS
+
+# -------------------------
+# Overall OOF metrics
+# -------------------------
+oof_c = np.clip(oof, 1e-7, 1 - 1e-7)
+oof_auc = roc_auc_score(y, oof)
+oof_ll  = log_loss(y, oof_c)     # no eps kwarg
+oof_acc = accuracy_score(y, (oof>=0.5).astype(int))
+print("\n========== Overall OOF ==========")
+print(f"OOF AUC={oof_auc:.5f}  LogLoss={oof_ll:.5f}  Acc={oof_acc:.4f}")
+
+# Save OOF and metrics
+pd.DataFrame({
+    "oof_pred": oof,
+    TARGET_COL: y
+}).to_csv(OOF_PATH, index=False)
+
+with open(os.path.join(MODEL_DIR, "fold_metrics.json"), "w") as f:
+    json.dump({"folds": fold_metrics, "oof": {"auc": oof_auc, "logloss": oof_ll, "acc": oof_acc}}, f, indent=2)
+
+print(f"Saved OOF -> {OOF_PATH}")
+print(f"Saved models -> {MODEL_DIR}")
+Device: cuda
+#categoricals=16, #numerics=279
+Embedding config: {'age2': (79, 18), 'balance2': (8591, 50), 'day2': (32, 11), 'duration2': (1825, 50), 'campaign2': (53, 15), 'pdays2': (629, 50), 'previous2': (55, 15), 'job': (13, 7), 'marital': (4, 3), 'education': (5, 4), 'default': (3, 3), 'housing': (3, 3), 'loan': (3, 3), 'contact': (4, 3), 'month': (13, 7), 'poutcome': (5, 4)}
+Total embedding dim: 246  + numeric: 279
+
+========== Fold 1/7 ==========
+Epoch 01: train_loss=0.1507 | val_auc=0.97246 val_logloss=0.13474 val_acc=0.9418
+Epoch 02: train_loss=0.1323 | val_auc=0.97388 val_logloss=0.13242 val_acc=0.9433
+Epoch 03: train_loss=0.1251 | val_auc=0.97432 val_logloss=0.13066 val_acc=0.9437
+Epoch 04: train_loss=0.1197 | val_auc=0.97420 val_logloss=0.13104 val_acc=0.9436
+[Fold 1] AUC=0.97420  LogLoss=0.13104  Acc=0.9436
+
+========== Fold 2/7 ==========
+Epoch 01: train_loss=0.1516 | val_auc=0.97212 val_logloss=0.13697 val_acc=0.9405
+Epoch 02: train_loss=0.1321 | val_auc=0.97334 val_logloss=0.13382 val_acc=0.9421
+Epoch 03: train_loss=0.1249 | val_auc=0.97395 val_logloss=0.13236 val_acc=0.9426
+Epoch 04: train_loss=0.1195 | val_auc=0.97382 val_logloss=0.13285 val_acc=0.9428
+[Fold 2] AUC=0.97382  LogLoss=0.13285  Acc=0.9428
+
+========== Fold 3/7 ==========
+Epoch 01: train_loss=0.1505 | val_auc=0.97099 val_logloss=0.13741 val_acc=0.9408
+Epoch 02: train_loss=0.1323 | val_auc=0.97230 val_logloss=0.13437 val_acc=0.9415
+Epoch 03: train_loss=0.1252 | val_auc=0.97306 val_logloss=0.13283 val_acc=0.9432
+Epoch 04: train_loss=0.1200 | val_auc=0.97309 val_logloss=0.13281 val_acc=0.9433
+[Fold 3] AUC=0.97309  LogLoss=0.13281  Acc=0.9433
+
+========== Fold 4/7 ==========
+Epoch 01: train_loss=0.1516 | val_auc=0.97173 val_logloss=0.13687 val_acc=0.9404
+Epoch 02: train_loss=0.1323 | val_auc=0.97348 val_logloss=0.13253 val_acc=0.9428
+Epoch 03: train_loss=0.1250 | val_auc=0.97398 val_logloss=0.13142 val_acc=0.9430
+Epoch 04: train_loss=0.1200 | val_auc=0.97399 val_logloss=0.13183 val_acc=0.9432
+[Fold 4] AUC=0.97399  LogLoss=0.13183  Acc=0.9432
+
+========== Fold 5/7 ==========
+Epoch 01: train_loss=0.1516 | val_auc=0.97249 val_logloss=0.13562 val_acc=0.9414
+Epoch 02: train_loss=0.1322 | val_auc=0.97421 val_logloss=0.13099 val_acc=0.9432
+Epoch 03: train_loss=0.1254 | val_auc=0.97447 val_logloss=0.13034 val_acc=0.9436
+Epoch 04: train_loss=0.1202 | val_auc=0.97437 val_logloss=0.13081 val_acc=0.9437
+[Fold 5] AUC=0.97437  LogLoss=0.13081  Acc=0.9437
+
+========== Fold 6/7 ==========
+Epoch 01: train_loss=0.1504 | val_auc=0.97228 val_logloss=0.13501 val_acc=0.9422
+Epoch 02: train_loss=0.1322 | val_auc=0.97370 val_logloss=0.13127 val_acc=0.9439
+Epoch 03: train_loss=0.1252 | val_auc=0.97418 val_logloss=0.13091 val_acc=0.9444
+Epoch 04: train_loss=0.1201 | val_auc=0.97403 val_logloss=0.13098 val_acc=0.9444
+[Fold 6] AUC=0.97403  LogLoss=0.13098  Acc=0.9444
+
+========== Fold 7/7 ==========
+Epoch 01: train_loss=0.1525 | val_auc=0.97335 val_logloss=0.13242 val_acc=0.9429
+Epoch 02: train_loss=0.1324 | val_auc=0.97472 val_logloss=0.12928 val_acc=0.9443
+Epoch 03: train_loss=0.1254 | val_auc=0.97497 val_logloss=0.12863 val_acc=0.9446
+Epoch 04: train_loss=0.1202 | val_auc=0.97490 val_logloss=0.12874 val_acc=0.9446
+[Fold 7] AUC=0.97490  LogLoss=0.12874  Acc=0.9446
+
+========== Overall OOF ==========
+OOF AUC=0.97405  LogLoss=0.13130  Acc=0.9437
+Saved OOF -> ./oof_catemb.csv
+Saved models -> ./mlp_catemb_models
+NN - CV Score
+Our NN has CV score of 0.974 wow!
+In [14]:
+m = roc_auc_score(train.y.to_numpy(), oof)
+print(f"NN (MLP) CV = {m}")
+NN (MLP) CV = 0.9740460880870255
+Create NN Submission CSV
+In [15]:
+sub = pd.read_csv(f"{PATH}sample_submission.csv")
+sub['y'] = preds
+sub.to_csv("submission_nn.csv",index=False)
+print('Submission shape',sub.shape)
+sub.head()
+Submission shape (250000, 2)
+Out[15]:
+id y
+0 750000 0.000364
+1 750001 0.042632
+2 750002 0.000067
+3 750003 0.000055
+4 750004 0.006835
+EDA - NN Test Preds
+In [16]:
+import matplotlib.pyplot as plt
+
+plt.hist(sub.y,bins=100)
+plt.title('NN Test Preds')
+plt.ylim((0,10_000))
+plt.show()
+XGB - CV Score
+We now load my XGBoost starter OOF from here to see if this NN is diverse and boost the CV score when we blend XGB and NN. The XGB by itself is 0.9760. Adding the NN boost the CV score 0.0003 wow!
+In [17]:
+PATH2 = "/kaggle/input/xgboost-using-original-data-cv-0-976/"
+oof_xgb_with_orig_rows = np.load(f"{PATH2}oof_xgb_with_orig_rows.npy")
+oof_xgb_with_orig_cols = np.load(f"{PATH2}oof_xgb_with_orig_cols.npy")
+
+m = roc_auc_score(train.y.to_numpy(), oof_xgb_with_orig_rows)
+print(f"XGB with Original Data as rows CV = {m}")
+
+m = roc_auc_score(train.y.to_numpy(), oof_xgb_with_orig_cols)
+print(f"XGB with Original Data as cols CV = {m}")
+
+oof_xgb = (oof_xgb_with_orig_rows + oof_xgb_with_orig_cols)/2.
+m = roc_auc_score(train.y.to_numpy(), oof_xgb)
+print(f"XGB Ensemble rows and cols CV = {m}")
+XGB with Original Data as rows CV = 0.9754618716695013
+XGB with Original Data as cols CV = 0.9756538928415464
+XGB Ensemble rows and cols CV = 0.9760096484349001
+Ensemble - XGB and NN - CV Score
+Blending NN with our previous XGB boost CV score from 0.97600 => 0.97626 wow!
+In [18]:
+best_m = 0
+best_w = 0
+for w in np.arange(0,1.01,0.01):
+    oof_ensemble = (1-w)*oof_xgb + w*oof
+    m = roc_auc_score(train.y.to_numpy(), oof_ensemble)
+    if m>best_m:
+        best_m = m
+        best_w = w
+        
+oof_ensemble = (1-best_w)*oof_xgb + best_w*oof
+m = roc_auc_score(train.y.to_numpy(), oof_ensemble)
+print(f"Ensemble XGB and NN = {m}")
+print(f" using best NN weight = {best_w}")
+Ensemble XGB and NN = 0.9762608692973854
+ using best NN weight = 0.25
+Create - XGB and NN - Submission CSV
+In [19]:
+xgb_preds = pd.read_csv(f"{PATH2}submission.csv").y.values
+sub = pd.read_csv(f"{PATH}sample_submission.csv")
+sub['y'] = (1-best_w)*xgb_preds + best_w*preds
+sub.to_csv("submission_ensemble.csv",index=False)
+print('Submission shape',sub.shape)
+sub.head()
+Submission shape (250000, 2)
+Out[19]:
+id y
+0 750000 0.000802
+1 750001 0.063726
+2 750002 0.000132
+3 750003 0.000068
+4 750004 0.008108

@@ -1,0 +1,338 @@
+Use Original Dataset
+This competition's dataset is created from an original dataset here. The process of creating synthetic data is essentially the process of duplicating the rows from the original dataset and adding noise. In this notebook, we find the original row that each sample in train/test is generated from.
+First we plot a scatter plot showing the relationship between the new train/test data and the original data
+Second we train a model to use the knowledge of original dataset to make predictions.
+Discusion about this notebook is here
+How To Boost CV and LB
+To boost CV score and LB score, we can merge the original data Price to our other GBDT models and boost their CV score and LB score! WooHoo!
+Load Data
+In [1]:
+import numpy as np, pandas as pd
+import matplotlib.pyplot as plt
+pd.set_option('display.max_columns', 500)
+In [2]:
+train = pd.read_csv("/kaggle/input/playground-series-s5e2/train.csv")
+print("Train shape", train.shape )
+train.head()
+Train shape (300000, 11)
+Out[2]:
+id Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 0 Jansport Leather Medium 7.0 Yes No Tote Black 11.611723 112.15875
+1 1 Jansport Canvas Small 10.0 Yes Yes Messenger Green 27.078537 68.88056
+2 2 Under Armour Leather Small 2.0 Yes No Messenger Red 16.643760 39.17320
+3 3 Nike Nylon Small 8.0 Yes No Messenger Green 12.937220 80.60793
+4 4 Adidas Canvas Medium 1.0 Yes Yes Messenger Green 17.749338 86.02312
+In [3]:
+train2 = pd.read_csv("/kaggle/input/playground-series-s5e2/training_extra.csv")
+print("Train extra shape", train2.shape )
+train2.head()
+Train extra shape (3694318, 11)
+Out[3]:
+id Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 500000 Under Armour Canvas Small 10.0 Yes Yes Tote Blue 23.882052 114.11068
+1 500001 Puma Polyester Small 4.0 No Yes Backpack Green 11.869095 129.74972
+2 500002 Jansport Polyester Small 8.0 Yes Yes Tote Red 8.092302 21.37370
+3 500003 Nike Nylon Large 7.0 No No Messenger Pink 7.719581 48.09209
+4 500004 Nike Leather Large 9.0 No Yes Tote Green 22.741826 77.32461
+In [4]:
+train = pd.concat([train,train2],axis=0,ignore_index=True)
+print("Train combined shape",train.shape)
+Train combined shape (3994318, 11)
+In [5]:
+test = pd.read_csv("/kaggle/input/playground-series-s5e2/test.csv")
+print("Test shape", test.shape )
+Test shape (200000, 10)
+In [6]:
+orig = pd.read_csv("/kaggle/input/student-bag-price-prediction-dataset/Noisy_Student_Bag_Price_Prediction_Dataset.csv")
+print("Original data shape", orig.shape )
+orig.head()
+Original data shape (52500, 10)
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1458: RuntimeWarning: invalid value encountered in greater
+  has_large_values = (abs_vals > 1e6).any()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1459: RuntimeWarning: invalid value encountered in less
+  has_small_values = ((abs_vals < 10 ** (-self.digits)) & (abs_vals > 0)).any()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1459: RuntimeWarning: invalid value encountered in greater
+  has_small_values = ((abs_vals < 10 ** (-self.digits)) & (abs_vals > 0)).any()
+Out[6]:
+Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 Jansport Nylon Small 2.0 No Yes Backpack Green 13.340058 143.445135
+1 Under Armour Nylon Large 4.0 Yes Yes Tote Pink 5.918030 72.086319
+2 Nike Nylon Large NaN No Yes Messenger Red 24.088386 29.699631
+3 Nike Nylon Small 1.0 Yes No Messenger Pink 5.000000 27.181990
+4 Under Armour Leather Small 8.0 Yes No NaN Black 11.258172 71.953236
+Merge Original to Train
+In [7]:
+orig = orig.groupby("Weight Capacity (kg)").Price.mean()
+orig.name = "orig_Price"
+orig.head()
+Out[7]:
+Weight Capacity (kg)
+5.000000     80.693646
+5.001061     93.862638
+5.004444    130.627948
+5.004837     76.920155
+5.005468    101.682464
+Name: orig_Price, dtype: float64
+In [8]:
+train = train.merge(orig, on="Weight Capacity (kg)", how="left")
+test = test.merge(orig, on="Weight Capacity (kg)", how="left")
+train.head()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1458: RuntimeWarning: invalid value encountered in greater
+  has_large_values = (abs_vals > 1e6).any()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1459: RuntimeWarning: invalid value encountered in less
+  has_small_values = ((abs_vals < 10 ** (-self.digits)) & (abs_vals > 0)).any()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1459: RuntimeWarning: invalid value encountered in greater
+  has_small_values = ((abs_vals < 10 ** (-self.digits)) & (abs_vals > 0)).any()
+Out[8]:
+id Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price orig_Price
+0 0 Jansport Leather Medium 7.0 Yes No Tote Black 11.611723 112.15875 39.770555
+1 1 Jansport Canvas Small 10.0 Yes Yes Messenger Green 27.078537 68.88056 NaN
+2 2 Under Armour Leather Small 2.0 Yes No Messenger Red 16.643760 39.17320 NaN
+3 3 Nike Nylon Small 8.0 Yes No Messenger Green 12.937220 80.60793 NaN
+4 4 Adidas Canvas Medium 1.0 Yes Yes Messenger Green 17.749338 86.02312 NaN
+In [9]:
+tmp = train.groupby("Weight Capacity (kg)")[['Price','orig_Price']].agg(["mean","count"])
+tmp = tmp.iloc[:,:-1]
+tmp.columns = ['Price','count','orig_Price']
+tmp = tmp.loc[(tmp['count']>100)&(~tmp.orig_Price.isna())]
+print( tmp.shape )
+tmp.head()
+(3660, 3)
+Out[9]:
+Price count orig_Price
+Weight Capacity (kg)
+5.000000 78.129020 58087 80.693646
+5.936885 70.889343 126 43.384706
+6.037197 77.639167 164 49.911285
+6.049765 74.313717 149 26.110312
+6.050151 79.575370 318 111.551165
+In [10]:
+plt.scatter(tmp.orig_Price,tmp.Price,s=1)
+a,b = np.polyfit(tmp.loc[~tmp.orig_Price.isna()].orig_Price,tmp.loc[~tmp.orig_Price.isna()].Price,deg=1)
+x = np.arange(15,150)
+y = b+a*x
+plt.plot(x,y,'--',color='black',linewidth=3)
+r = np.corrcoef(tmp.Price,tmp.orig_Price)[0,1]
+plt.xlabel("Original Dataset Price")
+plt.ylabel("Synthetic Dataset Price")
+plt.title(
+    f"Relationship between Original Dataset Price and Synthetic Dataset Price\n"
+    f"Correlation r={r:.2f} with equation Synth_Price = {a:.3f}*Orig_Price + {b:.3f}"
+)
+plt.show()
+In [11]:
+plt.hist(tmp.loc[~tmp.orig_Price.isna()].Price,bins=100)
+plt.title("Train data Price histogram")
+plt.show()
+In [12]:
+plt.hist(tmp.loc[~tmp.orig_Price.isna()].orig_Price,bins=100)
+plt.title("Original data Price histogram")
+plt.show()
+Train XGBoost
+We will now merge the original dataset features to the train dataset. Then we will train an XGBoost model.
+In [13]:
+orig = pd.read_csv("/kaggle/input/student-bag-price-prediction-dataset/Noisy_Student_Bag_Price_Prediction_Dataset.csv")
+orig = orig.loc[(orig["Weight Capacity (kg)"]>5)&(orig["Weight Capacity (kg)"]<30)]
+orig.columns = [f"orig_{c}" for c in orig.columns]
+train = train.merge(orig.iloc[:,:-1], left_on="Weight Capacity (kg)", right_on="orig_Weight Capacity (kg)", how="left")
+train = train.drop("id",axis=1)
+test = test.merge(orig.iloc[:,:-1], left_on="Weight Capacity (kg)", right_on="orig_Weight Capacity (kg)", how="left")
+train.head()
+/usr/local/lib/python3.10/dist-packages/pandas/core/computation/expressions.py:73: RuntimeWarning: invalid value encountered in greater
+  return op(a, b)
+/usr/local/lib/python3.10/dist-packages/pandas/core/computation/expressions.py:73: RuntimeWarning: invalid value encountered in less
+  return op(a, b)
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1458: RuntimeWarning: invalid value encountered in greater
+  has_large_values = (abs_vals > 1e6).any()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1459: RuntimeWarning: invalid value encountered in less
+  has_small_values = ((abs_vals < 10 ** (-self.digits)) & (abs_vals > 0)).any()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1459: RuntimeWarning: invalid value encountered in greater
+  has_small_values = ((abs_vals < 10 ** (-self.digits)) & (abs_vals > 0)).any()
+Out[13]:
+Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price orig_Price orig_Brand orig_Material orig_Size orig_Compartments orig_Laptop Compartment orig_Waterproof orig_Style orig_Color orig_Weight Capacity (kg)
+0 Jansport Leather Medium 7.0 Yes No Tote Black 11.611723 112.15875 39.770555 Puma Nylon Small 7.0 No Yes Tote Black 11.611723
+1 Jansport Canvas Small 10.0 Yes Yes Messenger Green 27.078537 68.88056 NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN
+2 Under Armour Leather Small 2.0 Yes No Messenger Red 16.643760 39.17320 NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN
+3 Nike Nylon Small 8.0 Yes No Messenger Green 12.937220 80.60793 NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN
+4 Adidas Canvas Medium 1.0 Yes Yes Messenger Green 17.749338 86.02312 NaN NaN NaN NaN NaN NaN NaN NaN NaN NaN
+In [14]:
+CATS = []
+for c in train.columns:
+    if train[c].dtype=='object':
+        CATS.append(c)
+print(f"There are {len(CATS)} categorical columns:")
+print( CATS )
+NUMS = ['Weight Capacity (kg)','orig_Price']
+print(f"There are {len(NUMS)} numerical columns:")
+print( NUMS )
+FEATURES = CATS + NUMS
+There are 14 categorical columns:
+['Brand', 'Material', 'Size', 'Laptop Compartment', 'Waterproof', 'Style', 'Color', 'orig_Brand', 'orig_Material', 'orig_Size', 'orig_Laptop Compartment', 'orig_Waterproof', 'orig_Style', 'orig_Color']
+There are 2 numerical columns:
+['Weight Capacity (kg)', 'orig_Price']
+In [15]:
+from sklearn.model_selection import KFold
+from xgboost import XGBRegressor
+import xgboost as xgb
+print(f"XGBoost version",xgb.__version__)
+XGBoost version 2.0.3
+In [16]:
+%%time
+
+FOLDS = 7
+kf = KFold(n_splits=FOLDS, shuffle=True, random_state=42)
+
+oof = np.zeros((len(train)))
+pred = np.zeros((len(test)))
+
+# OUTER K FOLD
+for i, (train_index, test_index) in enumerate(kf.split(train)):
+    print(f"### Fold {i+1} ###")
+
+    X_train = train.loc[train_index,FEATURES].copy()
+    y_train = train.loc[train_index,'Price']
+
+    X_valid = train.loc[test_index,FEATURES].copy()
+    y_valid = train.loc[test_index,'Price']
+
+    X_test = test[FEATURES].copy()
+
+    # CONVERT TO CATS SO XGBOOST RECOGNIZES THEM
+    X_train[CATS] = X_train[CATS].astype("category")
+    X_valid[CATS] = X_valid[CATS].astype("category")
+    X_test[CATS] = X_test[CATS].astype("category")
+
+    # BUILD MODEL
+    model = XGBRegressor(
+        device="cuda",
+        max_depth=6,  
+        colsample_bytree=0.5, 
+        subsample=0.8,  
+        n_estimators=10_000,  
+        learning_rate=0.2,  
+        enable_categorical=True,
+        min_child_weight=10,
+        early_stopping_rounds=100,
+    )
+    
+    # TRAIN MODEL
+    COLS = X_train.columns
+    model.fit(
+        X_train[COLS], y_train,
+        eval_set=[(X_valid[COLS], y_valid)],  
+        verbose=100,
+    )
+
+    # PREDICT OOF AND TEST
+    oof[test_index] = model.predict(X_valid[COLS])
+    pred += model.predict(X_test[COLS])
+
+pred /= FOLDS
+### Fold 1 ###
+[0] validation_0-rmse:38.88683
+[100] validation_0-rmse:38.78837
+[200] validation_0-rmse:38.77383
+[300] validation_0-rmse:38.76625
+[400] validation_0-rmse:38.76132
+[500] validation_0-rmse:38.75988
+[600] validation_0-rmse:38.75896
+[691] validation_0-rmse:38.75958
+/usr/local/lib/python3.10/dist-packages/xgboost/core.py:160: UserWarning: [00:12:57] WARNING: /workspace/src/common/error_msg.cc:58: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  warnings.warn(smsg, UserWarning)
+### Fold 2 ###
+[0] validation_0-rmse:38.88335
+[100] validation_0-rmse:38.78102
+[200] validation_0-rmse:38.76611
+[300] validation_0-rmse:38.76020
+[400] validation_0-rmse:38.75649
+[500] validation_0-rmse:38.75758
+[544] validation_0-rmse:38.75812
+### Fold 3 ###
+[0] validation_0-rmse:38.90322
+[100] validation_0-rmse:38.79845
+[200] validation_0-rmse:38.78211
+[300] validation_0-rmse:38.77471
+[400] validation_0-rmse:38.77363
+[429] validation_0-rmse:38.77299
+### Fold 4 ###
+[0] validation_0-rmse:38.94452
+[100] validation_0-rmse:38.84459
+[200] validation_0-rmse:38.82880
+[300] validation_0-rmse:38.82118
+[400] validation_0-rmse:38.81724
+[500] validation_0-rmse:38.81673
+[560] validation_0-rmse:38.81768
+### Fold 5 ###
+[0] validation_0-rmse:38.94099
+[100] validation_0-rmse:38.84497
+[200] validation_0-rmse:38.82740
+[300] validation_0-rmse:38.81990
+[400] validation_0-rmse:38.81643
+[500] validation_0-rmse:38.81202
+[600] validation_0-rmse:38.81080
+[700] validation_0-rmse:38.81072
+[754] validation_0-rmse:38.81150
+### Fold 6 ###
+[0] validation_0-rmse:38.88213
+[100] validation_0-rmse:38.77995
+[200] validation_0-rmse:38.76424
+[300] validation_0-rmse:38.75596
+[400] validation_0-rmse:38.75181
+[500] validation_0-rmse:38.74956
+[600] validation_0-rmse:38.74945
+[622] validation_0-rmse:38.74958
+### Fold 7 ###
+[0] validation_0-rmse:38.97721
+[100] validation_0-rmse:38.87698
+[200] validation_0-rmse:38.85826
+[300] validation_0-rmse:38.84985
+[400] validation_0-rmse:38.84417
+[500] validation_0-rmse:38.84281
+[561] validation_0-rmse:38.84303
+CPU times: user 4min 41s, sys: 24.2 s, total: 5min 5s
+Wall time: 3min 58s
+Overall CV Score
+In [17]:
+# COMPUTE OVERALL CV SCORE
+true = train.Price.values
+s = np.sqrt(np.mean( (oof-true)**2.0 ) )
+print(f"=> Overall CV Score = {s}")
+=> Overall CV Score = 38.78631142423832
+In [18]:
+# SAVE OOF TO DISK FOR ENSEMBLES
+np.save(f"oof",oof)
+print("Saved oof to disk")
+Saved oof to disk
+Feature Names
+In [19]:
+print(f"\nIn total, we used {len(COLS)} features, Wow!\n")
+print( list(COLS) )
+In total, we used 16 features, Wow!
+
+['Brand', 'Material', 'Size', 'Laptop Compartment', 'Waterproof', 'Style', 'Color', 'orig_Brand', 'orig_Material', 'orig_Size', 'orig_Laptop Compartment', 'orig_Waterproof', 'orig_Style', 'orig_Color', 'Weight Capacity (kg)', 'orig_Price']
+XGB Feature Importance
+In [20]:
+import xgboost as xgb
+fig, ax = plt.subplots(figsize=(10, 6))
+xgb.plot_importance(model, max_num_features=100, importance_type='gain',ax=ax)
+plt.title("Top 100 Feature Importances (XGBoost)")
+plt.show()
+Make Submission CSV
+In [21]:
+sub = pd.read_csv("/kaggle/input/playground-series-s5e2/sample_submission.csv")
+sub.Price = pred
+sub.to_csv(f"submission.csv",index=False)
+sub.head()
+Out[21]:
+id Price
+0 300000 77.355831
+1 300001 81.802926
+2 300002 82.844758
+3 300003 85.633301
+4 300004 79.628771

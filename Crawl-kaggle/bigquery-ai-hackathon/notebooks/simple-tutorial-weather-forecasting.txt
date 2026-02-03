@@ -1,0 +1,220 @@
+Tutorial: Weather Forecasting with BigQuery, Prophet & BigQuery AI.FORECAST
+Forecasting weather is a great way to combine data engineering and data science skills. In this tutorial, we will explore three different approaches to forecasting temperature in Hanoi using Google BigQuery’s NOAA GSOD dataset:
+1. Pure Python + Prophet
+Download raw weather data from BigQuery Public Datasets.
+Clean and interpolate missing values.
+Train a Prophet forecasting model locally in Python.
+Predict the next 30 days of temperatures.
+2. BigQuery ML (CREATE MODEL)
+Stay entirely in SQL – no downloading data for training.
+Use BigQuery ML to train a regression model directly in the data warehouse.
+Evaluate model performance and run predictions using SQL queries.
+3. BigQuery Generative AI (AI.FORECAST)
+Use Google Cloud’s AI.FORECAST function for server-side time-series forecasting.
+No manual feature engineering or model tuning – just provide your dataset and forecast horizon.
+Ideal for fast prototyping and large datasets.
+Prerequisites
+Google Cloud account with BigQuery enabled.
+Python environment with:
+pip install google-cloud-bigquery pandas prophet matplotlib
+(Optional) Kaggle Notebook with BigQuery integration enabled.
+1. Pure Python + Prophet
+In [20]:
+from google.cloud import bigquery
+import pandas as pd
+from prophet import Prophet
+import matplotlib.pyplot as plt
+
+# Create BigQuery client
+client = bigquery.Client()
+
+# Query weather data for Hanoi
+QUERY_WEATHER = """
+SELECT
+  DATE(CAST(year AS INT64), CAST(mo AS INT64), CAST(da AS INT64)) AS ds,
+  temp AS y
+FROM `bigquery-public-data.noaa_gsod.gsod*`
+WHERE stn = '488200'
+  AND _TABLE_SUFFIX BETWEEN '2020' AND '2022'
+  AND temp IS NOT NULL AND temp != 9999.9
+ORDER BY ds
+"""
+
+# ✅ Avoid Kaggle PermissionDenied by disabling BigQuery Storage API
+raw = client.query(QUERY_WEATHER).to_dataframe(create_bqstorage_client=False)
+print(f"✅ Retrieved {len(raw)} weather records")
+
+# Ensure ds is datetime
+raw["ds"] = pd.to_datetime(raw["ds"])
+
+# Create a continuous date range covering the dataset
+full_idx = pd.date_range(raw["ds"].min(), raw["ds"].max(), freq="D")
+
+# Merge with the full date index
+raw = pd.DataFrame({"ds": full_idx}).merge(raw, on="ds", how="left")
+
+# Interpolate only the numeric 'y' column using time-based interpolation
+raw = raw.set_index("ds")
+raw["y"] = raw["y"].interpolate(method="time")
+raw = raw.reset_index()
+
+# ✅ Fit Prophet model
+m = Prophet(daily_seasonality=True, yearly_seasonality=True)
+m.fit(raw)
+
+# Forecast next 30 days
+future = m.make_future_dataframe(periods=30)
+forecast = m.predict(future)
+
+# Display last 10 forecasted days
+print(forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].tail(10))
+
+# Plot forecast
+m.plot(forecast)
+plt.title("Hanoi Temperature Forecast")
+plt.show()
+
+# Optional: Plot forecast components
+m.plot_components(forecast)
+plt.show()
+Using Kaggle's public dataset BigQuery integration.
+15:54:51 - cmdstanpy - INFO - Chain [1] start processing
+✅ Retrieved 1093 weather records
+15:54:52 - cmdstanpy - INFO - Chain [1] done processing
+             ds       yhat  yhat_lower  yhat_upper
+1116 2023-01-21  64.833159   59.439903   70.307716
+1117 2023-01-22  64.603921   59.455023   70.013984
+1118 2023-01-23  64.615316   59.131974   69.903382
+1119 2023-01-24  65.160091   60.057593   71.153308
+1120 2023-01-25  65.036553   59.170976   70.388822
+1121 2023-01-26  64.821661   59.025360   70.232457
+1122 2023-01-27  65.279012   59.724422   70.994866
+1123 2023-01-28  65.032034   59.270228   70.256632
+1124 2023-01-29  64.738570   59.502356   70.152351
+1125 2023-01-30  64.682182   59.305549   70.420123
+2. BigQuery ML (CREATE MODEL)
+Stay entirely in SQL – no downloading data for training.
+Use BigQuery ML to train a regression model directly in the data warehouse.
+Evaluate model performance and run predictions using SQL queries.
+1. Setup BigQuery Client
+In [ ]:
+# !pip install google-cloud-bigquery
+
+from google.cloud import bigquery
+import pandas as pd
+import os
+
+# Authenticate via service account JSON
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "path/to/your-service-account.json"
+client = bigquery.Client()
+2. Create a Dataset in Your Project
+In [ ]:
+# Replace `my_dataset` with your dataset name
+dataset_id = f"{client.project}.weather_ml"
+dataset = bigquery.Dataset(dataset_id)
+dataset.location = "US"
+
+try:
+    client.create_dataset(dataset)
+    print(f"✅ Created dataset {dataset_id}")
+except:
+    print(f"⚠ Dataset {dataset_id} already exists")
+3. Train a Model with BQML
+We’ll train a linear regression model that predicts temperature (temp) based on the day of year and year.
+In [ ]:
+train_query = """
+CREATE OR REPLACE MODEL `weather_ml.hanoi_temp_model`
+OPTIONS (
+    model_type='linear_reg',
+    input_label_cols=['y']
+) AS
+SELECT
+  EXTRACT(DAYOFYEAR FROM DATE(CAST(year AS INT64), CAST(mo AS INT64), CAST(da AS INT64))) AS day_of_year,
+  CAST(year AS INT64) AS year_num,
+  temp AS y
+FROM `bigquery-public-data.noaa_gsod.gsod*`
+WHERE stn = '488200'
+  AND _TABLE_SUFFIX BETWEEN '2020' AND '2022'
+  AND temp IS NOT NULL AND temp != 9999.9
+"""
+
+client.query(train_query).result()
+print("✅ Model trained in BigQuery")
+4. Evaluate the Model
+```
+In [ ]:
+```python
+eval_query = """
+SELECT
+  *
+FROM
+  ML.EVALUATE(MODEL `weather_ml.hanoi_temp_model`,
+    (
+      SELECT
+        EXTRACT(DAYOFYEAR FROM DATE(CAST(year AS INT64), CAST(mo AS INT64), CAST(da AS INT64))) AS day_of_year,
+        CAST(year AS INT64) AS year_num,
+        temp AS y
+      FROM `bigquery-public-data.noaa_gsod.gsod*`
+      WHERE stn = '488200'
+        AND _TABLE_SUFFIX = '2022'
+        AND temp IS NOT NULL AND temp != 9999.9
+    )
+  )
+"""
+
+evaluation = client.query(eval_query).to_dataframe()
+print(evaluation)
+```
+5. Predict Future Temperatures
+For example, predict for the first 30 days of 2023:
+In [ ]:
+predict_query = """
+SELECT
+  day_of_year,
+  year_num,
+  predicted_y
+FROM
+  ML.PREDICT(MODEL `weather_ml.hanoi_temp_model`,
+    (
+      SELECT
+        day_of_year,
+        2023 AS year_num
+      FROM UNNEST(GENERATE_ARRAY(1, 30)) AS day_of_year
+    )
+  )
+"""
+
+predictions = client.query(predict_query).to_dataframe()
+print(predictions)
+3. BigQuery Generative AI (AI.FORECAST)
+Use Google Cloud’s AI.FORECAST function for server-side time-series forecasting.
+No manual feature engineering or model tuning – just provide your dataset and forecast horizon.
+Ideal for fast prototyping and large datasets.
+Approach 3 – Using AI.FORECAST
+In [ ]:
+from google.cloud import bigquery
+
+client = bigquery.Client()
+
+query_forecast = """
+SELECT *
+FROM AI.FORECAST(
+  MODEL(
+    SELECT
+      DATE(CAST(year AS INT64), CAST(mo AS INT64), CAST(da AS INT64)) AS ds,
+      temp AS y
+    FROM `bigquery-public-data.noaa_gsod.gsod*`
+    WHERE stn = '488200'
+      AND _TABLE_SUFFIX BETWEEN '2020' AND '2022'
+      AND temp IS NOT NULL AND temp != 9999.9
+    ORDER BY ds
+  ),
+  STRUCT(
+    30 AS horizon,         -- Forecast 30 days ahead
+    0.8 AS confidence_level
+  )
+)
+"""
+
+forecast_df = client.query(query_forecast).to_dataframe(create_bqstorage_client=False)
+print(forecast_df.head())

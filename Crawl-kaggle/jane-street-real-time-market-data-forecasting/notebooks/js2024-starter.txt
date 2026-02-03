@@ -1,0 +1,221 @@
+Created by yunsuxiaozi 2024/11/12
+Here we will use lightgbm、xgboost、catboost and origin features to create a simple baseline.
+version1:LB:0.0043
+version2:LB:0.0045
+version3:LB:0.0045
+version4:LB:0.0045
+version5:LB:0.0045
+version6:failed
+version7:LB:0.0051
+version8:LB:0.0050
+version9:Failed
+Import Libraries
+In [1]:
+source_file_path = '/kaggle/input/yunbase/Yunbase/baseline.py'
+target_file_path = '/kaggle/working/baseline.py'
+with open(source_file_path, 'r', encoding='utf-8') as file:
+    content = file.read()
+with open(target_file_path, 'w', encoding='utf-8') as file:
+    file.write(content)
+In [2]:
+!pip install -q --requirement /kaggle/input/yunbase/Yunbase/requirements.txt  \
+--no-index --find-links file:/kaggle/input/yunbase/
+In [3]:
+from baseline import Yunbase
+import polars as pl#similar to pandas, but with better performance when dealing with large datasets.
+import pandas as pd#read csv,parquet
+import numpy as np#for scientific computation of matrices
+#model
+from  lightgbm import LGBMRegressor
+from catboost import CatBoostRegressor
+from xgboost import XGBRegressor
+import os#Libraries that interact with the operating system
+import gc#rubbish collection
+#environment provided by competition hoster
+import kaggle_evaluation.jane_street_inference_server
+
+import random#provide some function to generate random_seed.
+#set random seed,to make sure model can be recurrented.
+def seed_everything(seed):
+    np.random.seed(seed)#numpy's random seed
+    random.seed(seed)#python built-in random seed
+seed_everything(seed=2025)
+Load Train Data
+I accidentally made a mistake by not filling in missing values in the training data and filling in -1 in the test data, resulting in a good LB (Those who know the reason can leave a message in the discussion forum)
+In [4]:
+yunbase=Yunbase()
+data=[]
+for i in [6,7,8,9]:
+    train=pl.read_parquet(f"/kaggle/input/jane-street-real-time-market-data-forecasting/train.parquet/partition_id={i}/part-0.parquet")
+    train=train.to_pandas()
+    train['sin_time_id']=np.sin(2*np.pi*train['time_id']/967)
+    train['cos_time_id']=np.cos(2*np.pi*train['time_id']/967)
+    train['sin_time_id_halfday']=np.sin(2*np.pi*train['time_id']/483)
+    train['cos_time_id_halfday']=np.cos(2*np.pi*train['time_id']/483)
+    #train=train.fillna(-1)
+    train=yunbase.reduce_mem_usage(train,float16_as32=False)
+    data.append(train)
+train=pd.concat(data)
+print(f"train.shape:{train.shape}")
+del data
+gc.collect()
+final_feature=['symbol_id','sin_time_id','cos_time_id','sin_time_id_halfday','cos_time_id_halfday']+[f'feature_0{i}' if i<10 else f'feature_{i}' for i in range(79)]
+train=train[['responder_6']+final_feature]
+train.head()
+Currently supported metrics:['custom_metric', 'mae', 'rmse', 'mse', 'medae', 'rmsle', 'msle', 'mape', 'auc', 'logloss', 'f1_score', 'mcc', 'accuracy', 'multi_logloss']
+Currently supported models:['lgb', 'cat', 'xgb', 'ridge', 'LinearRegression', 'LogisticRegression']
+Currently supported kfolds:['KFold', 'GroupKFold', 'StratifiedKFold', 'StratifiedGroupKFold', 'purged_CV']
+Currently supported objectives:['binary', 'multi_class', 'regression']
+Memory usage of dataframe is 2277.86 MB
+Memory usage after optimization is: 1118.22 MB
+Decreased by 50.9%
+Memory usage of dataframe is 2326.19 MB
+Memory usage after optimization is: 1141.95 MB
+Decreased by 50.9%
+Memory usage of dataframe is 2254.40 MB
+Memory usage after optimization is: 1106.71 MB
+Decreased by 50.9%
+Memory usage of dataframe is 2303.80 MB
+Memory usage after optimization is: 1130.96 MB
+Decreased by 50.9%
+train.shape:(24954072, 96)
+Out[4]:
+responder_6 symbol_id sin_time_id cos_time_id sin_time_id_halfday cos_time_id_halfday feature_00 feature_01 feature_02 feature_03 ... feature_69 feature_70 feature_71 feature_72 feature_73 feature_74 feature_75 feature_76 feature_77 feature_78
+0 1.822266 0 0.0 1.0 0.0 1.0 -0.151611 -1.217773 -0.584961 -0.129395 ... -0.556641 -1.247070 0.304688 -0.569336 NaN NaN -0.266602 -0.260010 -0.310547 -0.315186
+1 0.915039 1 0.0 1.0 0.0 1.0 -0.114258 -1.552734 -0.438232 0.147827 ... -0.504395 -1.032227 0.329346 -0.705078 NaN NaN -0.241333 -0.213745 -0.381348 -0.328369
+2 -0.793457 2 0.0 1.0 0.0 1.0 -0.563477 -1.109375 -0.146973 -0.112366 ... -0.157959 -1.407227 0.610352 -0.465820 NaN NaN 0.432617 0.315918 -0.142822 -0.150391
+3 0.198120 3 0.0 1.0 0.0 1.0 -0.499268 -0.807129 0.037170 0.256592 ... -0.257324 -1.132812 -0.211792 -0.844238 NaN NaN 5.453125 5.531250 1.168945 1.049805
+4 0.328857 4 0.0 1.0 0.0 1.0 0.271484 -1.068359 -0.073181 0.355469 ... -0.337402 -1.018555 0.819824 -0.338135 NaN NaN 3.263672 3.539062 0.500977 0.726074
+5 rows × 85 columns
+Model training
+In [5]:
+lgb_params={"boosting_type": "gbdt","metric": 'rmse',
+            'random_state': 2025,  "max_depth": 10,"learning_rate": 0.1,
+            "n_estimators": 120,"colsample_bytree": 0.6,"colsample_bynode": 0.6,"verbose": -1,"reg_alpha": 0.2,
+            "reg_lambda": 5,"extra_trees":True,'num_leaves':64,"max_bin":255,
+            'device':'gpu','gpu_use_dp':True,
+            }
+
+cat_params={'task_type':'GPU',
+           'random_state':2025,
+           'eval_metric'         : 'RMSE',
+           'bagging_temperature' : 0.50,
+           'iterations'          : 200,
+           'learning_rate'       : 0.1,
+           'max_depth'           : 12,
+           'l2_leaf_reg'         : 1.25,
+           'min_data_in_leaf'    : 24,
+           'random_strength'     : 0.25, 
+           'verbose'             : 0,
+          }
+xgb_params={'random_state': 2025, 'n_estimators': 125, 
+            'learning_rate': 0.1, 'max_depth': 10,
+            'reg_alpha': 0.08, 'reg_lambda': 0.8, 
+            'subsample': 0.95, 'colsample_bytree': 0.6, 
+            'min_child_weight': 3,
+            'tree_method':'gpu_hist',
+           }
+print("lgb")
+lgb=LGBMRegressor(**lgb_params)
+lgb.fit(train[final_feature].values,train['responder_6'].values)
+print("cat")
+cat=CatBoostRegressor(**cat_params)
+cat.fit(train[final_feature].values,train['responder_6'].values)
+print("xgb")
+xgb=XGBRegressor(**xgb_params)
+xgb.fit(train[final_feature].values,train['responder_6'].values)
+lgb
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+cat
+xgb
+Out[5]:
+
+XGBRegressor
+XGBRegressor(base_score=None, booster=None, callbacks=None,
+             colsample_bylevel=None, colsample_bynode=None,
+             colsample_bytree=0.6, device=None, early_stopping_rounds=None,
+             enable_categorical=False, eval_metric=None, feature_types=None,
+             gamma=None, grow_policy=None, importance_type=None,
+             interaction_constraints=None, learning_rate=0.1, max_bin=None,
+             max_cat_threshold=None, max_cat_to_onehot=None,
+             max_delta_step=None, max_depth=10, max_leaves=None,
+             min_child_weight=3, missing=nan, monotone_constraints=None,
+             multi_strategy=None, n_estimators=125, n_jobs=None,
+             num_parallel_tree=None, random_state=2025, ...)
+Model Inference
+The following code is used in the training set to load more data for training, and not in the testing set to save time. I tried calling this function 100000 times and it would take about an hour.
+test=yunbase.reduce_mem_usage(test,float16_as32=False)
+In [6]:
+def predict(test,lags):
+    global lgb,cat,xgb
+    
+    predictions = test.select(
+        'row_id',
+        pl.lit(0.0).alias('responder_6'),
+    )
+    test=test.to_pandas()
+    test['sin_time_id']=np.sin(2*np.pi*test['time_id']/967)
+    test['cos_time_id']=np.cos(2*np.pi*test['time_id']/967)
+    test['sin_time_id_halfday']=np.sin(2*np.pi*test['time_id']/483)
+    test['cos_time_id_halfday']=np.cos(2*np.pi*test['time_id']/483)
+    test=test.fillna(-1)
+    test=test[final_feature]
+    eps=1e-10
+    test_preds=0.55*lgb.predict(test)+0.2*cat.predict(test)+0.25*xgb.predict(test)
+    test_preds=np.clip(test_preds,-5+eps,5-eps)
+    predictions = predictions.with_columns(pl.Series('responder_6', test_preds.ravel()))
+    return predictions
+
+inference_server = kaggle_evaluation.jane_street_inference_server.JSInferenceServer(predict)
+
+if os.getenv('KAGGLE_IS_COMPETITION_RERUN'):
+    inference_server.serve()
+else:
+    inference_server.run_local_gateway(
+        (
+            '/kaggle/input/jane-street-real-time-market-data-forecasting/test.parquet',
+            '/kaggle/input/jane-street-real-time-market-data-forecasting/lags.parquet',
+        )
+    )
+[11:46:21] WARNING: /workspace/src/common/error_msg.cc:27: The tree method `gpu_hist` is deprecated since 2.0.0. To use GPU training, set the `device` parameter to CUDA instead.
+
+    E.g. tree_method = "hist", device = "cuda"
+
+[11:46:21] WARNING: /workspace/src/common/error_msg.cc:58: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.

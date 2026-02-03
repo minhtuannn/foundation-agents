@@ -1,0 +1,654 @@
+Libraries
+unfold_moreShow hidden code
+EDA Functions
+unfold_moreShow hidden code
+Config
+In [3]:
+RANDOM_SEED = 25
+NUMERIC_CONTINUOUS = [
+    'age',
+    'alcohol_consumption_per_week',
+    'physical_activity_minutes_per_week',
+    'diet_score',
+    'sleep_hours_per_day',
+    'screen_time_hours_per_day',
+    'bmi',
+    'waist_to_hip_ratio',
+    'systolic_bp',
+    'diastolic_bp',
+    'heart_rate',
+    'cholesterol_total',
+    'hdl_cholesterol',
+    'ldl_cholesterol',
+    'triglycerides'
+]
+
+NUMERIC_BINARY = [
+    'family_history_diabetes',
+    'hypertension_history',
+    'cardiovascular_history'
+]
+
+NUMERIC_COLUMNS = NUMERIC_CONTINUOUS + NUMERIC_BINARY
+
+CATEGORY_COLUMNS = ['gender', 'ethnicity', 'education_level', 'income_level',
+       'smoking_status', 'employment_status']
+
+TARGET = 'diagnosed_diabetes'
+
+MODEL_FEATURES = ['age',
+ 'alcohol_consumption_per_week',
+ 'physical_activity_minutes_per_week',
+ 'diet_score',
+ 'sleep_hours_per_day',
+ 'screen_time_hours_per_day',
+ 'bmi',
+ 'waist_to_hip_ratio',
+ 'systolic_bp',
+ 'diastolic_bp',
+ 'heart_rate',
+ 'cholesterol_total',
+ 'hdl_cholesterol',
+ 'ldl_cholesterol',
+ 'triglycerides',
+ 'family_history_diabetes',
+ 'hypertension_history',
+ 'cardiovascular_history',
+ 'screen_activity_ratio',
+ 'sleep_efficiency_pct',
+ 'pulse_pressure',
+ 'mean_arterial_pressure',
+ 'rate_pressure_product',
+ 'ldl_hdl_ratio',
+ 'cholesterol_hdl_ratio',
+ 'non_hdl_cholesterol',
+ 'ldl_cholesterol_share',
+ 'tg_hdl_ratio',
+ 'age_bmi_risk',
+ 'age_norm_activity',
+ 'activity_bmi_diff',
+ 'lipid_sum',
+ 'lifestyle_risk_score',
+ 'activity_x_age',
+ "lipid_burden",
+ "pulse_pressure_ratio",
+ "age_map_risk",
+ 'risk_history',
+ 'genetic_history',
+ 'gender', 
+ 'ethnicity', 
+ 'education_level', 
+ 'income_level',
+ 'smoking_status', 
+ 'employment_status']
+
+MODEL_CONFIG = {
+    "LightGBM": {
+        "class": LGBMClassifier,
+        "params": {
+            "n_estimators": 7000,
+            "learning_rate": 0.01,
+            "subsample": 0.85,
+            "num_leaves": 24,
+            "colsample_bytree": 0.8,
+            "device": "gpu",
+            "eval_metric": "auc",
+            "random_state": RANDOM_SEED,
+        }
+    },
+    "XGBoost": {
+        "class": XGBClassifier,
+        "params": {
+            "n_estimators": 2000,
+            "learning_rate": 0.07,
+            "max_depth": 4,
+            "subsample": 0.75,
+            "colsample_bytree": 0.8,
+            "eval_metric": "auc",
+            "verbosity": 0,
+            "tree_method": "gpu_hist",
+            "enable_categorical": True,
+            "random_state": RANDOM_SEED,
+        }
+    },
+    "CatBoost": {
+        "class": CatBoostClassifier,
+        "params": {
+            "iterations": 2000,
+            "learning_rate": 0.08,
+            "depth": 4,
+            "task_type": "GPU",
+            "eval_metric": "AUC",
+            "loss_function": "Logloss",
+            "verbose": False,
+            "random_seed": RANDOM_SEED,
+    }
+}
+}
+In [4]:
+train = pd.read_csv('/kaggle/input/playground-series-s5e12/train.csv')
+test = pd.read_csv('/kaggle/input/playground-series-s5e12/test.csv')
+submission = pd.read_csv('/kaggle/input/playground-series-s5e12/sample_submission.csv')
+In [5]:
+train.head()
+Out[5]:
+id age alcohol_consumption_per_week physical_activity_minutes_per_week diet_score sleep_hours_per_day screen_time_hours_per_day bmi waist_to_hip_ratio systolic_bp diastolic_bp heart_rate cholesterol_total hdl_cholesterol ldl_cholesterol triglycerides gender ethnicity education_level income_level smoking_status employment_status family_history_diabetes hypertension_history cardiovascular_history diagnosed_diabetes
+0 0 31 1 45 7.7 6.8 6.1 33.4 0.93 112 70 62 199 58 114 102 Female Hispanic Highschool Lower-Middle Current Employed 0 0 0 1.0
+1 1 50 2 73 5.7 6.5 5.8 23.8 0.83 120 77 71 199 50 121 124 Female White Highschool Upper-Middle Never Employed 0 0 0 1.0
+2 2 32 3 158 8.5 7.4 9.1 24.1 0.83 95 89 73 188 59 114 108 Male Hispanic Highschool Lower-Middle Never Retired 0 0 0 0.0
+3 3 54 3 77 4.6 7.0 9.2 26.6 0.83 121 69 74 182 54 85 123 Female White Highschool Lower-Middle Current Employed 0 1 0 1.0
+4 4 54 1 55 5.7 6.2 5.1 28.8 0.90 108 60 85 206 49 131 124 Male White Highschool Upper-Middle Never Retired 0 1 0 1.0
+In [6]:
+describe_dataset(train)
+📋 Dataset Overview
+--- Basic Dimensions & Memory ---
+**Shape (Rows, Columns):** (700,000, 26)
+**Total Memory Usage:** 362.93 MB
+
+--- Feature Data Types and Counts ---
+| Data_Type   |   Count |
+|:------------|--------:|
+| int64       |      14 |
+| float64     |       6 |
+| object      |       6 |
+📊 Descriptive Statistics
+Numerical Features
+  count mean std min 25% 50% 75% max IQR
+id 700,000.00 349,999.50 202,072.74 0.00 174,999.75 349,999.50 524,999.25 699,999.00 349,999.50
+age 700,000.00 50.36 11.66 19.00 42.00 50.00 58.00 89.00 16.00
+alcohol_consumption_per_week 700,000.00 2.07 1.05 1.00 1.00 2.00 3.00 9.00 2.00
+physical_activity_minutes_per_week 700,000.00 80.23 51.20 1.00 49.00 71.00 96.00 747.00 47.00
+diet_score 700,000.00 5.96 1.46 0.10 5.00 6.00 7.00 9.90 2.00
+sleep_hours_per_day 700,000.00 7.00 0.90 3.10 6.40 7.00 7.60 9.90 1.20
+screen_time_hours_per_day 700,000.00 6.01 2.02 0.60 4.60 6.00 7.40 16.50 2.80
+bmi 700,000.00 25.87 2.86 15.10 23.90 25.90 27.80 38.40 3.90
+waist_to_hip_ratio 700,000.00 0.86 0.04 0.68 0.83 0.86 0.88 1.05 0.05
+systolic_bp 700,000.00 116.29 11.01 91.00 108.00 116.00 124.00 163.00 16.00
+diastolic_bp 700,000.00 75.44 6.83 51.00 71.00 75.00 80.00 104.00 9.00
+heart_rate 700,000.00 70.17 6.94 42.00 65.00 70.00 75.00 101.00 10.00
+cholesterol_total 700,000.00 186.82 16.73 117.00 175.00 187.00 199.00 289.00 24.00
+hdl_cholesterol 700,000.00 53.82 8.27 21.00 48.00 54.00 59.00 90.00 11.00
+ldl_cholesterol 700,000.00 102.91 19.02 51.00 89.00 103.00 116.00 205.00 27.00
+triglycerides 700,000.00 123.08 24.74 31.00 106.00 123.00 139.00 290.00 33.00
+family_history_diabetes 700,000.00 0.15 0.36 0.00 0.00 0.00 0.00 1.00 0.00
+hypertension_history 700,000.00 0.18 0.39 0.00 0.00 0.00 0.00 1.00 0.00
+cardiovascular_history 700,000.00 0.03 0.17 0.00 0.00 0.00 0.00 1.00 0.00
+diagnosed_diabetes 700,000.00 0.62 0.48 0.00 0.00 1.00 1.00 1.00 1.00
+Found 20 numerical features.
+Categorical / Object Features
+  count unique top freq
+gender 700000 3 Female 363,237
+ethnicity 700000 5 White 386,153
+education_level 700000 4 Highschool 344,145
+income_level 700000 5 Middle 290,557
+smoking_status 700000 3 Never 494,448
+employment_status 700000 4 Employed 516,170
+Found 6 categorical/object features.
+In [7]:
+describe_dataset(test)
+📋 Dataset Overview
+--- Basic Dimensions & Memory ---
+**Shape (Rows, Columns):** (300,000, 25)
+**Total Memory Usage:** 153.25 MB
+
+--- Feature Data Types and Counts ---
+| Data_Type   |   Count |
+|:------------|--------:|
+| int64       |      14 |
+| object      |       6 |
+| float64     |       5 |
+📊 Descriptive Statistics
+Numerical Features
+  count mean std min 25% 50% 75% max IQR
+id 300,000.00 849,999.50 86,602.68 700,000.00 774,999.75 849,999.50 924,999.25 999,999.00 149,999.50
+age 300,000.00 50.43 11.94 19.00 42.00 50.00 59.00 89.00 17.00
+alcohol_consumption_per_week 300,000.00 2.09 1.07 1.00 1.00 2.00 3.00 9.00 2.00
+physical_activity_minutes_per_week 300,000.00 92.35 62.19 1.00 51.00 77.00 115.00 748.00 64.00
+diet_score 300,000.00 5.95 1.48 0.10 5.00 6.00 7.00 9.90 2.00
+sleep_hours_per_day 300,000.00 7.00 0.91 3.10 6.40 7.00 7.60 9.90 1.20
+screen_time_hours_per_day 300,000.00 6.01 2.06 0.60 4.60 6.00 7.40 15.90 2.80
+bmi 300,000.00 25.88 2.89 15.10 23.90 25.90 27.80 38.30 3.90
+waist_to_hip_ratio 300,000.00 0.86 0.04 0.69 0.83 0.86 0.89 1.05 0.06
+systolic_bp 300,000.00 116.37 11.25 91.00 108.00 116.00 124.00 170.00 16.00
+diastolic_bp 300,000.00 75.40 6.95 51.00 71.00 75.00 80.00 104.00 9.00
+heart_rate 300,000.00 70.05 7.09 42.00 65.00 70.00 75.00 101.00 10.00
+cholesterol_total 300,000.00 187.31 18.41 107.00 174.00 187.00 200.00 285.00 26.00
+hdl_cholesterol 300,000.00 53.81 8.40 22.00 48.00 54.00 60.00 91.00 12.00
+ldl_cholesterol 300,000.00 103.42 20.57 51.00 89.00 103.00 117.00 226.00 28.00
+triglycerides 300,000.00 123.54 28.97 31.00 104.00 123.00 142.00 290.00 38.00
+family_history_diabetes 300,000.00 0.15 0.36 0.00 0.00 0.00 0.00 1.00 0.00
+hypertension_history 300,000.00 0.18 0.39 0.00 0.00 0.00 0.00 1.00 0.00
+cardiovascular_history 300,000.00 0.03 0.18 0.00 0.00 0.00 0.00 1.00 0.00
+Found 19 numerical features.
+Categorical / Object Features
+  count unique top freq
+gender 300000 3 Female 154,098
+ethnicity 300000 5 White 168,375
+education_level 300000 4 Highschool 153,355
+income_level 300000 5 Middle 124,249
+smoking_status 300000 3 Never 211,666
+employment_status 300000 4 Employed 217,993
+Found 6 categorical/object features.
+The distribution seems realistic so that 20% of adults show higher levels of hypertension.
+In [8]:
+# detect_outliers(train)
+Analyze Numeric Continuous Features
+In [9]:
+train_summary = analyze_numeric_distribution(train, NUMERIC_CONTINUOUS)
+train_summary
+Out[9]:
+variable skewness kurtosis normality_p_value insights
+0 age 0.020905 -0.386746 0.000000e+00 Approximately symmetric distribution. | Reason...
+1 alcohol_consumption_per_week 0.932373 0.704165 0.000000e+00 Moderate right-skew → may benefit from mild tr...
+2 physical_activity_minutes_per_week 2.814191 13.196969 0.000000e+00 Strong right-skew → long right tail, potential...
+3 diet_score -0.062970 -0.161260 5.359503e-121 Approximately symmetric distribution. | Reason...
+4 sleep_hours_per_day 0.001486 -0.059958 1.960590e-07 Approximately symmetric distribution. | Reason...
+5 screen_time_hours_per_day 0.114109 -0.132795 6.995442e-209 Approximately symmetric distribution. | Reason...
+6 bmi 0.032107 -0.022292 3.369130e-15 Approximately symmetric distribution. | Reason...
+7 waist_to_hip_ratio 0.037715 0.011089 1.801486e-19 Approximately symmetric distribution. | Reason...
+8 systolic_bp 0.097208 -0.393853 0.000000e+00 Approximately symmetric distribution. | Reason...
+9 diastolic_bp -0.001377 -0.037283 1.098048e-07 Approximately symmetric distribution. | Reason...
+10 heart_rate -0.012544 -0.061072 1.783508e-14 Approximately symmetric distribution. | Reason...
+11 cholesterol_total 0.061056 -0.266349 0.000000e+00 Approximately symmetric distribution. | Reason...
+12 hdl_cholesterol -0.021258 -0.107158 7.315315e-45 Approximately symmetric distribution. | Reason...
+13 ldl_cholesterol 0.132300 -0.132106 7.723555e-240 Approximately symmetric distribution. | Reason...
+14 triglycerides 0.192353 0.478300 0.000000e+00 Approximately symmetric distribution. | Reason...
+Numeric Features Correlation Heatmap
+Target (diagnosed_diabetes) has weak linear correlations with individual features (0.01–0.21)
+Strongest correlations are between features (Waist-hip ratio <-> BMI -> 0.76)
+In [10]:
+plot_correlation_matrix(train)
+Majority are non-smokers. “Current” and “Former” smokers each around 15%.
+Majority employed (74%)
+In [11]:
+for col in CATEGORY_COLUMNS:
+    plot_categorical_distribution(train, col)
+In [12]:
+for col in [col for col in train.columns if train[col].dropna().nunique() == 2]:
+    plot_binary_feature(train, col)
+Numeric Continuous Features vs Target
+Age is a strong risk factor, and this relationship is clearly visible.
+Diabetic individuals cluster more tightly at lower activity levels.
+Diabetics show a clear shift toward higher BMI values.
+Diabetics have higher waist-to-hip ratios.
+Diabetic individuals have higher systolic blood pressure on average.
+Diabetic individuals have a shift to slightly higher cholesterol levels.
+In [13]:
+for col in NUMERIC_CONTINUOUS:
+    numeric_vs_target(train, col, TARGET)
+📌 **Stats for age vs diagnosed_diabetes:**
+Mean (No Diabetes): 47.94
+Mean (Diabetes):    51.82
+Mean Difference:    3.88
+Cohen's d:          0.338  → MEDIUM effect
+T-test p-value:     0.000e+00
+📌 **Stats for alcohol_consumption_per_week vs diagnosed_diabetes:**
+Mean (No Diabetes): 2.07
+Mean (Diabetes):    2.07
+Mean Difference:    0.01
+Cohen's d:          0.006  → SMALL effect
+T-test p-value:     1.249e-02
+📌 **Stats for physical_activity_minutes_per_week vs diagnosed_diabetes:**
+Mean (No Diabetes): 91.41
+Mean (Diabetes):    73.47
+Mean Difference:    -17.94
+Cohen's d:          -0.341  → MEDIUM effect
+T-test p-value:     0.000e+00
+📌 **Stats for diet_score vs diagnosed_diabetes:**
+Mean (No Diabetes): 6.06
+Mean (Diabetes):    5.91
+Mean Difference:    -0.15
+Cohen's d:          -0.104  → SMALL effect
+T-test p-value:     0.000e+00
+📌 **Stats for sleep_hours_per_day vs diagnosed_diabetes:**
+Mean (No Diabetes): 7.00
+Mean (Diabetes):    7.00
+Mean Difference:    0.01
+Cohen's d:          0.007  → SMALL effect
+T-test p-value:     3.361e-03
+📌 **Stats for screen_time_hours_per_day vs diagnosed_diabetes:**
+Mean (No Diabetes): 5.97
+Mean (Diabetes):    6.04
+Mean Difference:    0.08
+Cohen's d:          0.038  → SMALL effect
+T-test p-value:     2.434e-52
+📌 **Stats for bmi vs diagnosed_diabetes:**
+Mean (No Diabetes): 25.49
+Mean (Diabetes):    26.11
+Mean Difference:    0.62
+Cohen's d:          0.219  → SMALL effect
+T-test p-value:     0.000e+00
+📌 **Stats for waist_to_hip_ratio vs diagnosed_diabetes:**
+Mean (No Diabetes): 0.85
+Mean (Diabetes):    0.86
+Mean Difference:    0.01
+Cohen's d:          0.168  → SMALL effect
+T-test p-value:     0.000e+00
+📌 **Stats for systolic_bp vs diagnosed_diabetes:**
+Mean (No Diabetes): 114.78
+Mean (Diabetes):    117.21
+Mean Difference:    2.43
+Cohen's d:          0.223  → SMALL effect
+T-test p-value:     0.000e+00
+📌 **Stats for diastolic_bp vs diagnosed_diabetes:**
+Mean (No Diabetes): 75.12
+Mean (Diabetes):    75.63
+Mean Difference:    0.51
+Cohen's d:          0.075  → SMALL effect
+T-test p-value:     2.316e-202
+📌 **Stats for heart_rate vs diagnosed_diabetes:**
+Mean (No Diabetes): 69.95
+Mean (Diabetes):    70.30
+Mean Difference:    0.34
+Cohen's d:          0.049  → SMALL effect
+T-test p-value:     2.157e-88
+📌 **Stats for cholesterol_total vs diagnosed_diabetes:**
+Mean (No Diabetes): 184.92
+Mean (Diabetes):    187.96
+Mean Difference:    3.04
+Cohen's d:          0.183  → SMALL effect
+T-test p-value:     0.000e+00
+📌 **Stats for hdl_cholesterol vs diagnosed_diabetes:**
+Mean (No Diabetes): 54.39
+Mean (Diabetes):    53.48
+Mean Difference:    -0.91
+Cohen's d:          -0.110  → SMALL effect
+T-test p-value:     0.000e+00
+📌 **Stats for ldl_cholesterol vs diagnosed_diabetes:**
+Mean (No Diabetes): 100.39
+Mean (Diabetes):    104.43
+Mean Difference:    4.03
+Cohen's d:          0.213  → SMALL effect
+T-test p-value:     0.000e+00
+📌 **Stats for triglycerides vs diagnosed_diabetes:**
+Mean (No Diabetes): 120.20
+Mean (Diabetes):    124.83
+Mean Difference:    4.63
+Cohen's d:          0.188  → SMALL effect
+T-test p-value:     0.000e+00
+In [14]:
+for col in CATEGORY_COLUMNS:
+    categorical_vs_target(train, col, TARGET)
+   gender  diagnosed_diabetes
+0   Other            0.640566
+1    Male            0.624294
+2  Female            0.622205
+  ethnicity  diagnosed_diabetes
+0     Other            0.635936
+1     Asian            0.628493
+2     White            0.624105
+3     Black            0.623879
+4  Hispanic            0.616314
+  education_level  diagnosed_diabetes
+0       No formal            0.636066
+1        Graduate            0.627008
+2      Highschool            0.621462
+3    Postgraduate            0.616647
+   income_level  diagnosed_diabetes
+0           Low            0.630328
+1  Lower-Middle            0.626835
+2          High            0.623593
+3  Upper-Middle            0.620420
+4        Middle            0.620291
+  smoking_status  diagnosed_diabetes
+0         Former            0.625331
+1        Current            0.623124
+2          Never            0.622911
+  employment_status  diagnosed_diabetes
+0          Employed            0.624643
+1        Unemployed            0.622130
+2           Student            0.621586
+3           Retired            0.618058
+Genetic predisposition seems to be a strong predictor for target prediction.
+Diabetes rate jumps from 58% → 87%
+In [15]:
+for col in NUMERIC_BINARY:
+    binary_vs_target(train, col, TARGET)
+Model Training
+In [16]:
+train = engineer_features(train)
+test = engineer_features(test)
+
+for col in CATEGORY_COLUMNS:
+    train[col] = train[col].astype("category")
+    test[col] = test[col].astype("category")
+In [17]:
+# Train Models
+X = train.drop(columns=["diagnosed_diabetes"])
+y = train["diagnosed_diabetes"]
+
+oof_preds, trained_models, feature_importances = train_all_models(
+    X[MODEL_FEATURES], y, MODEL_CONFIG
+)
+
+meta_models = train_meta_model_cv(oof_preds, y)
+
+# Evaluate each model
+for name, preds in oof_preds.items():
+    pred_labels = (preds >= 0.5).astype(int)
+    evaluate_model(name, y, pred_labels, preds)
+
+# Feature importance plots
+for name, fi in feature_importances.items():
+    plot_feature_importance(fi, name)
+Training model: LightGBM
+
+===== LightGBM - Fold 1 =====
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Info] Number of positive: 349045, number of negative: 210955
+[LightGBM] [Info] This is the GPU trainer!!
+[LightGBM] [Info] Total Bins 6278
+[LightGBM] [Info] Number of data points in the train set: 560000, number of used features: 45
+[LightGBM] [Info] Using GPU Device: Tesla T4, Vendor: NVIDIA Corporation
+[LightGBM] [Info] Compiling OpenCL Kernel with 256 bins...
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+[LightGBM] [Info] GPU programs have been built
+[LightGBM] [Info] Size of histogram bin entry: 8
+[LightGBM] [Info] 38 dense feature groups (21.36 MB) transferred to GPU in 0.022951 secs. 1 sparse feature groups
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Info] [binary:BoostFromScore]: pavg=0.623295 -> initscore=0.503556
+[LightGBM] [Info] Start training from score 0.503556
+[LightGBM] [Warning] Unknown parameter: eval_metric
+Fold ROC-AUC: 0.7251
+
+===== LightGBM - Fold 2 =====
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Info] Number of positive: 349045, number of negative: 210955
+[LightGBM] [Info] This is the GPU trainer!!
+[LightGBM] [Info] Total Bins 6272
+[LightGBM] [Info] Number of data points in the train set: 560000, number of used features: 45
+[LightGBM] [Info] Using GPU Device: Tesla T4, Vendor: NVIDIA Corporation
+[LightGBM] [Info] Compiling OpenCL Kernel with 256 bins...
+[LightGBM] [Info] GPU programs have been built
+[LightGBM] [Info] Size of histogram bin entry: 8
+[LightGBM] [Info] 38 dense feature groups (21.36 MB) transferred to GPU in 0.023292 secs. 1 sparse feature groups
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Info] [binary:BoostFromScore]: pavg=0.623295 -> initscore=0.503556
+[LightGBM] [Info] Start training from score 0.503556
+[LightGBM] [Warning] Unknown parameter: eval_metric
+Fold ROC-AUC: 0.7271
+
+===== LightGBM - Fold 3 =====
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Info] Number of positive: 349046, number of negative: 210954
+[LightGBM] [Info] This is the GPU trainer!!
+[LightGBM] [Info] Total Bins 6272
+[LightGBM] [Info] Number of data points in the train set: 560000, number of used features: 45
+[LightGBM] [Info] Using GPU Device: Tesla T4, Vendor: NVIDIA Corporation
+[LightGBM] [Info] Compiling OpenCL Kernel with 256 bins...
+[LightGBM] [Info] GPU programs have been built
+[LightGBM] [Info] Size of histogram bin entry: 8
+[LightGBM] [Info] 38 dense feature groups (21.36 MB) transferred to GPU in 0.023230 secs. 1 sparse feature groups
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Info] [binary:BoostFromScore]: pavg=0.623296 -> initscore=0.503564
+[LightGBM] [Info] Start training from score 0.503564
+[LightGBM] [Warning] Unknown parameter: eval_metric
+Fold ROC-AUC: 0.7247
+
+===== LightGBM - Fold 4 =====
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Info] Number of positive: 349046, number of negative: 210954
+[LightGBM] [Info] This is the GPU trainer!!
+[LightGBM] [Info] Total Bins 6281
+[LightGBM] [Info] Number of data points in the train set: 560000, number of used features: 45
+[LightGBM] [Info] Using GPU Device: Tesla T4, Vendor: NVIDIA Corporation
+[LightGBM] [Info] Compiling OpenCL Kernel with 256 bins...
+[LightGBM] [Info] GPU programs have been built
+[LightGBM] [Info] Size of histogram bin entry: 8
+[LightGBM] [Info] 38 dense feature groups (21.36 MB) transferred to GPU in 0.023173 secs. 1 sparse feature groups
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Info] [binary:BoostFromScore]: pavg=0.623296 -> initscore=0.503564
+[LightGBM] [Info] Start training from score 0.503564
+[LightGBM] [Warning] Unknown parameter: eval_metric
+Fold ROC-AUC: 0.7272
+
+===== LightGBM - Fold 5 =====
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Info] Number of positive: 349046, number of negative: 210954
+[LightGBM] [Info] This is the GPU trainer!!
+[LightGBM] [Info] Total Bins 6278
+[LightGBM] [Info] Number of data points in the train set: 560000, number of used features: 45
+[LightGBM] [Info] Using GPU Device: Tesla T4, Vendor: NVIDIA Corporation
+[LightGBM] [Info] Compiling OpenCL Kernel with 256 bins...
+[LightGBM] [Info] GPU programs have been built
+[LightGBM] [Info] Size of histogram bin entry: 8
+[LightGBM] [Info] 38 dense feature groups (21.36 MB) transferred to GPU in 0.023433 secs. 1 sparse feature groups
+[LightGBM] [Warning] Unknown parameter: eval_metric
+[LightGBM] [Info] [binary:BoostFromScore]: pavg=0.623296 -> initscore=0.503564
+[LightGBM] [Info] Start training from score 0.503564
+[LightGBM] [Warning] Unknown parameter: eval_metric
+Fold ROC-AUC: 0.7264
+
+===== LightGBM CV ROC-AUC: 0.7261 ± 0.0010 =====
+
+Training model: XGBoost
+
+===== XGBoost - Fold 1 =====
+Fold ROC-AUC: 0.7240
+
+===== XGBoost - Fold 2 =====
+Fold ROC-AUC: 0.7269
+
+===== XGBoost - Fold 3 =====
+Fold ROC-AUC: 0.7246
+
+===== XGBoost - Fold 4 =====
+Fold ROC-AUC: 0.7269
+
+===== XGBoost - Fold 5 =====
+Fold ROC-AUC: 0.7255
+
+===== XGBoost CV ROC-AUC: 0.7256 ± 0.0012 =====
+
+Training model: CatBoost
+
+===== CatBoost - Fold 1 =====
+Default metric period is 5 because AUC is/are not implemented for GPU
+Fold ROC-AUC: 0.7233
+
+===== CatBoost - Fold 2 =====
+Default metric period is 5 because AUC is/are not implemented for GPU
+Fold ROC-AUC: 0.7255
+
+===== CatBoost - Fold 3 =====
+Default metric period is 5 because AUC is/are not implemented for GPU
+Fold ROC-AUC: 0.7225
+
+===== CatBoost - Fold 4 =====
+Default metric period is 5 because AUC is/are not implemented for GPU
+Fold ROC-AUC: 0.7251
+
+===== CatBoost - Fold 5 =====
+Default metric period is 5 because AUC is/are not implemented for GPU
+Fold ROC-AUC: 0.7241
+
+===== CatBoost CV ROC-AUC: 0.7241 ± 0.0011 =====
+Meta fold 1 AUC: 0.7271743859441638
+Meta fold 2 AUC: 0.7255841376047114
+Meta fold 3 AUC: 0.7267559246183919
+Meta fold 4 AUC: 0.7273728891535308
+Meta fold 5 AUC: 0.7271569942156306
+Meta OOF AUC: 0.7267585159155006
+
+===== LightGBM METRICS =====
+ROC-AUC: 0.7260744523576361
+F1: 0.6958877788256417
+Precision: 0.7733724543984576
+Recall: 0.6325156369253759
+===== XGBoost METRICS =====
+ROC-AUC: 0.7255805965915004
+F1: 0.6964959134309677
+Precision: 0.7728121157930032
+Recall: 0.6338976913045172
+===== CatBoost METRICS =====
+ROC-AUC: 0.7240882994784178
+F1: 0.6925137752208086
+Precision: 0.7736035325033874
+Recall: 0.6268109381696833
+In [18]:
+# Retrain models on full training data
+full_models = fit_full_models(trained_models, X[MODEL_FEATURES], y)
+
+test_preds = predict_stacked(
+    full_models, meta_models, test[MODEL_FEATURES]
+)
+Training full model: LightGBM
+
+Training full model: XGBoost
+
+Training full model: CatBoost
+Default metric period is 5 because AUC is/are not implemented for GPU
+In [19]:
+submission = pd.DataFrame({
+    "id": test["id"],
+    "diagnosed_diabetes": test_preds
+})
+
+submission.to_csv("submission.csv", index=False)
+submission.head()
+Out[19]:
+id diagnosed_diabetes
+0 700000 0.468437
+1 700001 0.681596
+2 700002 0.801024
+3 700003 0.399916
+4 700004 0.941344
+In [ ]:
+ 

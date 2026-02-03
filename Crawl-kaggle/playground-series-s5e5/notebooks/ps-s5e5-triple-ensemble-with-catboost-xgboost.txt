@@ -1,0 +1,614 @@
+This notebook constructs a robust ensemble model to predict calorie expenditure based on physiological and activity metrics from the Kaggle Playground Series S5E5 dataset. The pipeline begins by importing essential Python libraries including NumPy, Pandas, CatBoost, and XGBoost, along with tools from scikit-learn for preprocessing and cross-validation. It reads the training, test, and sample submission datasets, followed by basic preprocessing steps such as deduplication and binary encoding of the 'Sex' feature.
+A custom feature engineering function generates all pairwise interaction terms between core numerical features — such as Age, Height, Weight, Duration, Heart Rate, and Body Temperature — to enrich the dataset with nonlinear interactions. This function is reused in all models. Three distinct models are then defined.
+Model 1 removes noisy duplicates by grouping identical input rows and keeping the minimum calorie value. It creates BMI and Intensity features and applies stratified 5-fold cross-validation based on binned Duration. Both CatBoost and XGBoost regressors are trained per fold, and their test predictions are averaged and blended equally before being inverse-transformed from log space.
+Model 2 generates masked physiological features based on unique Duration and Age values and creates interaction terms involving the 'Sex' feature and its reverse. CatBoost is trained using stratified KFold on Duration bins while XGBoost is trained using regular KFold. Predictions from both models are averaged and returned after inverse log transformation and clipping.
+Model 3 applies 50-fold KFold cross-validation to maximize ensemble robustness. It uses all cross terms and treats 'Sex' as a categorical feature. Both CatBoost and XGBoost are trained in log space, and their predictions are blended using a 30%/70% weighting in favor of XGBoost.
+Finally, a caching system ensures efficient reuse of model predictions using .npy files. If the predictions exist, they are loaded from disk; otherwise, all three models are trained, and their outputs are saved. The final ensemble prediction is created by stacking the three models’ outputs and either taking the median or a weighted average (e.g., 0.2 model1 + 0.4 model2 + 0.4 * model3). The final predictions are clipped to a physiologically plausible range and saved in the correct submission format for Kaggle evaluation.
+Library Imports
+This section begins by importing essential Python libraries used for data analysis and machine learning. NumPy is included for efficient numerical computations, while Pandas provides powerful tools for handling and manipulating structured data. The time module is used to measure and display how long each model takes to run, helping track performance. The os module supports file management tasks, such as checking whether cached prediction files already exist.
+From the sklearn (scikit-learn) library, LabelEncoder is imported to convert categorical variables like "Sex" into numerical values suitable for model input. KBinsDiscretizer is used later for binning continuous features like Duration into discrete intervals, which is especially useful for stratified cross-validation. The code also brings in two cross-validation classes — StratifiedKFold ensures balanced target distributions across folds, and KFold provides a general splitting method when stratification isn't necessary.
+Finally, two machine learning models — CatBoostRegressor and XGBRegressor — are imported. These are powerful gradient boosting algorithms that support GPU acceleration and are used throughout the notebook for training and making predictions on the calorie expenditure task.
+In [1]:
+# ===================== Library Imports =====================
+import numpy as np
+import pandas as pd
+import time
+import os
+from sklearn.preprocessing import LabelEncoder, KBinsDiscretizer
+from sklearn.model_selection import StratifiedKFold, KFold
+from catboost import CatBoostRegressor
+from xgboost import XGBRegressor
+Load Data
+This section handles the initial data loading, preprocessing, and defines a utility function for feature engineering. The training data (train.csv), test data (test.csv), and sample submission format (sample_submission.csv) are all read into separate Pandas DataFrames.
+To ensure data quality, any duplicated rows in the training dataset are removed, and the index is reset for consistency. The 'Sex' column, originally represented by strings ('male' and 'female'), is converted to binary numeric values (1 for male, 0 for female) in both the training and test datasets. This conversion is essential since machine learning models require numerical inputs.
+A list of core numerical features (Age, Height, Weight, Duration, Heart_Rate, Body_Temp) is defined, which will later be used for feature interactions. Finally, a helper function add_cross_terms is introduced. It takes a DataFrame and a list of features, and generates all possible pairwise interaction terms by multiplying each unique pair of features together. These interaction terms capture nonlinear relationships between variables, potentially improving model performance.
+In [2]:
+# ===================== Load Data =====================
+train = pd.read_csv("/kaggle/input/playground-series-s5e5/train.csv")
+test = pd.read_csv("/kaggle/input/playground-series-s5e5/test.csv")
+submission = pd.read_csv("/kaggle/input/playground-series-s5e5/sample_submission.csv")
+train = train.drop_duplicates().reset_index(drop=True)
+train['Sex'] = train['Sex'].map({'male': 1, 'female': 0})
+test['Sex'] = test['Sex'].map({'male': 1, 'female': 0})
+
+numerical = ["Age", "Height", "Weight", "Duration", "Heart_Rate", "Body_Temp"]
+
+def add_cross_terms(df, features):
+    for i in range(len(features)):
+        for j in range(i + 1, len(features)):
+            df[f"{features[i]}_x_{features[j]}"] = df[features[i]] * df[features[j]]
+    return df
+Model 1
+This section defines Model 1, a dual boosting regression strategy that combines CatBoost and XGBoost to predict calorie expenditure using engineered features and stratified cross-validation.
+The process begins by grouping the training data by all feature columns and keeping the minimum calorie value for each group. This reduces label noise by eliminating inconsistencies among duplicate rows. Then, the Sex column is label-encoded for compatibility with both models. The same encoding is applied to a copy of the test set to ensure consistency.
+Next, pairwise interaction features (cross terms) are added to both training and test data using the earlier defined add_cross_terms function. Two domain-specific features are also engineered: Body Mass Index (BMI), calculated from height and weight, and Intensity, defined as Heart Rate divided by Duration.
+The target variable Calories is transformed using the natural log function (log1p) to align with RMSLE optimization. To preserve the distribution of the Duration variable during cross-validation, the data is stratified using quantile-based bins.
+The model then performs 5-fold stratified cross-validation. In each fold, both a CatBoostRegressor and an XGBRegressor are trained with early stopping based on validation RMSE. Predictions on the test set are averaged across folds for each model. Finally, predictions from both models are blended 50-50, inverse-transformed from the log scale using expm1, and clipped between 1 and 314 to ensure physiological validity.
+This model emphasizes domain-aware features, nonlinear interactions, and robust cross-validation, making it a strong base learner in the final ensemble.
+In [3]:
+# ===================== Model 1 =====================
+def predict_model_1(train):
+    df = train.groupby(['Sex', 'Age', 'Height', 'Weight', 'Duration', 'Heart_Rate', 'Body_Temp'])['Calories'].min().reset_index()
+    le = LabelEncoder()
+    df['Sex'] = le.fit_transform(df['Sex'])
+    test_copy = test.copy()
+    test_copy['Sex'] = le.transform(test_copy['Sex'])
+
+    df = add_cross_terms(df, numerical)
+    test_copy = add_cross_terms(test_copy, numerical)
+
+    df['BMI'] = df['Weight'] / (df['Height'] / 100) ** 2
+    df['Intensity'] = df['Heart_Rate'] / df['Duration']
+    test_copy['BMI'] = test_copy['Weight'] / (test_copy['Height'] / 100) ** 2
+    test_copy['Intensity'] = test_copy['Heart_Rate'] / test_copy['Duration']
+
+    X = df.drop(columns=['Calories'])
+    y = np.log1p(df['Calories'])
+    X_test = test_copy[X.columns]
+
+    bins = KBinsDiscretizer(n_bins=15, encode='ordinal', strategy='quantile')
+    duration_bins = bins.fit_transform(df[['Duration']]).astype(int).flatten()
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    cat_preds = np.zeros(len(X_test))
+    xgb_preds = np.zeros(len(X_test))
+
+    for train_idx, val_idx in skf.split(X, duration_bins):
+        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+        cat = CatBoostRegressor(verbose=0, random_state=42)
+        cat.fit(X_train, y_train, eval_set=(X_val, y_val), early_stopping_rounds=50)
+        cat_preds += cat.predict(X_test) / skf.n_splits
+
+        xgb = XGBRegressor(n_estimators=1500, learning_rate=0.03, max_depth=10,
+                           subsample=0.9, colsample_bytree=0.7, gamma=0.01,
+                           max_delta_step=2, tree_method="hist", enable_categorical=True,
+                           early_stopping_rounds=100, eval_metric="rmse", verbosity=0,
+                           random_state=42)
+        xgb.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=0)
+        xgb_preds += xgb.predict(X_test) / skf.n_splits
+
+    final_preds = 0.5 * cat_preds + 0.5 * xgb_preds
+    return np.clip(np.expm1(final_preds), 1, 314)
+Model 2
+This section defines the second predictive model in the ensemble. It starts by grouping the training data based on all available features and taking the minimum Calories value for each group, reducing noise caused by duplicate entries. Both the training and test datasets are enriched with feature engineering tailored to capture physiological variation.
+For each dataset, a reversed version of the Sex feature (1 - Sex) is created to introduce bi-directional gender interactions. Then, conditional masking is applied to generate new features: for every unique Duration and Age value, new columns are created that retain Heart_Rate and Body_Temp only for samples matching that specific value. This allows the model to learn activity-specific and age-specific physiological patterns. Cross-product features are also introduced between Duration, Heart_Rate, and Body_Temp with both Sex and Sex_Reversed, further increasing feature diversity.
+The feature matrix is then prepared by dropping the target and irrelevant columns. The target Calories is log-transformed using np.log1p to align with the RMSLE evaluation metric. The Sex feature is explicitly treated as categorical for CatBoost and as numeric for XGBoost.
+Two separate models are trained: CatBoost with stratified 5-fold cross-validation using binned Duration as the stratification target, and XGBoost with regular 5-fold KFold. Both models use GPU acceleration and early stopping to optimize training time and prevent overfitting. Predictions are made on the test set during each fold, then averaged across folds.
+Finally, the CatBoost and XGBoost predictions are combined equally (50% each), transformed back to the original scale using np.expm1, and clipped to the realistic range of 1 to 314 to ensure physiological plausibility. This model focuses on capturing subtle interaction effects and conditionally masked patterns that might influence calorie expenditure.
+In [4]:
+# ===================== Model 2 =====================
+def predict_model_2(train):
+    df = train.groupby(['Sex', 'Age', 'Height', 'Weight', 'Duration', 'Heart_Rate', 'Body_Temp'])['Calories'].min().reset_index()
+    test_copy = test.copy()
+
+    for d in [df, test_copy]:
+        d['Sex_Reversed'] = 1 - d['Sex']
+        for dur in d['Duration'].unique():
+            d[f'Heart_Rate_Duration_{int(dur)}'] = np.where(d['Duration'] == dur, d['Heart_Rate'], np.nan)
+            d[f'Body_Temp_Duration_{int(dur)}'] = np.where(d['Duration'] == dur, d['Body_Temp'], np.nan)
+        for age in d['Age'].unique():
+            d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+            d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+        for f1 in ['Duration', 'Heart_Rate', 'Body_Temp']:
+            for f2 in ['Sex', 'Sex_Reversed']:
+                d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+        d.drop(columns=['Sex_Reversed'], inplace=True)
+
+    X = df.drop(columns=['Calories'])
+    y = np.log1p(df['Calories'])
+    test_copy = test_copy[X.columns]
+
+    X['Sex'] = X['Sex'].astype('category')
+    test_copy['Sex'] = test_copy['Sex'].astype('category')
+
+    bins = KBinsDiscretizer(n_bins=15, encode='ordinal', strategy='quantile')
+    duration_bins = bins.fit_transform(df[['Duration']]).astype(int).flatten()
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    cat_test = np.zeros(len(test_copy))
+    for train_idx, val_idx in skf.split(X, duration_bins):
+        model = CatBoostRegressor(iterations=3500, learning_rate=0.02, depth=12,
+                                  loss_function='RMSE', l2_leaf_reg=3,
+                                  random_seed=42, eval_metric='RMSE',
+                                  early_stopping_rounds=200, cat_features=['Sex'],
+                                  verbose=0, task_type='GPU')
+        model.fit(X.iloc[train_idx], y.iloc[train_idx], eval_set=(X.iloc[val_idx], y.iloc[val_idx]))
+        cat_test += np.expm1(model.predict(test_copy)) / skf.n_splits
+
+    xgb_test = np.zeros(len(test_copy))
+    X_xgb = X.copy()
+    test_xgb = test_copy.copy()
+    X_xgb['Sex'] = X_xgb['Sex'].astype(int)
+    test_xgb['Sex'] = test_xgb['Sex'].astype(int)
+
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    for train_idx, val_idx in kf.split(X_xgb):
+        model = XGBRegressor(max_depth=9, colsample_bytree=0.7, subsample=0.9,
+                             n_estimators=3000, learning_rate=0.01, gamma=0.01,
+                             max_delta_step=2, eval_metric='rmse',
+                             enable_categorical=False, random_state=42,
+                             early_stopping_rounds=100, tree_method="hist", device="cuda")
+        model.fit(X_xgb.iloc[train_idx], y.iloc[train_idx], eval_set=[(X_xgb.iloc[val_idx], y.iloc[val_idx])], verbose=0)
+        xgb_test += np.expm1(model.predict(test_xgb)) / kf.n_splits
+
+    return np.clip((cat_test * 0.5 + xgb_test * 0.5), 1, 314)
+Model 3
+Model 3 is designed as a high-precision ensemble that captures complex feature interactions and minimizes variance through extensive cross-validation. It starts by enriching both the training and test datasets with cross-product terms between all numerical features, allowing the models to learn second-order interactions such as Age × Weight or Duration × Heart_Rate. The Sex column is explicitly converted to a categorical type to ensure compatibility with CatBoost's internal handling of categorical variables.
+The target variable Calories is transformed using a natural logarithm (np.log1p) to align with the RMSLE evaluation metric and reduce heteroscedasticity. The input data is then split into 50 folds using Stratified K-Fold cross-validation, where the stratification is based on quantile-binned values of the Duration feature. This ensures that each fold contains a balanced range of physical activity durations.
+In each of the 50 folds, two gradient boosting models are trained: a CatBoostRegressor with GPU acceleration and early stopping, and an XGBRegressor with histogram-based tree construction on GPU. Both models are trained on the same training-validation splits, and predictions for the test set are accumulated over all folds.
+After all folds are processed, the predictions from CatBoost and XGBoost are averaged separately and then blended using a weighted average—30% weight for CatBoost and 70% for XGBoost, reflecting a preference for XGBoost's typically stronger performance. The final predictions are transformed back to the original scale using np.expm1 and clipped between 1 and 314 to reflect physiologically reasonable calorie values. This model provides a robust and variance-reduced estimate by leveraging interaction features and high-fold ensembling.
+In [5]:
+# ===================== Model 3 =====================
+def predict_model_3(train):
+    train = add_cross_terms(train, numerical)
+    test_copy = add_cross_terms(test.copy(), numerical)
+    train['Sex'] = train['Sex'].astype('category')
+    test_copy['Sex'] = test_copy['Sex'].astype('category')
+
+    X = train.drop(columns=['id', 'Calories'])
+    y = np.log1p(train['Calories'])
+    X_test = test_copy.drop(columns=['id'])
+
+    duration_bins = KBinsDiscretizer(n_bins=10, encode='ordinal', strategy='quantile') \
+                      .fit_transform(train[['Duration']]).astype(int).flatten()
+    skf = StratifiedKFold(n_splits=50, shuffle=True, random_state=42)
+
+    pred_cb = np.zeros(len(test_copy))
+    pred_xgb = np.zeros(len(test_copy))
+
+    for tr_idx, val_idx in skf.split(X, duration_bins):
+        model_cb = CatBoostRegressor(iterations=2000, learning_rate=0.02, depth=10,
+                                     l2_leaf_reg=3, loss_function='RMSE', eval_metric='RMSE',
+                                     early_stopping_rounds=100, verbose=0,
+                                     random_state=42, task_type="GPU",
+                                     cat_features=[X.columns.get_loc("Sex")])
+        model_cb.fit(X.iloc[tr_idx], y.iloc[tr_idx], eval_set=(X.iloc[val_idx], y.iloc[val_idx]))
+        pred_cb += model_cb.predict(X_test)
+
+        model_xgb = XGBRegressor(max_depth=10, colsample_bytree=0.75, subsample=0.9,
+                                 n_estimators=2000, learning_rate=0.02, gamma=0.01,
+                                 max_delta_step=2, early_stopping_rounds=100,
+                                 eval_metric="rmse", enable_categorical=True,
+                                 tree_method="hist", device="cuda")
+        model_xgb.fit(X.iloc[tr_idx], y.iloc[tr_idx], eval_set=[(X.iloc[val_idx], y.iloc[val_idx])], verbose=0)
+        pred_xgb += model_xgb.predict(X_test)
+
+    pred_cb /= 50
+    pred_xgb /= 50
+    final_log = 0.3 * pred_cb + 0.7 * pred_xgb
+    final = np.expm1(final_log)
+    return np.clip(final, 1, 314)
+Final Ensemble (Weighted)
+This section defines the final prediction phase of the notebook, where outputs from three independently trained models are combined using a weighted ensemble strategy. It begins by checking whether the model predictions have already been saved as .npy files using NumPy. If all three prediction files exist (pred1.npy, pred2.npy, pred3.npy), they are loaded from disk, significantly reducing runtime during re-execution. If not, each model function (predict_model_1, predict_model_2, predict_model_3) is called sequentially, predictions are generated using the training dataset, and the outputs are saved as .npy files for future use.
+Once the predictions are ready, they are combined into a single prediction array using a custom weighted average: 20% from Model 1, 40% from Model 2, and 40% from Model 3. This weighting scheme suggests that the second and third models contribute more significantly to the final output, possibly due to better performance in validation or more advanced feature engineering. The combined predictions are then clipped between 1 and 314 to ensure they remain within realistic and physiologically valid calorie values.
+Finally, the ensemble predictions are written into the Calories column of the submission DataFrame. The DataFrame is saved as a CSV file named submission_blend.csv, which is formatted in accordance with the Kaggle competition requirements. This concludes the pipeline with an efficient and adaptive blending mechanism, ensuring a strong final submission.
+In [6]:
+# ===================== Final Ensemble (Weighted) =====================
+def load_or_predict():
+    if all(os.path.exists(f"pred{i}.npy") for i in range(1, 4)):
+        print("✅ Loading cached predictions...")
+        return [np.load(f"pred{i}.npy") for i in range(1, 4)]
+    else:
+        print("🚀 Running models and saving predictions...")
+        pred1 = predict_model_1(train.copy()); np.save("pred1.npy", pred1)
+        pred2 = predict_model_2(train.copy()); np.save("pred2.npy", pred2)
+        pred3 = predict_model_3(train.copy()); np.save("pred3.npy", pred3)
+        return [pred1, pred2, pred3]
+
+pred1, pred2, pred3 = load_or_predict()
+final_preds = 0.2 * pred1 + 0.4 * pred2 + 0.4 * pred3
+submission['Calories'] = np.clip(final_preds, 1, 314)
+submission.to_csv("submission_blend.csv", index=False)
+print("🎯 submission_blend.csv saved with adaptive weighted ensemble ✅")
+🚀 Running models and saving predictions...
+/usr/local/lib/python3.11/dist-packages/sklearn/preprocessing/_discretization.py:216: FutureWarning: In version 1.3 onwards, subsample=2e5 will be used by default. Set subsample explicitly to silence this warning in the mean time. Set subsample=None to disable subsampling explicitly.
+  warnings.warn(
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:12: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Heart_Rate_Age_{int(age)}'] = np.where(d['Age'] == age, d['Heart_Rate'], np.nan)
+/tmp/ipykernel_19/4191640509.py:13: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'Body_Temp_Age_{int(age)}'] = np.where(d['Age'] == age, d['Body_Temp'], np.nan)
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:16: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f'{f1}_x_{f2}'] = d[f1] * d[f2]
+/tmp/ipykernel_19/4191640509.py:24: SettingWithCopyWarning: 
+A value is trying to be set on a copy of a slice from a DataFrame.
+Try using .loc[row_indexer,col_indexer] = value instead
+
+See the caveats in the documentation: https://pandas.pydata.org/pandas-docs/stable/user_guide/indexing.html#returning-a-view-versus-a-copy
+  test_copy['Sex'] = test_copy['Sex'].astype('category')
+/usr/local/lib/python3.11/dist-packages/sklearn/preprocessing/_discretization.py:216: FutureWarning: In version 1.3 onwards, subsample=2e5 will be used by default. Set subsample explicitly to silence this warning in the mean time. Set subsample=None to disable subsampling explicitly.
+  warnings.warn(
+/usr/local/lib/python3.11/dist-packages/xgboost/core.py:160: UserWarning: [15:09:12] WARNING: /workspace/src/common/error_msg.cc:58: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  warnings.warn(smsg, UserWarning)
+/usr/local/lib/python3.11/dist-packages/sklearn/preprocessing/_discretization.py:216: FutureWarning: In version 1.3 onwards, subsample=2e5 will be used by default. Set subsample explicitly to silence this warning in the mean time. Set subsample=None to disable subsampling explicitly.
+  warnings.warn(
+🎯 submission_blend.csv saved with adaptive weighted ensemble ✅

@@ -1,0 +1,553 @@
+Welcome to competition, hosted by Jane Street, where we'll build a model using real-world data derived from production systems, which offers a glimpse into the daily challenges of successful trading. This challenge highlights the difficulties in modeling financial markets, including fat-tailed distributions, non-stationary time series, and sudden shifts in market behavior
+Additional notebook:
+JS Time series analysis: EDA + Intraday Structures
+This notebook provides a deeper dive into the intraday data structure.
+Table of Contents
+DATA LOADING AND PREPROCESSING
+TIME SERIES ANALYSIS AND EDA
+MODELLING
+SUB TO SERVER
+DATA LOADING AND PREPROCESSING
+GO BACK
+In [1]:
+import numpy as np # linear algebra
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv, pd.read_parquet )
+import polars as pl
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib import pyplot as plt
+from matplotlib.ticker import MaxNLocator, FormatStrFormatter, PercentFormatter
+
+import os, gc
+from tqdm.auto import tqdm
+import pickle # module to serialize and deserialize objects
+import re # for Regular expression operations 
+
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from tensorflow.keras.optimizers import Adam
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data  import Dataset, DataLoader
+from pytorch_lightning import (LightningDataModule, LightningModule, Trainer)
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, Timer
+
+from sklearn.metrics import r2_score
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import VotingRegressor
+
+import lightgbm as lgb
+from lightgbm import LGBMRegressor
+
+from xgboost import XGBRegressor
+from catboost import CatBoostRegressor
+
+import warnings
+warnings.filterwarnings('ignore')
+pd.options.display.max_columns = None
+
+import kaggle_evaluation.jane_street_inference_server
+In [3]:
+gridColor = 'lightgrey'
+In [4]:
+%%time
+path = "/kaggle/input/jane-street-real-time-market-data-forecasting"
+samples = [] 
+
+# Load a data from each file:
+r = range(2)
+for i in r:
+    file_path = f"{path}/train.parquet/partition_id={i}/part-0.parquet"
+    part = pd.read_parquet(file_path)
+    samples.append(part)
+    
+sample_df = pd.concat(samples, ignore_index=True) # Concatenate all samples into one DataFrame if needed
+
+sample_df.round(1)
+CPU times: user 7.32 s, sys: 4.21 s, total: 11.5 s
+Wall time: 10.6 s
+Out[4]:
+date_id time_id symbol_id weight feature_00 feature_01 feature_02 feature_03 feature_04 feature_05 feature_06 feature_07 feature_08 feature_09 feature_10 feature_11 feature_12 feature_13 feature_14 feature_15 feature_16 feature_17 feature_18 feature_19 feature_20 feature_21 feature_22 feature_23 feature_24 feature_25 feature_26 feature_27 feature_28 feature_29 feature_30 feature_31 feature_32 feature_33 feature_34 feature_35 feature_36 feature_37 feature_38 feature_39 feature_40 feature_41 feature_42 feature_43 feature_44 feature_45 feature_46 feature_47 feature_48 feature_49 feature_50 feature_51 feature_52 feature_53 feature_54 feature_55 feature_56 feature_57 feature_58 feature_59 feature_60 feature_61 feature_62 feature_63 feature_64 feature_65 feature_66 feature_67 feature_68 feature_69 feature_70 feature_71 feature_72 feature_73 feature_74 feature_75 feature_76 feature_77 feature_78 responder_0 responder_1 responder_2 responder_3 responder_4 responder_5 responder_6 responder_7 responder_8
+0 0 0 1 3.9 NaN NaN NaN NaN NaN 0.9 0.2 0.3 -0.9 11 7 76 -0.9 0.0 -0.7 NaN -0.2 NaN -1.3 -1.7 0.9 NaN 1.6 1.5 -1.6 -0.2 NaN NaN 1.4 -0.3 0.1 NaN NaN NaN 0.3 0.3 0.3 -0.0 -0.2 NaN -1.1 NaN NaN -0.2 NaN NaN NaN 0.6 2.1 0.8 NaN 0.2 NaN NaN -0.8 NaN -2.0 0.7 NaN -1.0 -0.3 -1.4 NaN NaN NaN NaN NaN -1.3 -0.1 -0.5 -1.0 0.2 -0.7 NaN NaN -0.3 -0.2 -0.3 -0.3 0.7 -0.1 1.4 2.0 0.2 1.2 0.8 0.3 0.1
+1 0 0 7 1.4 NaN NaN NaN NaN NaN 0.7 0.2 0.2 -0.5 11 7 76 -0.9 -0.2 -0.6 NaN 0.3 NaN -1.3 -1.7 1.4 NaN 0.5 0.7 -0.8 0.6 NaN NaN 0.2 0.6 1.1 NaN NaN NaN -1.5 -1.4 -1.8 -0.1 -0.2 NaN NaN NaN NaN NaN NaN NaN NaN -10.8 -0.0 -0.6 NaN 1.2 NaN NaN -1.6 NaN -1.4 1.1 NaN 0.9 0.5 -1.4 NaN NaN NaN NaN NaN -1.1 0.0 -0.6 -1.1 -0.4 -0.7 NaN NaN -0.3 -0.2 -0.2 -0.3 3.0 1.2 -0.5 3.8 2.6 5.0 0.7 0.2 0.8
+2 0 0 9 2.3 NaN NaN NaN NaN NaN 1.1 0.2 0.2 -0.8 11 7 76 -0.7 -0.2 -0.6 NaN -0.8 NaN -1.3 -2.0 0.6 NaN 1.6 0.7 -1.4 0.4 NaN NaN -0.0 -0.3 -0.1 NaN NaN NaN -0.3 -1.0 -2.4 0.1 -0.2 NaN NaN NaN NaN NaN NaN NaN NaN -1.4 -3.5 -4.7 NaN 0.5 NaN NaN -0.7 NaN -2.3 1.8 NaN -0.1 -0.1 -1.4 NaN NaN NaN NaN NaN -0.9 -0.1 -0.6 -0.9 -0.2 -0.7 NaN NaN 0.4 0.3 -0.1 -0.1 -0.9 -0.3 -0.3 0.4 1.3 0.1 2.1 0.7 0.8
+3 0 0 10 0.7 NaN NaN NaN NaN NaN 1.1 0.3 0.3 -1.3 42 5 150 -0.7 3.0 0.1 NaN -0.3 NaN -1.9 -1.0 0.2 NaN -0.4 -0.2 -2.1 -0.9 NaN NaN 0.4 -0.6 0.1 NaN NaN NaN 0.5 -0.1 -1.5 -0.2 -0.0 NaN NaN NaN NaN NaN NaN NaN NaN 0.4 2.7 0.6 NaN 2.4 NaN NaN 1.3 NaN -0.8 2.9 NaN 4.0 1.8 -1.4 NaN NaN NaN NaN NaN -0.7 1.1 -0.2 -0.5 4.8 0.6 NaN NaN -0.2 -0.3 -0.2 -0.3 0.4 0.2 2.3 1.1 1.2 1.2 1.1 0.8 -1.4
+4 0 0 14 0.4 NaN NaN NaN NaN NaN 1.0 0.3 0.3 -0.6 44 3 16 -0.9 -0.0 -0.5 NaN 0.6 NaN -1.8 -1.6 -0.2 NaN -1.0 -0.7 -1.3 -1.4 NaN NaN 0.0 -0.3 -0.0 NaN NaN NaN -0.1 -1.0 -2.6 -0.2 -0.6 NaN NaN NaN NaN NaN NaN NaN NaN -2.0 -2.3 -3.7 NaN 1.3 NaN NaN 0.5 NaN -0.8 2.8 NaN 1.4 0.4 -1.4 NaN NaN NaN NaN NaN -0.9 -0.1 -0.4 -1.1 0.1 -0.7 NaN NaN 3.7 2.8 2.6 3.4 -0.4 -0.5 -0.3 -3.9 -1.6 -5.0 -3.6 -1.1 -5.0
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+4748452 339 848 19 4.4 -0.4 -1.1 -0.4 0.0 -1.2 -0.1 0.5 0.3 -0.2 4 3 11 0.3 1.4 0.2 -0.6 -0.4 -0.7 0.0 4.9 0.6 NaN 0.9 0.3 -0.1 0.5 NaN NaN 0.4 -0.7 -0.7 NaN 0.2 -0.6 0.4 0.4 -1.0 -1.0 -1.2 0.2 1.3 0.8 1.4 0.2 0.4 1.0 2.0 1.3 2.1 0.9 0.8 1.6 1.3 1.9 1.1 1.6 1.3 2.5 1.7 3.1 1.8 0.6 -0.4 -0.2 -0.5 -0.5 4.2 -0.0 -0.1 -0.3 0.4 4.4 0.7 -0.0 0.1 -0.2 -0.1 -0.2 -0.1 0.2 0.1 1.1 0.5 0.3 0.5 0.0 0.0 0.0
+4748453 339 848 30 0.9 0.0 -1.1 -0.3 -0.2 -1.1 -0.1 0.5 0.3 -0.5 81 2 534 0.2 1.2 0.4 0.3 0.3 0.2 1.9 -1.8 -0.6 NaN -1.3 -1.0 -0.6 -0.6 NaN NaN -0.3 0.0 0.2 NaN 0.5 -1.0 0.2 1.1 0.6 2.2 -0.5 2.4 -1.4 -1.4 0.3 -0.6 -0.2 0.3 -0.9 1.4 0.5 0.9 2.0 1.4 0.2 -0.5 -1.3 -0.6 0.7 -1.7 1.9 -0.4 1.0 0.6 0.5 2.8 2.1 2.8 -0.0 0.1 1.8 0.4 0.2 0.5 0.4 -0.3 -0.2 -0.3 -0.3 -0.3 -0.1 0.6 -0.0 1.8 0.8 0.3 0.7 1.0 0.6 2.4
+4748454 339 848 33 1.2 -0.4 -1.5 0.2 -0.2 -1.6 -0.1 0.5 0.3 -0.5 11 7 76 0.2 0.1 0.1 0.1 -0.7 0.1 -0.4 1.0 -0.0 NaN -0.9 -0.4 -0.3 -0.8 NaN NaN -0.3 0.0 0.1 NaN -0.0 -1.4 1.0 0.4 -0.8 -0.8 0.4 -0.1 -0.1 -0.1 1.5 1.2 1.0 0.5 -0.6 -0.2 0.1 -0.0 0.8 0.9 -0.1 -0.0 1.9 0.8 0.9 -0.3 0.2 0.0 0.1 0.6 -0.1 -0.3 -0.1 -1.5 1.2 0.4 0.5 0.4 -0.0 -0.4 -0.3 -0.3 -0.2 -0.2 -0.4 -0.3 -0.2 -3.3 -1.0 -3.0 -1.1 -0.6 -1.5 -0.3 -0.1 -0.5
+4748455 339 848 34 1.3 -0.3 -1.5 -0.2 0.2 -1.2 -0.2 0.6 0.4 -0.4 42 5 150 -0.1 -0.2 -0.2 -0.4 -0.3 -0.4 0.9 -0.2 -0.5 NaN -0.6 -1.0 -0.7 -0.9 NaN NaN 0.7 -0.7 -0.4 NaN -0.0 -0.8 0.6 0.1 -1.5 2.0 1.3 -1.8 -1.2 -1.0 -1.1 -1.0 -1.2 -1.5 -1.3 -0.5 -0.0 -0.2 0.1 -0.3 0.0 0.0 0.7 1.0 -0.7 -1.4 -0.7 0.0 0.1 0.6 -0.2 -0.2 -0.3 0.6 -0.9 -0.0 -0.3 -0.3 -0.1 -0.2 -0.2 -0.1 -0.2 -0.3 -0.5 -0.1 -0.2 1.0 0.6 0.2 -0.0 -0.0 -0.4 -0.1 -0.0 -0.1
+4748456 339 848 38 2.3 -0.4 -1.3 0.0 -0.1 -1.7 -0.1 0.3 0.3 -0.3 50 1 522 -0.7 0.5 -0.3 -0.8 -0.4 -0.7 0.7 0.1 0.6 NaN -0.0 -0.3 0.4 0.7 NaN NaN 1.3 -0.7 -0.6 NaN -2.2 -1.0 -2.9 -2.6 -1.7 -0.4 -0.7 -0.4 0.5 0.5 0.8 0.6 0.1 1.1 -0.1 0.1 1.1 0.0 -1.5 0.6 -0.6 0.3 -1.3 -0.1 1.3 -0.1 0.1 -1.1 -0.2 0.6 -0.3 -0.2 -0.3 0.6 -0.1 -0.6 1.2 -0.1 -0.4 0.1 -0.3 0.2 0.4 0.7 0.8 0.1 0.2 0.3 0.6 2.4 0.9 0.4 1.0 0.3 0.2 0.4
+4748457 rows × 92 columns
+We can see that two files (0 and 1) has a total of 4 748 457 rows. I have used pandas to load it and it took almost 9 sec. Th ere are a total of 339 days (about one years of trading data).
+TIME SERIES ANALYSIS AND EDA
+GO BACK
+Let us take a look at the target values over time (for symbol_id=1)
+In [4]:
+train =sample_df
+train['N']=train.index.values 
+train['id']=train.index.values 
+
+xx= sample_df[(sample_df.symbol_id==1)] ['id']
+yy=sample_df[ (sample_df.symbol_id==1)]['responder_6']
+
+plt.figure(figsize=(16, 5))
+plt.plot(xx,yy, color = 'black', linewidth =0.05)
+plt.suptitle('Returns, responder_6', weight='bold', fontsize=16)
+plt.xlabel("Time", fontsize=12)
+plt.ylabel("Returns", fontsize=12)
+plt.grid(color = gridColor , linewidth=0.8)
+plt.axhline(0, color='red', linestyle='-', linewidth=1.2)
+plt.show()
+Let us take a look at the cumulative values of response over time
+In [5]:
+#for symbol_id=1
+plt.figure(figsize=(14, 4))
+plt.plot(xx,yy.cumsum(), color = 'black', linewidth =0.6)
+plt.suptitle('Cumulative responder_6', weight='bold', fontsize=16)
+plt.xlabel("Time", fontsize=12)
+plt.ylabel("Cumulative res", fontsize=12)
+plt.yticks(np.arange(-500,1000,250))
+#plt.xticks(np.arange(0,170,10))
+plt.grid(color = gridColor)
+#plt.grid(color = 'lightblue')
+plt.axhline(0, color='red', linestyle='-', linewidth=0.7)
+plt.show()
+Now let's compare this responder (6) with other responders
+In [6]:
+# for symbol_id == 0
+plt.figure(figsize=(18, 7))
+predictor_cols = [col for col in sample_df.columns if 'responder' in col]
+for i in predictor_cols: 
+    if i == 'responder_6': 
+        c='red'
+        lw=2.5
+        plt.plot((sample_df[sample_df.symbol_id == 0].groupby(['date_id'])[i].mean()).cumsum(), linewidth = lw, color = c)
+    else: 
+        lw=1
+        plt.plot((sample_df[sample_df.symbol_id == 0].groupby(['date_id'])[i].mean()).cumsum(), linewidth = lw)
+
+plt.xlabel('Trade days')
+plt.ylabel('Cumulative response')
+plt.title('Response time series over trade days  \n Responder 6 (red) and other responders', weight='bold')
+plt.grid(visible=True, color = gridColor, linewidth = 0.7)
+plt.axhline(0, color='blue', linestyle='-', linewidth=1)
+plt.legend(predictor_cols)
+sns.despine()
+#plt.show()
+We can see that resp6 (red) most closely follows resp0 and resp3
+Let's build a correlation matrix and see it numerically.
+In [7]:
+plt.figure(figsize=(6, 6))
+responders = pd.read_csv(f"{path}/responders.csv")
+matrix = responders[[ f"tag_{no}" for no in range(0,5,1) ] ].T.corr()
+sns.heatmap(matrix, square=True, cmap="coolwarm", alpha =0.9, vmin=-1, vmax=1, center= 0, linewidths=0.5, 
+            linecolor='white', annot=True, fmt='.2f')
+plt.xlabel("Responder_0 - Responder_8")
+plt.ylabel("Responder_0 - Responder_8")
+plt.show()
+Let us take a look at the returns and cumulative daily returns, and disribution of returns for all responders
+In [8]:
+df_train=sample_df
+s_id = 0                        # Change params to take a look at other symbols
+res_columns = [col for col in df_train.columns if re.match("responder_", col)]
+row = 9
+j = 0
+
+fig, axs = plt.subplots(figsize=(18, 4*row))
+for i in range(1, 3 * len(res_columns) + 1, 3):
+    xx= sample_df[(sample_df.symbol_id==s_id)] ['N']
+    yy=sample_df[ (sample_df.symbol_id==s_id)][f'responder_{j}']
+    c='black'
+    if j == 6: c='red'
+        
+    ax1 = plt.subplot(9, 3, i)
+    ax1.plot(   xx,yy.cumsum()   , color = c, linewidth =0.8 )
+    plt.axhline(0, color='blue', linestyle='-', linewidth=0.9)
+    plt.grid(color =gridColor )
+    
+    ax2 = plt.subplot(9, 3, i+1)
+    #by_date = df_symbolX.groupby(["date_id"])
+    ax2.plot(xx,yy   , color = c, linewidth =0.05)
+    plt.axhline(0, color='blue', linestyle='-', linewidth=1.2)
+    ax2.set_title(f"responder_{j}", fontsize = 14)
+    plt.grid(color = gridColor)
+    
+    ax3 = plt.subplot(9, 3, i+2)
+    b=1000
+    ax3.hist(yy, bins=b, color = c,density=True, histtype="step" )
+    ax3.hist(yy, bins=b, color = 'lightgrey',density=True)
+    plt.grid(color = gridColor)
+    ax3.set_ylim([0, 3.5])
+    ax3.set_xlim([-2.5, 2.5])
+    
+    j = j + 1
+    
+fig.patch.set_linewidth(3)
+fig.patch.set_edgecolor('#000000')
+fig.patch.set_facecolor('#eeeeee') 
+plt.show()
+We can see that responders have different behavior and distributions.
+Let us now study the behavior of responder 6 for different symbol_id
+In [9]:
+res_columns = [col for col in df_train.columns if re.match("responder_", col)]
+row=10
+fig, axs = plt.subplots(figsize=(18, 5*row))
+b=300
+j = 0
+for i in range(1, 3 * row + 1, 3):
+    xx= sample_df[(sample_df.symbol_id==j)] ['N']
+    yy= sample_df[(sample_df.symbol_id==j)]['responder_6']
+    c='black'
+        
+    ax1 = plt.subplot(row, 3, i)
+    ax1.plot(   xx,yy.cumsum()   , color = c, linewidth =0.8 )
+    plt.axhline(0, color='red', linestyle='-', linewidth=0.7)
+    plt.grid(color = gridColor)
+    plt.xlabel('Time')
+    
+    ax2 = plt.subplot(row, 3, i+1)
+    ax2.plot(xx,yy   , color = c, linewidth =0.05)
+    plt.axhline(0, color='red', linestyle='-', linewidth=0.7)
+    ax2.set_title(f"symbol_id={j}", fontsize = '14')
+    plt.grid(color = gridColor)
+    plt.xlabel('Time')
+    
+    ax3 = plt.subplot(row, 3, i+2)
+    ax3.hist(yy, bins=b, color = c, density=True, histtype="step" )
+    ax3.hist(yy, bins=b, color = 'lightgrey',density=True)
+    plt.grid(color = gridColor)
+    ax3.set_xlim([-2.5, 2.5])
+    ax3.set_ylim([0, 1.5])
+    plt.xlabel('Time')
+    
+    j = j + 1
+    
+fig.patch.set_linewidth(3)
+fig.patch.set_edgecolor('#000000')
+fig.patch.set_facecolor('#eeeeee') 
+plt.show()
+We see that the behavior and distribution of one responder 6 is different for different symbol_id
+Now let's study the data in more detail and then continue diving into time series analysis
+Files and variables overview
+Features.csv
+features.csv - metadata pertaining to the anonymized features
+Features have many missing values.
+In [10]:
+df_train = sample_df
+plt.figure(figsize=(20, 3))    # Plot missing values
+plt.bar(x=df_train.isna().sum().index, height=df_train.isna().sum().values, color="red", label='missing')   # analog: using missingno
+plt.xticks(rotation=90)
+plt.title(f'Missing values over the {len(df_train)} samples which have a target')
+plt.grid()
+plt.legend()
+plt.show()
+Some columns are not very useful in our sample (either Null or show the partition number).
+Structure of features:
+In [11]:
+features = pd.read_csv(f"{path}/features.csv")
+features
+Out[11]:
+feature tag_0 tag_1 tag_2 tag_3 tag_4 tag_5 tag_6 tag_7 tag_8 tag_9 tag_10 tag_11 tag_12 tag_13 tag_14 tag_15 tag_16
+0 feature_00 False False True False False False False False False False False False False False True False True
+1 feature_01 False False True False False False False False False False False False False True True False True
+2 feature_02 False False True False False False False False False False False False True False False False True
+3 feature_03 False False True False False False False False False False False False False True False False True
+4 feature_04 False False True False False False False False False False False False True True False False True
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+74 feature_74 False False False False False False False False True False False False False False True False False
+75 feature_75 False False False False False False False False True False False False True False False False False
+76 feature_76 False False False False False False False False True False False False True False False False False
+77 feature_77 False False False False False False False False True False False False False True False False False
+78 feature_78 False False False False False False False False True False False False False True False False False
+79 rows × 18 columns
+Tags visualizing:
+In [12]:
+plt.figure(figsize=(18, 6))
+plt.imshow(features.iloc[:, 1:].T.values, cmap="gray_r")
+plt.xlabel("feature_00 - feature_78")
+plt.ylabel("tag_0 - tag_16")
+plt.yticks(np.arange(17))
+plt.xticks(np.arange(79))
+plt.grid(color = 'lightgrey')
+plt.show()
+Correlation matrix between feature_XX and feature_YY
+In [13]:
+plt.figure(figsize=(11, 11))
+matrix = features[[ f"tag_{no}" for no in range(0,17,1) ] ].T.corr()
+sns.heatmap(matrix, square=True, cmap="coolwarm", alpha =0.9, vmin=-1, vmax=1, center= 0, linewidths=0.5, linecolor='white')
+plt.show()
+Responders.csv
+responders.csv - metadata pertaining to the anonymized responders
+Structure of responders:
+In [14]:
+responders = pd.read_csv(f"{path}/responders.csv")
+responders
+Out[14]:
+responder tag_0 tag_1 tag_2 tag_3 tag_4
+0 responder_0 True False True False False
+1 responder_1 True False False True False
+2 responder_2 True True False False False
+3 responder_3 False False True False True
+4 responder_4 False False False True True
+5 responder_5 False True False False True
+6 responder_6 False False True False False
+7 responder_7 False False False True False
+8 responder_8 False True False False False
+Weights
+Basic stats:
+In [15]:
+sample_df['weight'].describe().round(1)
+Out[15]:
+count    4748457.0
+mean           1.9
+std            1.0
+min            0.4
+25%            1.2
+50%            1.7
+75%            2.3
+max            8.1
+Name: weight, dtype: float64
+In [16]:
+plt.figure(figsize=(8,3))
+plt.hist(sample_df['weight'], bins=30, color='grey', edgecolor = 'white',density=True )
+plt.title('Distribution of weights')
+plt.grid(color = 'lightgrey', linewidth=0.5)
+plt.axvline(1.7, color='red', linestyle='-', linewidth=0.7)
+plt.show()
+Sample submission.csv
+sample_submission.csv - This file illustrates the format of the predictions your model should make.
+In [17]:
+sub = pd.read_csv(f"{path}/sample_submission.csv")
+print( f"shape = {sub.shape}" )
+sub.head(10)
+shape = (39, 2)
+Out[17]:
+row_id responder_6
+0 0 0.0
+1 1 0.0
+2 2 0.0
+3 3 0.0
+4 4 0.0
+5 5 0.0
+6 6 0.0
+7 7 0.0
+8 8 0.0
+9 9 0.0
+Train.parquet
+train.parquet - The training set, contains historical data and returns. For convenience, the training set has been partitioned into ten parts.
+date_id and time_id - Integer values that are ordinally sorted, providing a chronological structure to the data, although the actual time intervals between time_id values may vary.
+symbol_id - Identifies a unique financial instrument.
+weight - The weighting used for calculating the scoring function.
+feature_{00...78} - Anonymized market data.
+responder_{0...8} - Anonymized responders clipped between -5 and 5. The responder_6 field is what you are trying to predict.
+Each row in the {train/test}.parquet dataset corresponds to a unique combination of a symbol (identified by symbol_id) and a timestamp (represented by date_id and time_id). You will be provided with multiple responders, with responder_6 being the only responder used for scoring. The date_id column is an integer which represents the day of the event, while time_id represents a time ordering. It's important to note that the real time differences between each time_id are not guaranteed to be consistent.
+The symbol_id column contains encrypted identifiers. Each symbol_id is not guaranteed to appear in all time_id and date_id combinations.
+Additionally, new symbol_id values may appear in future test sets.est sets.
+Responders: analysis, statistics and distributions
+In [18]:
+col =[]
+for i in range(9):
+    col.append(f"responder_{i}") 
+
+sample_df[col].describe().round(1)
+Out[18]:
+responder_0 responder_1 responder_2 responder_3 responder_4 responder_5 responder_6 responder_7 responder_8
+count 4748457.0 4748457.0 4748457.0 4748457.0 4748457.0 4748457.0 4748457.0 4748457.0 4748457.0
+mean 0.0 0.0 0.0 0.0 0.0 -0.0 -0.0 -0.0 -0.0
+std 0.9 1.0 0.8 1.1 1.1 1.0 0.9 0.9 0.9
+min -5.0 -5.0 -5.0 -5.0 -5.0 -5.0 -5.0 -5.0 -5.0
+25% -0.3 -0.3 -0.2 -0.4 -0.5 -0.3 -0.4 -0.4 -0.3
+50% -0.0 -0.0 -0.0 -0.0 -0.0 -0.0 -0.0 -0.0 -0.0
+75% 0.3 0.2 0.2 0.4 0.5 0.2 0.4 0.4 0.3
+max 5.0 5.0 5.0 5.0 5.0 5.0 5.0 5.0 5.0
+Interesting fact:
+The values of all variables are strictly within the range of [-5, 5]
+Responders-Responder distributions
+Let's dive deeper into the relationships between respondents and plot mutual distributions between 'reps 6' and other responders
+In [19]:
+numerical_features=[]
+numerical_features=sample_df.filter(regex='^responder_').columns.tolist() # Separate responders
+numerical_features.remove('responder_6')
+
+gs=600
+k=1;
+col = 3
+row = 3
+fig, axs = plt.subplots(row, col, figsize=(5*col, 5*row))
+
+for i in numerical_features:
+    
+    plt.subplot(col,row, k)
+    plt.hexbin(sample_df[i], sample_df['responder_6'], gridsize=gs, cmap='CMRmap', bins='log', alpha = 0.2)
+    plt.xlabel(f'{i}', fontsize = 12)
+    plt.ylabel('responder_6', fontsize = 12)
+    plt.tick_params(axis='x', labelsize=6)
+    plt.tick_params(axis='y', labelsize=6)
+    k=k+1
+fig.patch.set_linewidth(3)
+fig.patch.set_edgecolor('#000000')
+fig.patch.set_facecolor('#eeeeee')   
+
+plt.show()
+Responder6-Features distributions
+Now let's plot mutual distributions between 'reps 6' and some features
+In [20]:
+numerical_features=[]
+for i in ['05', '06', '07', '08', '12', '15', '19', '32', '38', '39', '50', '51', '65', '66', '67']:
+    numerical_features.append(f'feature_{i}') 
+
+gs=600
+k=1;
+col = 3
+row = int(np.ceil(len(numerical_features) /3 ))
+sz=5
+w=sz*col
+h = w/col *row
+plt.figure(figsize=(w, h))
+
+fig, axs = plt.subplots(figsize=(w, h))
+
+for i in numerical_features:
+    
+    plt.subplot(row, col, k)
+    plt.hexbin(sample_df['responder_6'], sample_df[i], gridsize=gs, cmap='CMRmap', bins='log', alpha = 0.3)
+    
+    plt.xlabel(f'{i}')
+    plt.ylabel('responder_6')
+    plt.tick_params(axis='x', labelsize=6)
+    plt.tick_params(axis='y', labelsize=6)
+    k=k+1
+
+fig.patch.set_linewidth(3)
+fig.patch.set_edgecolor('#000000')
+fig.patch.set_facecolor('#eeeeee')   
+plt.show()   
+<Figure size 1500x2500 with 0 Axes>
+In [21]:
+numerical_features=[]
+
+for i in range(5,9):
+    numerical_features.append(f'feature_0{i}') 
+for i in range(15,20):
+    numerical_features.append(f'feature_{i}') 
+    
+a=0; k=1;
+n=3; 
+
+fig, axs = plt.subplots(figsize=(15, 4))
+for i in numerical_features[:-1]:
+    a=a+1
+    for j in numerical_features[a:]:
+        plt.subplot(1,n, k)
+        plt.hexbin(sample_df[i], sample_df[j], gridsize=200, cmap='CMRmap', bins='log', alpha = 1)
+        plt.grid()
+        plt.xlabel(f'{i}', fontsize = 14)
+        plt.ylabel(f'{j}', fontsize = 14)
+        plt.tick_params(axis='x', labelsize=6)
+        plt.tick_params(axis='y', labelsize=6)
+        
+        k=k+1
+        if k == (n+1):    
+            k=1
+            plt.show()
+            plt.figure(figsize=(15, 4)) 
+<Figure size 1500x400 with 0 Axes>
+There are many nonlinear and non-trivial distributions
+MODELLING
+GO BACK
+This is jsut a first approach to modelling and experiment Setting of ensemble:
+In [5]:
+ENSEMBLE_SOLUTIONS = ['SOLUTION_14','SOLUTION_5']
+OPTION,__WTS = 'option 91',[0.899, 0.28]
+In [6]:
+def predict(test:pl.DataFrame, lags:pl.DataFrame | None) -> pl.DataFrame | pd.DataFrame:    
+    pdB = predict_14(test,lags).to_pandas()
+    pdC = predict_5 (test,lags).to_pandas()
+
+    pdB = pdB.rename(columns={'responder_6':'responder_B'})
+    pdC = pdC.rename(columns={'responder_6':'responder_C'})
+    pds = pd.merge(pdB,pdC, on=['row_id'])
+    pds['responder_6'] =\
+        pds['responder_B'] *__WTS[0] +\
+        pds['responder_C'] *__WTS[1] 
+
+    display(pds)
+    predictions = test.select('row_id', pl.lit(0.0).alias('responder_6'))
+    pred = pds['responder_6'].to_numpy()
+    predictions = predictions.with_columns(pl.Series('responder_6', pred.ravel()))
+    return predictions
+JS Ridge baseline Lb=0.0026 yunsuxiaozi
+Jane Street RMF NN + XGB, Lb=0.0056 Xiang Sheng
+In [13]:
+if 'SOLUTION_14' in ENSEMBLE_SOLUTIONS:    
+    
+    lags_ : pl.DataFrame | None = None
+
+    def predict_14(test: pl.DataFrame, lags: pl.DataFrame | None) -> pl.DataFrame | pd.DataFrame:
+        global lags_
+        if lags is not None:
+            lags_ = lags
+
+        predictions_14 = test.select(
+            'row_id',
+            pl.lit(0.0).alias('responder_6'),
+        )
+        symbol_ids = test.select('symbol_id').to_numpy()[:, 0]
+
+        if not lags is None:
+            lags = lags.group_by(["date_id", "symbol_id"], maintain_order=True).last() # pick up last record of previous date
+            test = test.join(lags, on=["date_id", "symbol_id"],  how="left")
+        else:
+            test = test.with_columns(
+                ( pl.lit(0.0).alias(f'responder_{idx}_lag_1') for idx in range(9) )
+            )
+
+        preds = np.zeros((test.shape[0],))
+        preds += xgb_model.predict(test[xgb_feature_cols].to_pandas()) / 2
+        test_input = test[CONFIG.feature_cols].to_pandas()
+        test_input = test_input.fillna(method = 'ffill').fillna(0)
+        test_input = torch.FloatTensor(test_input.values).to("cuda:0")
+        with torch.no_grad():
+            for i, nn_model in enumerate(tqdm(models)):
+                nn_model.eval()
+                preds += nn_model(test_input).cpu().numpy() / 10
+        print(f"predict> preds.shape =", preds.shape)
+
+        predictions_14 = \
+        test.select('row_id').\
+        with_columns(
+            pl.Series(
+                name   = 'responder_6', 
+                values = np.clip(preds, a_min = -5, a_max = 5),
+                dtype  = pl.Float64,
+            )
+        )
+
+        # The predict function must return a DataFrame
+        #assert isinstance(predictions, pl.DataFrame | pd.DataFrame)
+        # with columns 'row_id', 'responer_6'
+        #assert list(predictions.columns) == ['row_id', 'responder_6']
+        # and as many rows as the test data.
+        #assert len(predictions) == len(test)
+
+        return predictions_14
+SUB TO SERVER
+GO BACK
+In [16]:
+#sdf
+inference_server = kaggle_evaluation.jane_street_inference_server.JSInferenceServer(predict)
+
+if os.getenv('KAGGLE_IS_COMPETITION_RERUN'):
+    inference_server.serve()
+else:
+    inference_server.run_local_gateway(
+        (
+            '/kaggle/input/jane-street-real-time-market-data-forecasting/test.parquet',
+            '/kaggle/input/jane-street-real-time-market-data-forecasting/lags.parquet',
+        )
+    )

@@ -1,0 +1,152 @@
+Baseline notebooks:
+Preprocessing : https://www.kaggle.com/code/motono0223/js24-preprocessing-create-lags
+Training (Code only) : https://www.kaggle.com/code/motono0223/js24-train-gbdt-model-with-lags-singlemodel
+trained model : https://www.kaggle.com/datasets/motono0223/js24-trained-gbdt-model
+Inference : this notebook https://www.kaggle.com/code/motono0223/js24-inference-gbdt-with-lags-singlemodel
+EDA(1) : https://www.kaggle.com/code/motono0223/eda-jane-street-real-time-market-data-forecasting
+EDA(2) : https://www.kaggle.com/code/motono0223/eda-v2-jane-street-real-time-market-forecasting
+In [1]:
+import pandas as pd
+import polars as pl
+import numpy as np
+import os, gc
+from tqdm.auto import tqdm
+from matplotlib import pyplot as plt
+import pickle
+
+from sklearn.metrics import r2_score
+from lightgbm import LGBMRegressor
+import lightgbm as lgb
+from xgboost import XGBRegressor
+from catboost import CatBoostRegressor
+from sklearn.ensemble import VotingRegressor
+
+import warnings
+warnings.filterwarnings('ignore')
+pd.options.display.max_columns = None
+
+import kaggle_evaluation.jane_street_inference_server
+Configurations
+In [2]:
+class CONFIG:
+    seed = 42
+    target_col = "responder_6"
+    feature_cols = ["symbol_id", "time_id"] + [f"feature_{idx:02d}" for idx in range(79)]+ [f"responder_{idx}_lag_1" for idx in range(9)]
+    
+    model_paths = [
+        #"/kaggle/input/js24-train-gbdt-model-with-lags-singlemodel/result.pkl",
+        "/kaggle/input/js24-trained-gbdt-model/result.pkl",
+    ]
+Load preprocessed data (to calculate CV)
+In [3]:
+valid = pl.scan_parquet(
+    f"/kaggle/input/js24-preprocessing-create-lags/validation.parquet/"
+).collect().to_pandas()
+Load model
+In [4]:
+models = []
+for model_path in CONFIG.model_paths:
+    with open( model_path, "rb") as fp:
+        result = pickle.load(fp)
+
+    model = result["model"]
+    models.append(model)
+
+# Show model
+for model in models:
+    display(model)
+
+XGBRegressor
+XGBRegressor(base_score=None, booster=None, callbacks=None,
+             colsample_bylevel=None, colsample_bynode=None,
+             colsample_bytree=0.8, device='cuda', early_stopping_rounds=None,
+             enable_categorical=False, eval_metric=None, feature_types=None,
+             gamma=None, grow_policy=None, importance_type=None,
+             interaction_constraints=None, learning_rate=0.05, max_bin=None,
+             max_cat_threshold=None, max_cat_to_onehot=None,
+             max_delta_step=None, max_depth=6, max_leaves=None,
+             min_child_weight=None, missing=nan, monotone_constraints=None,
+             multi_strategy=None, n_estimators=200, n_gpus=2, n_jobs=None,
+             num_parallel_tree=None, ...)
+CV Score
+In [5]:
+X_valid = valid[ CONFIG.feature_cols ]
+y_valid = valid[ CONFIG.target_col ]
+w_valid = valid[ "weight" ]
+
+X_valid.shape, y_valid.shape, w_valid.shape
+Out[5]:
+((1082224, 90), (1082224,), (1082224,))
+In [6]:
+y_pred_valid = model.predict(X_valid)
+valid_score = r2_score( y_valid, y_pred_valid, sample_weight=w_valid )
+valid_score
+Out[6]:
+0.01172717896622344
+In [7]:
+del valid, X_valid, y_valid, w_valid
+gc.collect()
+Out[7]:
+0
+There seems to be bug in official code, can only submit polars dataframe
+In [8]:
+lags_ : pl.DataFrame | None = None
+    
+def predict(test: pl.DataFrame, lags: pl.DataFrame | None) -> pl.DataFrame | pd.DataFrame:
+    global lags_
+    if lags is not None:
+        lags_ = lags
+
+    predictions = test.select(
+        'row_id',
+        pl.lit(0.0).alias('responder_6'),
+    )
+    symbol_ids = test.select('symbol_id').to_numpy()[:, 0]
+
+    if not lags is None:
+        lags = lags.group_by(["date_id", "symbol_id"], maintain_order=True).last() # pick up last record of previous date
+        test = test.join(lags, on=["date_id", "symbol_id"],  how="left")
+    else:
+        test = test.with_columns(
+            ( pl.lit(0.0).alias(f'responder_{idx}_lag_1') for idx in range(9) )
+        )
+    
+    preds = np.zeros((test.shape[0],))
+    for i, model in enumerate(tqdm(models)):
+        preds += model.predict(test[CONFIG.feature_cols].to_pandas()) / len(models)
+    print(f"predict> preds.shape =", preds.shape)
+    
+    predictions = \
+    test.select('row_id').\
+    with_columns(
+        pl.Series(
+            name   = 'responder_6', 
+            values = np.clip(preds, a_min = -5, a_max = 5),
+            dtype  = pl.Float64,
+        )
+    )
+
+    # The predict function must return a DataFrame
+    assert isinstance(predictions, pl.DataFrame | pd.DataFrame)
+    # with columns 'row_id', 'responer_6'
+    assert list(predictions.columns) == ['row_id', 'responder_6']
+    # and as many rows as the test data.
+    assert len(predictions) == len(test)
+
+    return predictions
+When your notebook is run on the hidden test set, inference_server.serve must be called within 15 minutes of the notebook starting or the gateway will throw an error. If you need more than 15 minutes to load your model you can do so during the very first predict call, which does not have the usual 10 minute response deadline.
+In [9]:
+inference_server = kaggle_evaluation.jane_street_inference_server.JSInferenceServer(predict)
+
+if os.getenv('KAGGLE_IS_COMPETITION_RERUN'):
+    inference_server.serve()
+else:
+    inference_server.run_local_gateway(
+        (
+            '/kaggle/input/jane-street-realtime-marketdata-forecasting/test.parquet',
+            '/kaggle/input/jane-street-realtime-marketdata-forecasting/lags.parquet',
+        )
+    )
+100%
+1/1 [00:00<00:00, 28.79it/s]
+predict> preds.shape = (39,)

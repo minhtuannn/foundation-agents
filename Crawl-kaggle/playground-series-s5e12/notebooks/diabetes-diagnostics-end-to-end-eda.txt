@@ -1,0 +1,719 @@
+⚡ System Override: Diabetes Protocol
+🔌 Jack In: Loading Modules
+In [1]:
+import pandas as pd
+import numpy as np
+import time 
+import math
+import seaborn as sns
+import matplotlib.pyplot as plt
+import warnings
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import plotly.io as pio
+import plotly.subplots as sp
+from scipy.stats import skew, kurtosis, zscore
+from scipy.stats import chi2_contingency
+import plotly.figure_factory as ff  
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.metrics import roc_auc_score, roc_curve, auc, precision_recall_curve
+from lightgbm import LGBMClassifier, early_stopping, log_evaluation
+from sklearn.ensemble import HistGradientBoostingClassifier
+from catboost import CatBoostClassifier
+from xgboost import XGBClassifier
+
+warnings.filterwarnings('ignore')
+sns.set(style='darkgrid')
+pio.renderers.default = 'iframe_connected'
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+In [2]:
+train = pd.read_csv('/kaggle/input/playground-series-s5e12/train.csv')
+test = pd.read_csv('/kaggle/input/playground-series-s5e12/test.csv')
+submission = pd.read_csv('/kaggle/input/playground-series-s5e12/sample_submission.csv')
+print("Loading Dataset....")
+Loading Dataset....
+🧹 Defrag & Purge: Data Hygiene
+In [3]:
+train.head()
+Out[3]:
+id age alcohol_consumption_per_week physical_activity_minutes_per_week diet_score sleep_hours_per_day screen_time_hours_per_day bmi waist_to_hip_ratio systolic_bp ... gender ethnicity education_level income_level smoking_status employment_status family_history_diabetes hypertension_history cardiovascular_history diagnosed_diabetes
+0 0 31 1 45 7.7 6.8 6.1 33.4 0.93 112 ... Female Hispanic Highschool Lower-Middle Current Employed 0 0 0 1.0
+1 1 50 2 73 5.7 6.5 5.8 23.8 0.83 120 ... Female White Highschool Upper-Middle Never Employed 0 0 0 1.0
+2 2 32 3 158 8.5 7.4 9.1 24.1 0.83 95 ... Male Hispanic Highschool Lower-Middle Never Retired 0 0 0 0.0
+3 3 54 3 77 4.6 7.0 9.2 26.6 0.83 121 ... Female White Highschool Lower-Middle Current Employed 0 1 0 1.0
+4 4 54 1 55 5.7 6.2 5.1 28.8 0.90 108 ... Male White Highschool Upper-Middle Never Retired 0 1 0 1.0
+5 rows × 26 columns
+In [4]:
+train.info()
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 700000 entries, 0 to 699999
+Data columns (total 26 columns):
+ #   Column                              Non-Null Count   Dtype  
+---  ------                              --------------   -----  
+ 0   id                                  700000 non-null  int64  
+ 1   age                                 700000 non-null  int64  
+ 2   alcohol_consumption_per_week        700000 non-null  int64  
+ 3   physical_activity_minutes_per_week  700000 non-null  int64  
+ 4   diet_score                          700000 non-null  float64
+ 5   sleep_hours_per_day                 700000 non-null  float64
+ 6   screen_time_hours_per_day           700000 non-null  float64
+ 7   bmi                                 700000 non-null  float64
+ 8   waist_to_hip_ratio                  700000 non-null  float64
+ 9   systolic_bp                         700000 non-null  int64  
+ 10  diastolic_bp                        700000 non-null  int64  
+ 11  heart_rate                          700000 non-null  int64  
+ 12  cholesterol_total                   700000 non-null  int64  
+ 13  hdl_cholesterol                     700000 non-null  int64  
+ 14  ldl_cholesterol                     700000 non-null  int64  
+ 15  triglycerides                       700000 non-null  int64  
+ 16  gender                              700000 non-null  object 
+ 17  ethnicity                           700000 non-null  object 
+ 18  education_level                     700000 non-null  object 
+ 19  income_level                        700000 non-null  object 
+ 20  smoking_status                      700000 non-null  object 
+ 21  employment_status                   700000 non-null  object 
+ 22  family_history_diabetes             700000 non-null  int64  
+ 23  hypertension_history                700000 non-null  int64  
+ 24  cardiovascular_history              700000 non-null  int64  
+ 25  diagnosed_diabetes                  700000 non-null  float64
+dtypes: float64(6), int64(14), object(6)
+memory usage: 138.9+ MB
+This dataset contains comprehensive demographic, lifestyle, and clinical health variables for 700,000 individuals, with no missing values.
+In [5]:
+train.describe().round(2).T
+Out[5]:
+count mean std min 25% 50% 75% max
+id 700000.0 349999.50 202072.74 0.00 174999.75 349999.50 524999.25 699999.00
+age 700000.0 50.36 11.66 19.00 42.00 50.00 58.00 89.00
+alcohol_consumption_per_week 700000.0 2.07 1.05 1.00 1.00 2.00 3.00 9.00
+physical_activity_minutes_per_week 700000.0 80.23 51.20 1.00 49.00 71.00 96.00 747.00
+diet_score 700000.0 5.96 1.46 0.10 5.00 6.00 7.00 9.90
+sleep_hours_per_day 700000.0 7.00 0.90 3.10 6.40 7.00 7.60 9.90
+screen_time_hours_per_day 700000.0 6.01 2.02 0.60 4.60 6.00 7.40 16.50
+bmi 700000.0 25.87 2.86 15.10 23.90 25.90 27.80 38.40
+waist_to_hip_ratio 700000.0 0.86 0.04 0.68 0.83 0.86 0.88 1.05
+systolic_bp 700000.0 116.29 11.01 91.00 108.00 116.00 124.00 163.00
+diastolic_bp 700000.0 75.44 6.83 51.00 71.00 75.00 80.00 104.00
+heart_rate 700000.0 70.17 6.94 42.00 65.00 70.00 75.00 101.00
+cholesterol_total 700000.0 186.82 16.73 117.00 175.00 187.00 199.00 289.00
+hdl_cholesterol 700000.0 53.82 8.27 21.00 48.00 54.00 59.00 90.00
+ldl_cholesterol 700000.0 102.91 19.02 51.00 89.00 103.00 116.00 205.00
+triglycerides 700000.0 123.08 24.74 31.00 106.00 123.00 139.00 290.00
+family_history_diabetes 700000.0 0.15 0.36 0.00 0.00 0.00 0.00 1.00
+hypertension_history 700000.0 0.18 0.39 0.00 0.00 0.00 0.00 1.00
+cardiovascular_history 700000.0 0.03 0.17 0.00 0.00 0.00 0.00 1.00
+diagnosed_diabetes 700000.0 0.62 0.48 0.00 0.00 1.00 1.00 1.00
+The population is middle-aged on average, with moderate physical activity, average sleep near 7 hours, and high daily screen time. Mean BMI and waist-to-hip ratio indicate a predominantly overweight population with elevated metabolic risk. Blood pressure, heart rate, and lipid levels are mostly within borderline-normal ranges but show wide variability. Family history of diabetes and hypertension are present in a minority, while cardiovascular history is rare. A high proportion of individuals are diagnosed with diabetes, indicating a dataset strongly skewed toward metabolic disease analysis.
+In [6]:
+print("Duplicated Rows:",train.duplicated().sum())
+print("-"*30)
+print("Number of Rows:",train.shape[0])
+print("-"*30)
+print("Number of Columns:",train.shape[1])
+Duplicated Rows: 0
+------------------------------
+Number of Rows: 700000
+------------------------------
+Number of Columns: 26
+In [7]:
+print("Analysis of Null Columns:")
+train.isnull().sum()
+Analysis of Null Columns:
+Out[7]:
+id                                    0
+age                                   0
+alcohol_consumption_per_week          0
+physical_activity_minutes_per_week    0
+diet_score                            0
+sleep_hours_per_day                   0
+screen_time_hours_per_day             0
+bmi                                   0
+waist_to_hip_ratio                    0
+systolic_bp                           0
+diastolic_bp                          0
+heart_rate                            0
+cholesterol_total                     0
+hdl_cholesterol                       0
+ldl_cholesterol                       0
+triglycerides                         0
+gender                                0
+ethnicity                             0
+education_level                       0
+income_level                          0
+smoking_status                        0
+employment_status                     0
+family_history_diabetes               0
+hypertension_history                  0
+cardiovascular_history                0
+diagnosed_diabetes                    0
+dtype: int64
+In [8]:
+print("Numeric Col Names",train.select_dtypes(include=['number']).columns)
+print("-"*30)
+print("Categorical Col Names",train.select_dtypes(include=['object']).columns)
+Numeric Col Names Index(['id', 'age', 'alcohol_consumption_per_week',
+       'physical_activity_minutes_per_week', 'diet_score',
+       'sleep_hours_per_day', 'screen_time_hours_per_day', 'bmi',
+       'waist_to_hip_ratio', 'systolic_bp', 'diastolic_bp', 'heart_rate',
+       'cholesterol_total', 'hdl_cholesterol', 'ldl_cholesterol',
+       'triglycerides', 'family_history_diabetes', 'hypertension_history',
+       'cardiovascular_history', 'diagnosed_diabetes'],
+      dtype='object')
+------------------------------
+Categorical Col Names Index(['gender', 'ethnicity', 'education_level', 'income_level',
+       'smoking_status', 'employment_status'],
+      dtype='object')
+In [9]:
+num_col = ['age', 'alcohol_consumption_per_week',
+       'physical_activity_minutes_per_week', 'diet_score',
+       'sleep_hours_per_day', 'screen_time_hours_per_day', 'bmi',
+       'waist_to_hip_ratio', 'systolic_bp', 'diastolic_bp', 'heart_rate',
+       'cholesterol_total', 'hdl_cholesterol', 'ldl_cholesterol',
+       'triglycerides']
+
+bool_col = ['family_history_diabetes', 'hypertension_history',
+       'cardiovascular_history']
+
+cat_col = ['gender', 'ethnicity', 'education_level', 'income_level',
+       'smoking_status', 'employment_status']
+
+target_col = 'diagnosed_diabetes'
+In [10]:
+color_palette = [
+    "#371EA3","#4E3DA5","#655CAC",
+    "#7B7CB7","#929BC6","#A8BBD8",
+    "#BFD7E7","#D5EAF1","#E9F7F8"
+]
+In [11]:
+print("\n===== Grouped by Diabetes Diagnosis =====")
+print(train.groupby(target_col)[['age', 'bmi', 'cholesterol_total']].mean().round(3))
+===== Grouped by Diabetes Diagnosis =====
+                       age     bmi  cholesterol_total
+diagnosed_diabetes                                   
+0.0                 47.943  25.486            184.923
+1.0                 51.820  26.109            187.965
+Individuals diagnosed with diabetes are older on average and have higher BMI than non-diabetic individuals. They also show slightly higher total cholesterol, indicating greater metabolic and cardiovascular risk.
+In [12]:
+print("\n===== Skewness & Kurtosis ====")
+for col in num_col:
+    print(f"{col:25s} | Skewness: {train[col].skew():.4f} | Kurtosis: {train[col].kurtosis():.4f}")
+===== Skewness & Kurtosis ====
+age                       | Skewness: 0.0209 | Kurtosis: -0.3867
+alcohol_consumption_per_week | Skewness: 0.9324 | Kurtosis: 0.7042
+physical_activity_minutes_per_week | Skewness: 2.8142 | Kurtosis: 13.1971
+diet_score                | Skewness: -0.0630 | Kurtosis: -0.1613
+sleep_hours_per_day       | Skewness: 0.0015 | Kurtosis: -0.0600
+screen_time_hours_per_day | Skewness: 0.1141 | Kurtosis: -0.1328
+bmi                       | Skewness: 0.0321 | Kurtosis: -0.0223
+waist_to_hip_ratio        | Skewness: 0.0377 | Kurtosis: 0.0111
+systolic_bp               | Skewness: 0.0972 | Kurtosis: -0.3938
+diastolic_bp              | Skewness: -0.0014 | Kurtosis: -0.0373
+heart_rate                | Skewness: -0.0125 | Kurtosis: -0.0611
+cholesterol_total         | Skewness: 0.0611 | Kurtosis: -0.2663
+hdl_cholesterol           | Skewness: -0.0213 | Kurtosis: -0.1072
+ldl_cholesterol           | Skewness: 0.1323 | Kurtosis: -0.1321
+triglycerides             | Skewness: 0.1924 | Kurtosis: 0.4783
+Most clinical and lifestyle variables are approximately normally distributed with low skewness and kurtosis near zero. Physical activity and alcohol consumption are strongly right-skewed with heavy tails, indicating a small subset with extreme values.
+In [13]:
+for col in cat_col:
+    # Crosstab
+    ct = pd.crosstab(train[col], train['diagnosed_diabetes'])
+    ct_perc = (ct.T / ct.sum(axis=1)).T * 100
+    print(f"\n===== Crosstab: {col} vs Diagnosed Diabetics =====")
+    print(ct_perc.round(2))
+
+    # Chi-Square Test
+    chi2, p, dof, expected = chi2_contingency(ct)
+    print(f"Chi-Square Test for {col}: χ²={chi2:.2f}, p-value={p:.4f}")
+===== Crosstab: gender vs Diagnosed Diabetics =====
+diagnosed_diabetes    0.0    1.0
+gender                          
+Female              37.78  62.22
+Male                37.57  62.43
+Other               35.94  64.06
+Chi-Square Test for gender: χ²=7.93, p-value=0.0190
+
+===== Crosstab: ethnicity vs Diagnosed Diabetics =====
+diagnosed_diabetes    0.0    1.0
+ethnicity                       
+Asian               37.15  62.85
+Black               37.61  62.39
+Hispanic            38.37  61.63
+Other               36.41  63.59
+White               37.59  62.41
+Chi-Square Test for ethnicity: χ²=47.00, p-value=0.0000
+
+===== Crosstab: education_level vs Diagnosed Diabetics =====
+diagnosed_diabetes    0.0    1.0
+education_level                 
+Graduate            37.30  62.70
+Highschool          37.85  62.15
+No formal           36.39  63.61
+Postgraduate        38.34  61.66
+Chi-Square Test for education_level: χ²=45.63, p-value=0.0000
+
+===== Crosstab: income_level vs Diagnosed Diabetics =====
+diagnosed_diabetes    0.0    1.0
+income_level                    
+High                37.64  62.36
+Low                 36.97  63.03
+Lower-Middle        37.32  62.68
+Middle              37.97  62.03
+Upper-Middle        37.96  62.04
+Chi-Square Test for income_level: χ²=43.28, p-value=0.0000
+
+===== Crosstab: smoking_status vs Diagnosed Diabetics =====
+diagnosed_diabetes    0.0    1.0
+smoking_status                  
+Current             37.69  62.31
+Former              37.47  62.53
+Never               37.71  62.29
+Chi-Square Test for smoking_status: χ²=2.13, p-value=0.3450
+
+===== Crosstab: employment_status vs Diagnosed Diabetics =====
+diagnosed_diabetes    0.0    1.0
+employment_status               
+Employed            37.54  62.46
+Retired             38.19  61.81
+Student             37.84  62.16
+Unemployed          37.79  62.21
+Chi-Square Test for employment_status: χ²=18.03, p-value=0.0004
+Diabetes prevalence is similar across genders, with only minor differences, though the association is statistically significant due to large sample size. Ethnicity shows a significant association with diabetes, with small but consistent variation across groups. Education and income levels are significantly related to diabetes status, indicating socioeconomic influence despite narrow percentage gaps. Smoking status shows no significant association with diabetes in this dataset. Employment status has a statistically significant but weak association with diabetes prevalence.
+In [14]:
+class_dist = train['diagnosed_diabetes'].value_counts(normalize=True)
+print("\n===== Diagnosed Diabetes Distribution =====")
+print(class_dist.round(3))
+
+imbalance_ratio = class_dist.min() / class_dist.max()
+print(f"\nClass Imbalance Ratio (minority/majority): {imbalance_ratio:.3f}")
+===== Diagnosed Diabetes Distribution =====
+diagnosed_diabetes
+1.0    0.623
+0.0    0.377
+Name: proportion, dtype: float64
+
+Class Imbalance Ratio (minority/majority): 0.604
+Nearly two-thirds of the population is diagnosed with diabetes, while just over one-third is non-diabetic. This indicates a strongly imbalanced outcome dominated by diabetic cases.
+📊 Distribution Protocol: Attribute Mapping
+In [15]:
+age_grouped = (
+    train
+    .groupby(["age", "diagnosed_diabetes"])
+    .size()
+    .unstack(fill_value=0)
+    .rename(columns={0: "no diabetic", 1: "diabetic"})
+)
+
+age_grouped.head()
+Out[15]:
+diagnosed_diabetes no diabetic diabetic
+age
+19 325 221
+20 317 202
+21 696 265
+22 1007 483
+23 935 403
+In [16]:
+alcohol_grouped = (
+    train
+    .groupby(["alcohol_consumption_per_week", "diagnosed_diabetes"])
+    .size()
+    .unstack(fill_value=0)
+    .rename(columns={0: "no diabetic", 1: "diabetic"})
+)
+
+alcohol_grouped.head()
+Out[16]:
+diagnosed_diabetes no diabetic diabetic
+alcohol_consumption_per_week
+1 93880 152431
+2 92025 154567
+3 51657 85908
+4 19630 33343
+5 5243 8079
+👤 Solo Signals: Single Feature Deep Dive
+In [17]:
+diab_count = train['diagnosed_diabetes'].value_counts().reset_index()
+diab_count.columns = ['diagnosed_diabetes', 'Count']
+
+fig = px.pie(
+    diab_count,
+    names='diagnosed_diabetes',
+    values='Count',
+    color='diagnosed_diabetes',
+    color_discrete_sequence=px.colors.sequential.Agsunset,
+    title="Diagnosed Diabetes Distribution"
+)
+
+fig.update_layout(width=600, height=400)
+
+fig.show()
+In [18]:
+gender_count = train['gender'].value_counts().reset_index()
+gender_count.columns = ['gender', 'Count']
+
+fig = px.bar(
+    gender_count,
+    x='gender',               
+    y='Count',                
+    color='gender',
+    color_discrete_sequence=px.colors.sequential.Agsunset,
+    title="Gender Distribution",
+    text='Count'
+)
+
+fig.update_layout(width=600, height=400)
+fig.show()
+In [19]:
+ethnicity_count = train['ethnicity'].value_counts().reset_index()
+ethnicity_count.columns = ['ethnicity', 'Count']
+
+fig = px.bar(
+    ethnicity_count,
+    x='ethnicity',
+    y='Count',
+    color='ethnicity',
+    color_discrete_sequence=px.colors.sequential.Agsunset,
+    title="Ethnicity Distribution",
+    text='Count'
+)
+
+fig.update_layout(width=600, height=400)
+fig.show()
+In [20]:
+education_count = train['education_level'].value_counts().reset_index()
+education_count.columns = ['education_level', 'Count']
+
+fig = px.bar(
+    education_count,
+    x='education_level',
+    y='Count',
+    color='education_level',
+    color_discrete_sequence=px.colors.sequential.Agsunset,
+    title="Education Level Distribution",
+    text='Count'
+)
+
+fig.update_layout(width=600, height=400)
+fig.show()
+In [21]:
+employment_count = train['employment_status'].value_counts().reset_index()
+employment_count.columns = ['employment_status', 'Count']
+
+fig = px.bar(
+    employment_count,
+    x='employment_status',
+    y='Count',
+    color='employment_status',
+    color_discrete_sequence=px.colors.sequential.Agsunset,
+    title="Employment Status Distribution",
+    text='Count'
+)
+
+fig.update_layout(width=600, height=400)
+fig.show()
+In [22]:
+smoking_count = train['smoking_status'].value_counts().reset_index()
+smoking_count.columns = ['smoking_status', 'Count']
+
+fig = px.bar(
+    smoking_count,
+    x='smoking_status',
+    y='Count',
+    color='smoking_status',
+    color_discrete_sequence=px.colors.sequential.Agsunset,
+    title="Smoking Status Distribution",
+    text='Count'
+)
+
+fig.update_layout(width=600, height=400)
+fig.show()
+In [23]:
+income_count = train['income_level'].value_counts().reset_index()
+income_count.columns = ['income_level', 'Count']
+
+fig = px.bar(
+    income_count,
+    x='income_level',
+    y='Count',
+    color='income_level',
+    color_discrete_sequence=px.colors.sequential.Agsunset,
+    title="Income Level Distribution",
+    text='Count'
+)
+
+fig.update_layout(width=600, height=400)
+fig.show()
+⚔️ Cross-Fire: Feature vs. Feature
+In [24]:
+plt.figure(figsize=(15, 50))
+for i, col in enumerate(num_col):
+    plt.subplot(len(num_col) // 2 + 1, 2, i + 1)
+    sns.boxplot(
+        data=train,
+        x=target_col,
+        y=col
+    )
+    plt.title(f"{col} vs {target_col}")
+    plt.xlabel(target_col)
+    plt.ylabel(col)
+
+plt.tight_layout()
+plt.show()
+In [25]:
+n_features = len(num_col)
+n_cols = 3
+n_rows = math.ceil(n_features / n_cols)
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(18, 5 * n_rows))
+axes = axes.ravel()
+
+for idx, feature in enumerate(num_col):
+    sns.histplot(
+        data=train,
+        x=feature,
+        hue=target_col,
+        kde=True,
+        stat="density",
+        common_norm=False,
+        palette=color_palette[:2],
+        ax=axes[idx]
+    )
+    axes[idx].set_title(feature)
+
+for i in range(n_features, len(axes)):
+    fig.delaxes(axes[i])
+
+plt.tight_layout()
+plt.show()
+🔗 The Matrix: Mapping Connections
+In [26]:
+corr_mat = train[num_col].corr()
+
+plt.figure(figsize=(14,12))
+sns.heatmap(
+    corr_mat,
+    annot=True,
+    fmt=".2f",
+    cmap="coolwarm",
+    linewidths=0.5,
+    square=True
+)
+plt.title("Correlation Matrix (Numerical Variables)")
+plt.tight_layout()
+plt.show()
+💾 Connection Logs: The Verdict
+Age, BMI, and lipid markers show the only meaningful correlations, with age aligning moderately with blood pressure and cholesterol, and BMI showing strong relationships with waist-to-hip ratio and triglycerides, indicating concentrated metabolic risk patterns.
+Lipid profile variables form the strongest internal cluster, with total cholesterol and LDL cholesterol highly correlated, while HDL cholesterol shows expected negative associations with LDL and BMI.
+Most other variables exhibit weak or negligible correlations, confirming low multicollinearity and supporting reliable downstream modeling.
+🚧 The Great Divide: Partitioning Data
+In [27]:
+X = train.drop(columns=[target_col, 'id'])
+y = train[target_col]
+X_test = test.drop(columns=['id'])
+In [28]:
+cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+
+for col in cat_cols:
+    X[col] = X[col].astype("category")
+    X_test[col] = X_test[col].astype("category")
+
+for col in cat_cols:
+    X[col] = X[col].cat.codes
+    X_test[col] = X_test[col].cat.codes
+
+cat_idx = [X.columns.get_loc(col) for col in cat_cols]
+In [29]:
+X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.1, random_state=42)
+🧠 Neural Initiation: Model Training
+In [30]:
+results = {}
+In [31]:
+cat_model = CatBoostClassifier(
+    iterations=1000,
+    learning_rate=0.05,
+    depth=6,
+    eval_metric="AUC",
+    random_state=42,
+    task_type="GPU",
+    devices="0",
+    verbose=100
+)
+
+cat_model.fit(
+    X_train,
+    y_train,
+    eval_set=(X_valid, y_valid),
+    cat_features=cat_cols,
+    early_stopping_rounds=50
+)
+
+results["CatBoost"] = roc_auc_score(
+    y_valid, cat_model.predict_proba(X_valid)[:, 1]
+)
+test_pred_cat = cat_model.predict_proba(X_test)[:, 1]
+Default metric period is 5 because AUC is/are not implemented for GPU
+0: test: 0.6784791 best: 0.6784791 (0) total: 6.39s remaining: 1h 46m 23s
+100: test: 0.7049958 best: 0.7049958 (100) total: 10.6s remaining: 1m 34s
+200: test: 0.7108183 best: 0.7108183 (200) total: 14.8s remaining: 58.8s
+300: test: 0.7155227 best: 0.7155227 (300) total: 18.9s remaining: 44s
+400: test: 0.7185142 best: 0.7185142 (400) total: 23.1s remaining: 34.5s
+500: test: 0.7199713 best: 0.7199713 (500) total: 27.2s remaining: 27.1s
+600: test: 0.7210174 best: 0.7210174 (600) total: 31.4s remaining: 20.8s
+700: test: 0.7216930 best: 0.7216930 (700) total: 35.5s remaining: 15.2s
+800: test: 0.7222461 best: 0.7222461 (800) total: 39.7s remaining: 9.86s
+900: test: 0.7225695 best: 0.7225707 (899) total: 43.8s remaining: 4.82s
+999: test: 0.7228625 best: 0.7228645 (996) total: 48s remaining: 0us
+bestTest = 0.7228645086
+bestIteration = 996
+Shrink model to first 997 iterations.
+In [32]:
+lgb_model = LGBMClassifier(
+    n_estimators=1000,
+    learning_rate=0.05,
+    max_depth=6,
+    device="gpu",
+    random_state=42,
+    verbose=-1
+)
+
+lgb_model.fit(
+    X_train,
+    y_train,
+    eval_set=[(X_valid, y_valid)],
+    eval_metric="auc",
+    categorical_feature=cat_cols
+)
+
+results["LightGBM"] = roc_auc_score(
+    y_valid, lgb_model.predict_proba(X_valid)[:, 1]
+)
+
+test_pred_lgb = lgb_model.predict_proba(X_test)[:, 1]
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+In [33]:
+xgb_model = XGBClassifier(
+    n_estimators=1000,
+    learning_rate=0.05,
+    max_depth=6,
+    eval_metric="auc",
+    enable_categorical=True,
+    tree_method="gpu_hist",
+    random_state=42
+)
+
+xgb_model.fit(
+    X_train,
+    y_train,
+    eval_set=[(X_valid, y_valid)],
+    early_stopping_rounds=50,
+    verbose=100
+)
+
+results["XGBoost"] = roc_auc_score(
+    y_valid, xgb_model.predict_proba(X_valid)[:, 1]
+)
+
+test_pred_xgb = xgb_model.predict_proba(X_test)[:, 1]
+[0] validation_0-auc:0.68430
+[100] validation_0-auc:0.70946
+[200] validation_0-auc:0.71760
+[300] validation_0-auc:0.72112
+[400] validation_0-auc:0.72267
+[500] validation_0-auc:0.72354
+[600] validation_0-auc:0.72396
+[700] validation_0-auc:0.72433
+[800] validation_0-auc:0.72451
+[900] validation_0-auc:0.72470
+[972] validation_0-auc:0.72472
+In [34]:
+hgb_model = HistGradientBoostingClassifier(
+    max_iter=1000,
+    learning_rate=0.05,
+    max_depth=6,
+    random_state=42,
+    categorical_features=cat_idx,
+    early_stopping=True,
+    validation_fraction=0.1,
+    n_iter_no_change=50
+)
+
+hgb_model.fit(X_train, y_train)
+
+results["HistGB"] = roc_auc_score(
+    y_valid, hgb_model.predict_proba(X_valid)[:, 1]
+)
+
+test_pred_hgb = hgb_model.predict_proba(X_test)[:, 1]
+📡 Upload Sequence: Initiating Export
+In [35]:
+final_preds = (
+    test_pred_cat +
+    test_pred_lgb +
+    test_pred_xgb +
+    test_pred_hgb
+) / 4
+
+plt.figure()
+plt.hist(final_preds, bins=50)
+plt.title("Ensemble Test Prediction Histogram")
+plt.xlabel("Predicted Probability")
+plt.ylabel("Count")
+plt.show()
+
+print("Ensemble mean prediction:", final_preds.mean())
+print(results)
+Ensemble mean prediction: 0.6014668057847187
+{'CatBoost': 0.7228644431606925, 'LightGBM': 0.7264695996408463, 'XGBoost': 0.7247438715272532, 'HistGB': 0.7246443486913774}
+In [36]:
+submission = pd.DataFrame({
+    "id": test["id"],
+    "target": final_preds
+})
+
+submission.to_csv("submission.csv", index=False)
+print("submission.csv saved")
+submission.csv saved
+In [37]:
+submission.head()
+Out[37]:
+id target
+0 700000 0.505124
+1 700001 0.670886
+2 700002 0.777979
+3 700003 0.404189
+4 700004 0.917969

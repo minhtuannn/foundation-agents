@@ -1,0 +1,701 @@
+S5E3 🧭
+EVERYONE,WELCOME TO MY NOTEBOOK !
+1 ✨ | Import Packages
+In [1]:
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV, StratifiedKFold
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier, StackingClassifier
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import f1_score, matthews_corrcoef, accuracy_score, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.preprocessing import StandardScaler
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score, roc_auc_score, classification_report, confusion_matrix
+from sklearn.feature_selection import SelectFromModel, RFE
+import xgboost as xgb
+import lightgbm as lgb
+import warnings
+warnings.filterwarnings('ignore')
+2 ✨ | Data Loading
+In [2]:
+train=pd.read_csv(r'/kaggle/input/playground-series-s5e3/train.csv')
+test=pd.read_csv(r'/kaggle/input/playground-series-s5e3/test.csv')
+print(train.shape,test.shape)
+(2190, 13) (730, 12)
+3 ✨ | Cheaking Null Value
+In [3]:
+train.drop_duplicates(inplace=True)
+train.isnull().sum()
+Out[3]:
+id               0
+day              0
+pressure         0
+maxtemp          0
+temparature      0
+mintemp          0
+dewpoint         0
+humidity         0
+cloud            0
+sunshine         0
+winddirection    0
+windspeed        0
+rainfall         0
+dtype: int64
+In [4]:
+train.fillna(train.median(), inplace=True)
+test.fillna(test.mean(), inplace=True)
+Exploratory Data Analysis.📈
+4 ✨ | EDA
+In [5]:
+numerical_variables = ['pressure', 'maxtemp', 'temparature', 'mintemp', 'dewpoint', 'humidity', 'cloud', 'sunshine', 'windspeed']
+target_variable = 'rainfall' 
+categorical_variables = ['winddirection']
+In [6]:
+custom_palette = ['#3498db', '#e74c3c', '#2ecc71']
+
+train['Source'] = 'Train'
+test['Source'] = 'Test'
+
+def generate_feature_visualizations(feature_name):
+    sns.set(style='whitegrid')
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    plt.subplot(1, 2, 1)
+    sns.boxplot(data=pd.concat([train, test]),
+                x=feature_name, y="Source", palette=custom_palette)
+    plt.xlabel(feature_name)
+    plt.title(f"Box Plot for {feature_name} Across Datasets")
+
+    plt.subplot(1, 2, 2)
+    sns.histplot(data=train, x=feature_name, color=custom_palette[0], kde=True, bins=30, label="Train", alpha=0.6)
+    sns.histplot(data=test, x=feature_name, color=custom_palette[1], kde=True, bins=30, label="Test", alpha=0.6)
+    plt.xlabel(feature_name)
+    plt.ylabel("Frequency")
+    plt.title(f"Histogram for {feature_name} (Train, Test & Original)")
+    plt.legend(title="Dataset")
+
+    plt.tight_layout()
+
+    plt.show()
+
+for feature in numerical_variables:
+    generate_feature_visualizations(feature)
+
+train.drop('Source', axis=1, inplace=True)
+test.drop('Source', axis=1, inplace=True)
+In [7]:
+custom_palette = ['#1f77b4', '#ff7f0e']  
+
+def create_grouped_countplot(variable):
+    sns.set_style('whitegrid')
+
+
+    train_data_copy = train.copy()
+    test_data_copy = test.copy()
+
+    train_data_copy['Dataset'] = 'Train'
+    test_data_copy['Dataset'] = 'Test'
+
+    combined_data = pd.concat([train_data_copy, test_data_copy])
+
+    train_counts = train[variable].value_counts().sort_values(ascending=True).index.tolist()
+
+    plt.figure(figsize=(14, 7))
+    sns.countplot(
+        data=combined_data, 
+        x=variable,  
+        hue="Dataset", 
+        palette=custom_palette,  
+        dodge=True,  
+        width=0.85, 
+        order=train_counts  
+    )
+
+    plt.ylabel("Count")
+    plt.xlabel(variable)
+    plt.title(f"Grouped Count Plot for {variable} (Train vs Test)")
+
+    plt.xticks(rotation=45, ha="right")
+
+    plt.show()
+
+for variable in categorical_variables:
+    create_grouped_countplot(variable)
+In [8]:
+unique_palette = ['#9b59b6', '#f39c12']
+
+def generate_wind_rose_plot(ax, dataset, name, color):
+    wind_direction_radians = np.radians(dataset['winddirection'].dropna())
+
+    bins = np.linspace(0, 2 * np.pi, 37)
+    counts, bin_edges = np.histogram(wind_direction_radians, bins=bins)
+
+    bars = ax.bar(bin_edges[:-1], counts, width=np.radians(10), color=color, edgecolor='black', alpha=0.75)
+
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    ax.set_xticks(np.radians(np.arange(0, 360, 45)))
+    ax.set_xticklabels(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], fontsize=12, fontweight='bold')
+
+    ax.yaxis.grid(True, linestyle="--", alpha=0.6)
+    ax.set_yticklabels([])
+    ax.set_title(f"Wind Direction - {name}", fontsize=14, fontweight='bold', pad=15)
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 6), subplot_kw={'projection': 'polar'})
+
+generate_wind_rose_plot(axes[0], train, "Training Data", unique_palette[0])
+generate_wind_rose_plot(axes[1], test, "Test Data", unique_palette[1])
+
+plt.tight_layout()
+plt.show()
+In [9]:
+fig, ax = plt.subplots(3, 4, figsize=(20, 20))
+ax = ax.flatten()
+i = 0
+for col in train.columns:
+    if col != 'rainfall':
+        sns.kdeplot(data=train, x=col, ax=ax[i], label="Train", fill=True)
+        sns.kdeplot(data=test, x=col, ax=ax[i], label="Test", fill=True)
+        ax[i].set_title(col)
+        ax[i].legend()
+        i += 1
+plt.tight_layout()
+
+for j in range(i, len(ax)):
+    ax[j].axis("off")
+
+plt.show()
+In [10]:
+import seaborn as sns
+import matplotlib.pyplot as plt
+import itertools
+
+features = ['day', 'pressure', 'maxtemp', 'temparature', 'mintemp', 'dewpoint', 
+            'humidity', 'cloud', 'sunshine', 'winddirection', 'windspeed']
+pairs = list(itertools.combinations(features, 2))  
+n_cols = 3
+n_rows = -(-len(pairs) // n_cols)  
+
+fig, axes = plt.subplots(nrows=n_rows, ncols=n_cols, figsize=(20, 5 * n_rows))
+axes = axes.flatten()
+for i, (x, y) in enumerate(pairs):
+    sns.scatterplot(data=train, x=x, y=y, hue='rainfall', palette='coolwarm', ax=axes[i])
+    axes[i].set_title(f'{x} vs. {y} (Hue: Rainfall)', fontsize=14)
+for j in range(i + 1, len(axes)):
+    axes[j].axis('off')
+
+plt.tight_layout()
+plt.show()
+In [11]:
+variables = [col for col in train.columns if col in numerical_variables]+['day']
+
+test_variables = variables
+train_variables = variables+ ['rainfall']
+
+corr_train = train[train_variables].corr()
+corr_test = test[test_variables].corr()
+
+mask_train = np.triu(np.ones_like(corr_train, dtype=bool))
+mask_test = np.triu(np.ones_like(corr_test, dtype=bool))
+
+annot_kws = {"size": 8, "rotation": 45}
+
+plt.figure(figsize=(15, 5))
+plt.subplot(1, 2, 1)
+ax_train = sns.heatmap(corr_train, mask=mask_train, cmap='viridis', annot=True,
+                      square=True, linewidths=.5, xticklabels=1, yticklabels=1, annot_kws=annot_kws)
+plt.title('Correlation Heatmap - Train Data')
+
+plt.subplot(1, 2, 2)
+ax_test = sns.heatmap(corr_test, mask=mask_test, cmap='viridis', annot=True,
+                     square=True, linewidths=.5, xticklabels=1, yticklabels=1, annot_kws=annot_kws)
+plt.title('Correlation Heatmap - Test Data')
+
+plt.tight_layout()
+
+plt.show()
+In [12]:
+variables = [col for col in train.columns if col in numerical_variables]
+train_variables = variables + ['rainfall']
+
+corr_train = train[train_variables].corr()[['rainfall']].T  
+
+annot_kws = {"size": 10}  
+
+plt.figure(figsize=(10, 2)) 
+ax_train = sns.heatmap(corr_train, cmap='viridis', annot=True, 
+                      square=False, linewidths=0.5, annot_kws=annot_kws, 
+                      cbar=False) 
+
+plt.xticks(rotation=45, ha="right")  
+plt.title('Correlation Heatmap - Train Data (ONLY TARGET)')
+plt.yticks(rotation=0)  
+
+# Show plot
+plt.show()
+In [13]:
+from matplotlib.lines import Line2D
+
+train_color = '#8e44ad'  
+test_color = '#e67e22'   
+rainfall_colors = {0: '#f39c12', 1: '#3498db'} 
+
+numerical_columns = test.select_dtypes(include=['int64', 'float64']).columns.tolist()
+for col in ['id', 'day', 'rainfall']:
+    if col in numerical_columns:
+        numerical_columns.remove(col)
+
+for column in numerical_columns:
+    
+    fig = plt.figure(figsize=(16, 10))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1, 1])
+
+    ax0 = fig.add_subplot(gs[0, :])
+    ax0.plot(train['id'], train[column], linestyle='-', color=train_color, label='Train Data', alpha=0.8)
+    ax0.plot(test['id'], test[column], linestyle='-', color=test_color, label='Test Data', alpha=0.8)
+
+    ax0.set_xlabel('ID', fontsize=14)
+    ax0.set_ylabel(column, fontsize=14)
+    ax0.set_title(f'Trend Plot: {column} vs ID', fontsize=16, fontweight='bold')
+    ax0.legend(fontsize=12)
+    ax0.grid(True, linestyle='--', alpha=0.5)
+
+    ax1 = fig.add_subplot(gs[1, 0])
+    scatter = ax1.scatter(
+        train['day'], train[column],
+        c=train['rainfall'].map(rainfall_colors), alpha=0.8
+    )
+    ax1.set_xlabel('Day', fontsize=14)
+    ax1.set_ylabel(column, fontsize=14)
+    ax1.set_title(f'Scatter Plot: {column} vs Day (by Rainfall)', fontsize=16, fontweight='bold')
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w', label='No Rainfall',
+               markersize=10, markerfacecolor=rainfall_colors[0]),
+        Line2D([0], [0], marker='o', color='w', label='Rainfall',
+               markersize=10, markerfacecolor=rainfall_colors[1])
+    ]
+    ax1.legend(handles=legend_elements, title="Rainfall", fontsize=12, title_fontsize=12)
+    ax1.grid(True, linestyle='--', alpha=0.5)
+
+    ax2 = fig.add_subplot(gs[1, 1])
+    sns.kdeplot(data=train, x=column, hue='rainfall', palette=rainfall_colors, ax=ax2, fill=True, common_norm=False, alpha=0.6)
+
+    ax2.set_xlabel(column, fontsize=14)
+    ax2.set_ylabel('Density', fontsize=14)
+    ax2.set_title(f'Distribution (KDE) of {column} by Rainfall', fontsize=16, fontweight='bold')
+    ax2.legend(title='Rainfall', fontsize=12, title_fontsize=12)
+    ax2.grid(True, linestyle='--', alpha=0.5)
+
+    plt.tight_layout(pad=3.0)
+    plt.show()
+
+    plt.figure(figsize=(16, 0.3)) 
+    plt.axhline(y=0, color='gray', linewidth=5, linestyle='-') 
+    plt.axis('off')
+    plt.show()
+Feature Engineering
+5 ✨ | 🤖Feature Engineering
+In [14]:
+plt.figure(figsize=(10,10))
+sns.heatmap(train.corr(),annot=True)
+plt.show()
+In [15]:
+from sklearn.feature_selection import mutual_info_regression
+
+X = train.drop(columns=[ 'rainfall'])
+y = train['rainfall']
+mi=mutual_info_regression(X,y)
+mi_df=pd.DataFrame({"Cols":X.columns,'MI':mi})
+mi_df.sort_values(ascending=False,inplace=True,by='MI')
+
+plt.figure(figsize=(20,8))
+sns.barplot(data=mi_df,x='MI',y='Cols')
+plt.show()
+In [16]:
+import numpy as np
+import pandas as pd
+
+def feature_engineering(df):
+    df = df.copy()
+    
+    df['hci'] = df['humidity'] * df['cloud']
+    df['hsi'] = df['humidity'] * df['sunshine']
+    df['csr'] = df['cloud'] / (df['sunshine'] + 1e-5)
+    df['rd'] = 100 - df['humidity']
+    df['sp'] = df['sunshine'] / (df['sunshine'] + df['cloud'] + 1e-5)
+    df['wi'] = (0.4 * df['humidity']) + (0.3 * df['cloud']) - (0.3 * df['sunshine'])
+    
+    df['temp_range'] = df['maxtemp'] - df['mintemp']
+    df['temp_dew_diff'] = df['temparature'] - df['dewpoint']
+    df['humidity_cloud_ratio'] = df['humidity'] / (df['cloud'] + 1e-3)
+    df['sunshine_cloud_ratio'] = df['sunshine'] / (df['cloud'] + 1e-3)
+    df['pressure_wind_interaction'] = df['pressure'] * df['winddirection']
+    df['temp_pressure_ratio'] = df['temparature'] / (df['pressure'] + 1e-3)
+    df['wind_pressure_ratio'] = df['windspeed'] / (df['pressure'] + 1e-3)
+    
+    return df
+
+train_comb = feature_engineering(train)
+test = feature_engineering(test)
+In [17]:
+if test.isnull().sum().sum() > 0:
+    print("\nHandling missing values in test data...")
+
+    for col in test.columns:
+        if test[col].isnull().sum() > 0:
+            test[col] = test[col].fillna(train[col].median())
+In [18]:
+train_comb
+Out[18]:
+id day pressure maxtemp temparature mintemp dewpoint humidity cloud sunshine ... rd sp wi temp_range temp_dew_diff humidity_cloud_ratio sunshine_cloud_ratio pressure_wind_interaction temp_pressure_ratio wind_pressure_ratio
+0 0 1 1017.4 21.2 20.6 19.9 19.4 87.0 88.0 1.1 ... 13.0 0.012346 60.87 1.3 1.2 0.988625 0.012500 61044.0 0.020248 0.016906
+1 1 2 1019.5 16.2 16.9 15.8 15.4 95.0 91.0 0.0 ... 5.0 0.000000 65.30 0.4 1.5 1.043945 0.000000 50975.0 0.016577 0.021481
+2 2 3 1024.1 19.4 16.1 14.6 9.3 75.0 47.0 8.3 ... 25.0 0.150090 41.61 4.8 6.8 1.595711 0.176592 71687.0 0.015721 0.017674
+3 3 4 1013.4 18.1 17.8 16.9 16.8 95.0 95.0 0.0 ... 5.0 0.000000 66.50 1.2 1.0 0.999989 0.000000 60804.0 0.017565 0.035129
+4 4 5 1021.8 21.3 18.4 15.2 9.6 52.0 45.0 3.6 ... 48.0 0.074074 33.22 6.1 8.8 1.155530 0.079998 40872.0 0.018007 0.024271
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+2185 2185 361 1014.6 23.2 20.6 19.1 19.9 97.0 88.0 0.1 ... 3.0 0.001135 65.17 4.1 0.7 1.102260 0.001136 40584.0 0.020304 0.021782
+2186 2186 362 1012.4 17.2 17.3 16.3 15.3 91.0 88.0 0.0 ... 9.0 0.000000 62.80 0.9 2.0 1.034079 0.000000 50620.0 0.017088 0.034868
+2187 2187 363 1013.3 19.0 16.3 14.3 12.6 79.0 79.0 5.0 ... 21.0 0.059524 53.80 4.7 3.7 0.999987 0.063290 40532.0 0.016086 0.032468
+2188 2188 364 1022.3 16.4 15.2 13.8 14.7 92.0 93.0 0.1 ... 8.0 0.001074 64.67 2.6 0.5 0.989237 0.001075 40892.0 0.014868 0.017607
+2189 2189 365 1013.8 21.2 19.1 18.0 18.0 89.0 88.0 1.0 ... 11.0 0.011236 61.70 3.2 1.1 1.011352 0.011364 70966.0 0.018840 0.047347
+2190 rows × 26 columns
+In [19]:
+plt.figure(figsize=(20,8))
+sns.heatmap(train_comb.corr(),annot=True)
+plt.show()
+
+X = train_comb.drop(columns=['id', 'rainfall'])
+y = train_comb['rainfall']
+mi=mutual_info_regression(X,y)
+mi_df=pd.DataFrame({"Cols":X.columns,'MI':mi})
+mi_df.sort_values(ascending=False,inplace=True,by='MI')
+
+plt.figure(figsize=(20,8))
+sns.barplot(data=mi_df,x='MI',y='Cols')
+plt.show()
+Model Evaluation
+6 ✨ | Hyperparameter Tuning
+In [20]:
+xgb_params = {
+    'n_estimators': 2407,
+    'eta': 0.009462133032592785,
+    'gamma': 0.2865859948765318,
+    'max_depth': 31,
+    'min_child_weight': 47,
+    'subsample': 0.6956431754146083,
+    'colsample_bytree': 0.3670732604094118,
+    'grow_policy': 'lossguide',
+    'max_leaves': 73,
+    'enable_categorical': True,
+    'n_jobs': -1,
+    'device': 'cuda',
+    'tree_method': 'hist'
+}
+
+lgbm_params = {
+    'n_estimators': 2500,
+    'random_state': 42,
+    'max_bin': 1024,
+    'colsample_bytree': 0.6,
+    'reg_lambda': 80,
+    'verbosity': -1
+}
+In [21]:
+X = train_comb.drop(['id', 'rainfall'], axis=1)
+y = train_comb['rainfall']
+test=test.drop(['id'], axis=1)
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+In [22]:
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_val_scaled = scaler.transform(X_val)
+7 ✨ | XGBoost and LGBM
+In [23]:
+xgb_model = XGBClassifier(**xgb_params)
+lgbm_model = LGBMClassifier(**lgbm_params)
+
+def model_trainer(model, X, y, n_splits=5, random_state=42):
+
+    if isinstance(X, pd.DataFrame):
+        X = X.values
+    if isinstance(y, pd.Series):
+        y = y.values
+    
+    skfold = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    
+    oof_probs, oof_mccs, oof_accuracies = [], [], []
+    print("="*80)
+    print(f"Training {model.__class__.__name__}")
+    print("="*80, end="\n")
+    
+    for fold, (train_idx, test_idx) in enumerate(skfold.split(X, y)):
+        X_train_fold, y_train_fold = X[train_idx], y[train_idx]
+        X_test_fold, y_test_fold = X[test_idx], y[test_idx]
+        
+        model.fit(X_train_fold, y_train_fold)
+        y_pred = model.predict(X_test_fold)
+        
+        accuracy = accuracy_score(y_test_fold, y_pred)
+        mcc = matthews_corrcoef(y_test_fold, y_pred)
+        oof_probs.append(model.predict_proba(X_test_fold))
+        oof_mccs.append(mcc)
+        oof_accuracies.append(accuracy)
+        
+        print(f"--- Fold {fold+1} MCC: {mcc:.6f}, Accuracy: {accuracy:.6f}")
+        
+    print(f"\n---> Mean MCC: {np.mean(oof_mccs):.6f} ± {np.std(oof_mccs):.6f}")
+    print(f"---> Mean Accuracy: {np.mean(oof_accuracies):.6f} ± {np.std(oof_accuracies):.6f}")
+    return oof_probs, oof_mccs, oof_accuracies
+
+oof_probs_xgb, oof_mccs_xgb, oof_accuracies_xgb = model_trainer(xgb_model, X_train_scaled, y_train, random_state=42)
+oof_probs_lgbm, oof_mccs_lgbm, oof_accuracies_lgbm = model_trainer(lgbm_model, X_train_scaled, y_train, random_state=42)
+
+y_val_pred_xgb = xgb_model.predict(X_val_scaled)
+y_val_pred_lgbm = lgbm_model.predict(X_val_scaled)
+
+y_val_prob_xgb = xgb_model.predict_proba(X_val_scaled)[:, 1]
+y_val_prob_lgbm = lgbm_model.predict_proba(X_val_scaled)[:, 1]
+================================================================================
+Training XGBClassifier
+================================================================================
+--- Fold 1 MCC: 0.558634, Accuracy: 0.826211
+--- Fold 2 MCC: 0.679036, Accuracy: 0.886040
+--- Fold 3 MCC: 0.584633, Accuracy: 0.842857
+--- Fold 4 MCC: 0.639176, Accuracy: 0.862857
+--- Fold 5 MCC: 0.685806, Accuracy: 0.888571
+
+---> Mean MCC: 0.629457 ± 0.050503
+---> Mean Accuracy: 0.861307 ± 0.024206
+================================================================================
+Training LGBMClassifier
+================================================================================
+--- Fold 1 MCC: 0.516766, Accuracy: 0.820513
+--- Fold 2 MCC: 0.620157, Accuracy: 0.866097
+--- Fold 3 MCC: 0.568358, Accuracy: 0.840000
+--- Fold 4 MCC: 0.565900, Accuracy: 0.845714
+--- Fold 5 MCC: 0.682488, Accuracy: 0.888571
+
+---> Mean MCC: 0.590734 ± 0.056344
+---> Mean Accuracy: 0.852179 ± 0.023285
+In [24]:
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve, auc
+
+fpr_xgb, tpr_xgb, thresholds_xgb = roc_curve(y_val, y_val_prob_xgb)
+roc_auc_xgb = auc(fpr_xgb, tpr_xgb)
+
+fpr_lgbm, tpr_lgbm, thresholds_lgbm = roc_curve(y_val, y_val_prob_lgbm)
+roc_auc_lgbm = auc(fpr_lgbm, tpr_lgbm)
+
+plt.figure(figsize=(10, 6))
+
+plt.plot(fpr_xgb, tpr_xgb, color='b', lw=2, label=f'XGBoost (AUC = {roc_auc_xgb:.2f})')
+plt.plot(fpr_lgbm, tpr_lgbm, color='r', lw=2, label=f'LightGBM (AUC = {roc_auc_lgbm:.2f})')
+
+plt.plot([0, 1], [0, 1], color='gray', linestyle='--', lw=2)
+
+plt.title('ROC Curve Comparison (XGBoost vs LightGBM)', fontsize=14)
+plt.xlabel('False Positive Rate', fontsize=12)
+plt.ylabel('True Positive Rate (Recall)', fontsize=12)
+plt.legend(loc='lower right')
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
+8 ✨ | CNN(Sequential)
+In [25]:
+from sklearn.preprocessing import StandardScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv1D, Flatten, Dense, Dropout, MaxPooling1D
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.metrics import AUC
+
+
+scaler = StandardScaler()
+
+X_scaled = scaler.fit_transform(X)
+X_test_scaled = scaler.transform(test.drop([], axis=1))
+
+X_train, X_val, y_train, y_val = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
+
+X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
+X_val = X_val.reshape((X_val.shape[0], X_val.shape[1], 1))
+X_test_scaled = X_test_scaled.reshape((X_test_scaled.shape[0], X_test_scaled.shape[1], 1))
+In [26]:
+model = Sequential([
+    Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(X_train.shape[1], X_train.shape[2])),
+    MaxPooling1D(pool_size=2),
+    Conv1D(filters=32, kernel_size=3, activation='relu'),
+    MaxPooling1D(pool_size=2),
+    Flatten(),
+    Dense(64, activation='relu'),
+    Dropout(0.3),
+    Dense(32, activation='relu'),
+    Dense(1, activation='sigmoid') 
+])
+
+from tensorflow.keras.optimizers import SGD
+
+optimizer = SGD(learning_rate=0.001, momentum=0.9, decay=1e-6)
+model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=[AUC(name='auc')])
+
+early_stopping = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True, verbose=1)
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=10, min_lr=1e-5, verbose=1)
+
+history = model.fit(
+    X_train, y_train,
+    epochs=200,
+    batch_size=32,
+    validation_data=(X_val, y_val),
+    callbacks=[early_stopping, reduce_lr],
+    verbose=1
+)
+Epoch 1/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 6s 47ms/step - auc: 0.4646 - loss: 0.6696 - val_auc: 0.4276 - val_loss: 0.6082 - learning_rate: 0.0010
+Epoch 2/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 3ms/step - auc: 0.4869 - loss: 0.5965 - val_auc: 0.6326 - val_loss: 0.5631 - learning_rate: 0.0010
+Epoch 3/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 3ms/step - auc: 0.6577 - loss: 0.5552 - val_auc: 0.8352 - val_loss: 0.5238 - learning_rate: 0.0010
+Epoch 4/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 3ms/step - auc: 0.7590 - loss: 0.5224 - val_auc: 0.8570 - val_loss: 0.4818 - learning_rate: 0.0010
+Epoch 5/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8304 - loss: 0.4870 - val_auc: 0.8703 - val_loss: 0.4401 - learning_rate: 0.0010
+Epoch 6/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8372 - loss: 0.4445 - val_auc: 0.8765 - val_loss: 0.4056 - learning_rate: 0.0010
+Epoch 7/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8424 - loss: 0.4207 - val_auc: 0.8816 - val_loss: 0.3813 - learning_rate: 0.0010
+Epoch 8/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8662 - loss: 0.3815 - val_auc: 0.8845 - val_loss: 0.3664 - learning_rate: 0.0010
+Epoch 9/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8711 - loss: 0.3755 - val_auc: 0.8854 - val_loss: 0.3589 - learning_rate: 0.0010
+Epoch 10/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8701 - loss: 0.3634 - val_auc: 0.8858 - val_loss: 0.3551 - learning_rate: 0.0010
+Epoch 11/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8667 - loss: 0.3633 - val_auc: 0.8880 - val_loss: 0.3525 - learning_rate: 0.0010
+Epoch 12/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8743 - loss: 0.3686 - val_auc: 0.8879 - val_loss: 0.3522 - learning_rate: 0.0010
+Epoch 13/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8868 - loss: 0.3367 - val_auc: 0.8871 - val_loss: 0.3497 - learning_rate: 0.0010
+Epoch 14/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8816 - loss: 0.3457 - val_auc: 0.8870 - val_loss: 0.3493 - learning_rate: 0.0010
+Epoch 15/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8718 - loss: 0.3542 - val_auc: 0.8880 - val_loss: 0.3487 - learning_rate: 0.0010
+Epoch 16/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8820 - loss: 0.3545 - val_auc: 0.8866 - val_loss: 0.3489 - learning_rate: 0.0010
+Epoch 17/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8787 - loss: 0.3572 - val_auc: 0.8886 - val_loss: 0.3493 - learning_rate: 0.0010
+Epoch 18/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8999 - loss: 0.3277 - val_auc: 0.8870 - val_loss: 0.3487 - learning_rate: 0.0010
+Epoch 19/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8906 - loss: 0.3387 - val_auc: 0.8874 - val_loss: 0.3484 - learning_rate: 0.0010
+Epoch 20/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8834 - loss: 0.3368 - val_auc: 0.8872 - val_loss: 0.3477 - learning_rate: 0.0010
+Epoch 21/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8882 - loss: 0.3401 - val_auc: 0.8867 - val_loss: 0.3482 - learning_rate: 0.0010
+Epoch 22/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8756 - loss: 0.3462 - val_auc: 0.8869 - val_loss: 0.3478 - learning_rate: 0.0010
+Epoch 23/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.9034 - loss: 0.3176 - val_auc: 0.8864 - val_loss: 0.3479 - learning_rate: 0.0010
+Epoch 24/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8755 - loss: 0.3577 - val_auc: 0.8872 - val_loss: 0.3488 - learning_rate: 0.0010
+Epoch 25/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8923 - loss: 0.3337 - val_auc: 0.8859 - val_loss: 0.3475 - learning_rate: 0.0010
+Epoch 26/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8980 - loss: 0.3312 - val_auc: 0.8864 - val_loss: 0.3471 - learning_rate: 0.0010
+Epoch 27/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8959 - loss: 0.3283 - val_auc: 0.8849 - val_loss: 0.3470 - learning_rate: 0.0010
+Epoch 28/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8959 - loss: 0.3333 - val_auc: 0.8857 - val_loss: 0.3479 - learning_rate: 0.0010
+Epoch 29/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8842 - loss: 0.3306 - val_auc: 0.8848 - val_loss: 0.3474 - learning_rate: 0.0010
+Epoch 30/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8891 - loss: 0.3342 - val_auc: 0.8849 - val_loss: 0.3490 - learning_rate: 0.0010
+Epoch 31/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8830 - loss: 0.3362 - val_auc: 0.8837 - val_loss: 0.3479 - learning_rate: 0.0010
+Epoch 32/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8868 - loss: 0.3319 - val_auc: 0.8841 - val_loss: 0.3477 - learning_rate: 0.0010
+Epoch 33/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.9094 - loss: 0.3025 - val_auc: 0.8834 - val_loss: 0.3483 - learning_rate: 0.0010
+Epoch 34/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8894 - loss: 0.3312 - val_auc: 0.8830 - val_loss: 0.3490 - learning_rate: 0.0010
+Epoch 35/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8893 - loss: 0.3412 - val_auc: 0.8831 - val_loss: 0.3480 - learning_rate: 0.0010
+Epoch 36/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8950 - loss: 0.3180 - val_auc: 0.8833 - val_loss: 0.3487 - learning_rate: 0.0010
+Epoch 37/200
+34/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8788 - loss: 0.3395 
+Epoch 37: ReduceLROnPlateau reducing learning rate to 0.00010000000474974513.
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8843 - loss: 0.3376 - val_auc: 0.8826 - val_loss: 0.3487 - learning_rate: 0.0010
+Epoch 38/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.9022 - loss: 0.3191 - val_auc: 0.8830 - val_loss: 0.3487 - learning_rate: 1.0000e-04
+Epoch 39/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8997 - loss: 0.3287 - val_auc: 0.8830 - val_loss: 0.3488 - learning_rate: 1.0000e-04
+Epoch 40/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8998 - loss: 0.3174 - val_auc: 0.8824 - val_loss: 0.3488 - learning_rate: 1.0000e-04
+Epoch 41/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8855 - loss: 0.3418 - val_auc: 0.8823 - val_loss: 0.3488 - learning_rate: 1.0000e-04
+Epoch 42/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 3ms/step - auc: 0.8770 - loss: 0.3404 - val_auc: 0.8826 - val_loss: 0.3489 - learning_rate: 1.0000e-04
+Epoch 43/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 3ms/step - auc: 0.9065 - loss: 0.3126 - val_auc: 0.8827 - val_loss: 0.3488 - learning_rate: 1.0000e-04
+Epoch 44/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 3ms/step - auc: 0.8967 - loss: 0.3145 - val_auc: 0.8829 - val_loss: 0.3488 - learning_rate: 1.0000e-04
+Epoch 45/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 3ms/step - auc: 0.9112 - loss: 0.3077 - val_auc: 0.8828 - val_loss: 0.3488 - learning_rate: 1.0000e-04
+Epoch 46/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 3ms/step - auc: 0.9045 - loss: 0.3221 - val_auc: 0.8828 - val_loss: 0.3487 - learning_rate: 1.0000e-04
+Epoch 47/200
+35/55 ━━━━━━━━━━━━━━━━━━━━ 0s 1ms/step - auc: 0.9006 - loss: 0.3223 
+Epoch 47: ReduceLROnPlateau reducing learning rate to 1.0000000474974514e-05.
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - auc: 0.8993 - loss: 0.3241 - val_auc: 0.8827 - val_loss: 0.3487 - learning_rate: 1.0000e-04
+Epoch 47: early stopping
+Restoring model weights from the end of the best epoch: 27.
+In [27]:
+train_auc = history.history['auc']
+val_auc = history.history['val_auc']
+
+plt.figure(figsize=(10, 6))
+plt.plot(train_auc, label='Training AUC', color='b', lw=2)
+plt.plot(val_auc, label='Validation AUC', color='r', lw=2)
+
+plt.title('Training and Validation AUC vs Epochs', fontsize=14)
+plt.xlabel('Epochs', fontsize=12)
+plt.ylabel('AUC', fontsize=12)
+plt.legend(loc='lower right')
+plt.grid(True)
+
+plt.tight_layout()
+plt.show()
+In [28]:
+test_preds = model.predict(X_test_scaled).flatten()
+
+if np.isnan(test_preds).sum() > 0:
+    print(f"Found {np.isnan(test_preds).sum()} NaN values in predictions. Fixing them...")
+    test_preds = np.nan_to_num(test_preds)  
+23/23 ━━━━━━━━━━━━━━━━━━━━ 1s 14ms/step
+In [29]:
+test=pd.read_csv(r'/kaggle/input/playground-series-s5e3/test.csv')
+In [30]:
+submission = pd.DataFrame({"id": test['id'], "rainfall": test_preds})
+submission.to_csv("submission.csv", index=False)
+In [31]:
+submission.head()
+Out[31]:
+id rainfall
+0 2190 0.983077
+1 2191 0.990830
+2 2192 0.955743
+3 2193 0.161130
+4 2194 0.065895
+Thanks For Visiting...!

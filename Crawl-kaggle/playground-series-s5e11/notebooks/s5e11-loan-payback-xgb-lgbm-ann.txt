@@ -1,0 +1,312 @@
+Ozan MÖHÜRCÜ
+Data Analyst | Data Scientist
+LinkedIn GitHub Portfolio
+Library Imports & Configuration
+Loading essential data science and visualization libraries
+Configuring plotting styles and warning suppressions
+Setting up machine learning frameworks (XGBoost, LightGBM, TensorFlow)
+unfold_moreShow hidden code
+2025-11-01 17:58:31.111580: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:477] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1762019911.269886      19 cuda_dnn.cc:8310] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1762019911.327775      19 cuda_blas.cc:1418] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+📂 Data Loading & Initial Inspection
+Reading train, test, and original datasets from CSV files
+Examining dataset shapes, column types, and basic statistics
+Understanding the target variable distribution and class balance
+In [2]:
+train = pd.read_csv('/kaggle/input/playground-series-s5e11/train.csv')
+test = pd.read_csv('/kaggle/input/playground-series-s5e11/test.csv')
+orig = pd.read_csv('/kaggle/input/loan-prediction-dataset-2025/loan_dataset_20000.csv')
+TARGET = 'loan_paid_back'
+🔍 Missing Values & Outlier Treatment
+Detecting and visualizing missing data patterns across features
+Identifying outliers using IQR method for numerical columns
+Applying strategic imputation and outlier capping techniques
+In [3]:
+numerical_cols = ['annual_income', 'debt_to_income_ratio', 'credit_score', 
+                  'loan_amount', 'interest_rate']
+
+for col in numerical_cols:
+    Q1 = train[col].quantile(0.25)
+    Q3 = train[col].quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    train[col] = train[col].clip(lower=lower_bound, upper=upper_bound)
+    test[col] = test[col].clip(lower=lower_bound, upper=upper_bound)
+📊 ANALYSIS 1: Target Distribution
+Highly imbalanced distribution showing loan repayment patterns
+Majority class (paid back) represents 95% of observations
+Critical insight: Only 5% default rate requires careful model tuning
+unfold_moreShow hidden code
+📊 ANALYSIS 2: Income Distribution
+Annual income shows right-skewed distribution with median around $50K
+Default rates slightly higher in lower income brackets
+Income normalization important for model performance
+unfold_moreShow hidden code
+📊 ANALYSIS 3: Credit Score Impact
+Clear inverse relationship: higher credit scores = lower default rates
+Scores below 600 show significantly elevated default risk
+Credit score bins create natural risk segments for modeling
+unfold_moreShow hidden code
+📊 ANALYSIS 4: Loan Purpose Distribution
+Debt consolidation dominates portfolio composition at 36%
+Education and home improvement represent growth opportunities
+Purpose diversity suggests multi-segment risk modeling
+unfold_moreShow hidden code
+📊 ANALYSIS 5: Interest Rate vs Grade
+Grade-based pricing shows clear risk stratification (A: 8% to G: 20%)
+Within-grade variance indicates sub-grade precision
+Higher grades command significantly better terms
+unfold_moreShow hidden code
+📊 ANALYSIS 6: Debt-to-Income Ratio
+DTI ratio shows critical patterns: high DTI (>40%) doubles default risk
+Sweet spot at 20-30% DTI with lowest default rates
+Critical underwriting metric requiring strict thresholds
+unfold_moreShow hidden code
+📊 ANALYSIS 7: Employment & Marital Status
+Employed borrowers show 30% lower default rates vs self-employed
+Married applicants demonstrate stronger repayment patterns
+Combined risk matrix reveals optimal borrower profiles
+unfold_moreShow hidden code
+📊 ANALYSIS 8: Loan Amount Patterns
+Loan amounts cluster around
+10
+K
+−
+15K modal range
+Larger loans (>$30K) show elevated default risk
+Loan-to-income ratio emerges as critical feature
+unfold_moreShow hidden code
+📊 ANALYSIS 9: Education Level Impact
+Master's degree holders show lowest default rates (1.8%)
+High school education correlates with 3x higher default risk
+Education serves as proxy for income stability
+unfold_moreShow hidden code
+📊 ANALYSIS 10: Feature Correlation Matrix
+Interest rate strongly correlates with loan grade (0.85)
+Credit score shows moderate negative correlation with default
+Debt-to-income ratio and interest rate form risk compound
+unfold_moreShow hidden code
+🔧 Feature Engineering
+Creating original dataset target encoding features
+Engineering financial ratios and risk scores
+Building interaction terms for enhanced predictions
+In [14]:
+BASE = [col for col in train.columns if col not in ['id', TARGET, 'grade']]
+
+for col in BASE:
+    mean_map = orig.groupby(col)[TARGET].mean()
+    train[f"orig_mean_{col}"] = train[col].map(mean_map)
+    test[f"orig_mean_{col}"] = test[col].map(mean_map)
+    
+    count_map = orig.groupby(col).size()
+    train[f"orig_count_{col}"] = train[col].map(count_map)
+    test[f"orig_count_{col}"] = test[col].map(count_map)
+
+train['loan_to_income'] = train['loan_amount'] / (train['annual_income'] + 1)
+test['loan_to_income'] = test['loan_amount'] / (test['annual_income'] + 1)
+
+train['total_debt'] = train['debt_to_income_ratio'] * train['annual_income']
+test['total_debt'] = test['debt_to_income_ratio'] * test['annual_income']
+
+train['available_income'] = train['annual_income'] * (1 - train['debt_to_income_ratio'])
+test['available_income'] = test['annual_income'] * (1 - test['debt_to_income_ratio'])
+
+train['affordability'] = train['available_income'] / (train['loan_amount'] + 1)
+test['affordability'] = test['available_income'] / (test['loan_amount'] + 1)
+
+train['monthly_payment'] = train['loan_amount'] * (1 + train['interest_rate']/100) / 12
+test['monthly_payment'] = test['loan_amount'] * (1 + test['interest_rate']/100) / 12
+
+train['payment_to_income'] = train['monthly_payment'] / (train['annual_income']/12 + 1)
+test['payment_to_income'] = test['monthly_payment'] / (test['annual_income']/12 + 1)
+
+train['risk_score'] = (train['debt_to_income_ratio'] * 40 + 
+                       (1 - train['credit_score']/850) * 30 + train['interest_rate'] * 2)
+test['risk_score'] = (test['debt_to_income_ratio'] * 40 + 
+                      (1 - test['credit_score']/850) * 30 + test['interest_rate'] * 2)
+
+train['grade_number'] = train['grade_subgrade'].str[1].astype(int)
+test['grade_number'] = test['grade_subgrade'].str[1].astype(int)
+
+grade_map = {'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'G': 7}
+train['grade_rank'] = train['grade'].map(grade_map)
+test['grade_rank'] = test['grade'].map(grade_map)
+
+train['grade_combined'] = train['grade_rank'] * 10 + train['grade_number']
+test['grade_combined'] = test['grade_rank'] * 10 + test['grade_number']
+
+train['credit_interest'] = train['credit_score'] * train['interest_rate'] / 100
+test['credit_interest'] = test['credit_score'] * test['interest_rate'] / 100
+
+train['income_credit'] = np.log1p(train['annual_income']) * train['credit_score'] / 1000
+test['income_credit'] = np.log1p(test['annual_income']) * test['credit_score'] / 1000
+
+train['debt_loan'] = train['debt_to_income_ratio'] * np.log1p(train['loan_amount'])
+test['debt_loan'] = test['debt_to_income_ratio'] * np.log1p(test['loan_amount'])
+
+train['log_income'] = np.log1p(train['annual_income'])
+test['log_income'] = np.log1p(test['annual_income'])
+
+train['log_loan'] = np.log1p(train['loan_amount'])
+test['log_loan'] = np.log1p(test['loan_amount'])
+
+cat_cols = ['gender', 'marital_status', 'education_level', 
+            'employment_status', 'loan_purpose', 'grade_subgrade']
+
+for cat in cat_cols:
+    mean_map = train.groupby(cat)['loan_amount'].mean()
+    train[f'{cat}_loan_mean'] = train[cat].map(mean_map)
+    test[f'{cat}_loan_mean'] = test[cat].map(mean_map)
+    
+    mean_map = train.groupby(cat)['credit_score'].mean()
+    train[f'{cat}_credit_mean'] = train[cat].map(mean_map)
+    test[f'{cat}_credit_mean'] = test[cat].map(mean_map)
+
+num_cols = [col for col in train.columns if train[col].dtype in ['float64', 'int64'] 
+            and col not in ['id', TARGET]]
+
+for col in num_cols:
+    if train[col].isnull().sum() > 0:
+        median_val = train[col].median()
+        train[col].fillna(median_val, inplace=True)
+        test[col].fillna(median_val, inplace=True)
+
+CATS = ['gender', 'marital_status', 'education_level', 
+        'employment_status', 'loan_purpose', 'grade_subgrade', 'grade']
+FEATURES = [col for col in train.columns if col not in ['id', TARGET] + CATS]
+
+X = train[FEATURES].copy()
+y = train[TARGET].copy()
+X_test = test[FEATURES].copy()
+🤖 MODEL 1: XGBoost Classifier
+Gradient boosting with GPU acceleration
+7-fold stratified cross-validation for robust generalization
+Early stopping and L1/L2 regularization
+unfold_moreShow hidden code
+🤖 MODEL 2: LightGBM Classifier
+Histogram-based gradient boosting for speed
+Leaf-wise tree growth capturing complex patterns
+GPU training with categorical feature support
+unfold_moreShow hidden code
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+🤖 MODEL 3: Neural Network
+Deep architecture: 512→256→128→64 neurons
+Batch normalization and dropout regularization
+Adam optimizer with learning rate scheduling
+unfold_moreShow hidden code
+I0000 00:00:1762021548.232654      19 gpu_device.cc:2022] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 15467 MB memory:  -> device: 0, name: Tesla P100-PCIE-16GB, pci bus id: 0000:00:04.0, compute capability: 6.0
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1762021554.196782     132 service.cc:148] XLA service 0x7a391840 initialized for platform CUDA (this does not guarantee that XLA will be used). Devices:
+I0000 00:00:1762021554.197279     132 service.cc:156]   StreamExecutor device (0): Tesla P100-PCIE-16GB, Compute Capability 6.0
+I0000 00:00:1762021554.703052     132 cuda_dnn.cc:529] Loaded cuDNN version 90300
+I0000 00:00:1762021558.224582     132 device_compiler.h:188] Compiled cluster using XLA!  This line is logged at most once for the lifetime of the process.
+🎯 FINAL ENSEMBLE
+Optimizing weights across all three models
+Testing multiple ensemble strategies
+Selecting best performing method for submission
+unfold_moreShow hidden code
+💾 Final Submission
+Generating submission file with optimized predictions
+Final OOF AUC score and validation metrics
+Ready for Kaggle platform upload
+In [19]:
+submission = pd.DataFrame({'id': test['id'], TARGET: final_test})
+filename = f'submission.csv'
+submission.to_csv(filename, index=False)
+
+summary_stats = pd.DataFrame({
+    'Model': ['XGBoost', 'LightGBM', 'Neural Network', f'ENSEMBLE ({best_name})'],
+    'OOF_AUC': [xgb_cv, lgb_cv, nn_cv, best_score],
+    'CV_Std': [np.std(xgb_scores), np.std(lgb_scores), np.std(nn_scores), 0],
+    'Accuracy': [accuracy_score(y, (xgb_oof>0.5).astype(int)),
+                 accuracy_score(y, (lgb_oof>0.5).astype(int)),
+                 accuracy_score(y, (nn_oof>0.5).astype(int)),
+                 accuracy_score(y, y_pred_ensemble)]
+})
+
+fig = go.Figure(go.Table(
+    header=dict(values=['<b>Model</b>', '<b>OOF AUC</b>', '<b>CV Std</b>', '<b>Accuracy</b>'],
+        fill_color=colors[2], align='center', 
+        font=dict(color='white', size=14, family='Arial Black')),
+    cells=dict(values=[summary_stats['Model'],
+        [f"{v:.6f}" for v in summary_stats['OOF_AUC']],
+        [f"{v:.6f}" if v>0 else 'N/A' for v in summary_stats['CV_Std']],
+        [f"{v:.4f}" for v in summary_stats['Accuracy']]],
+        fill_color=[[colors[0] if i<3 else colors[1] for i in range(4)]],
+        align='center', font=dict(size=13, family='Arial'), height=35)
+))
+
+fig.update_layout(
+    title=f'📊 FINAL SUMMARY<br><sub>Weights: XGB={best_weights[0]:.3f} | LGB={best_weights[1]:.3f} | NN={best_weights[2]:.3f}</sub>',
+    title_font=dict(size=24, color=colors[3], family='Arial Black'),
+    height=400, paper_bgcolor='#f6f5f5',
+    annotations=[
+        dict(text=f'✅ Submission: {filename}', xref='paper', yref='paper',
+            x=0.5, y=-0.15, showarrow=False, 
+            font=dict(size=14, color=colors[2], family='Arial Black')),
+        dict(text='Created By Ozan M.', xref='paper', yref='paper',
+            x=1, y=-0.25, showarrow=False, font=dict(size=10, color='gray'))
+    ])
+fig.show(renderer='iframe_connected')
+In [20]:
+print("="*80)
+print(f"\n📈 BEST ENSEMBLE: {best_name}")
+print(f"   • OOF AUC: {best_score:.6f}")
+print(f"   • Accuracy: {accuracy_score(y, y_pred_ensemble):.4f}")
+print(f"\n🔢 WEIGHTS: XGB={best_weights[0]:.4f} | LGB={best_weights[1]:.4f} | NN={best_weights[2]:.4f}")
+print(f"\n💾 FILE: {filename}")
+print(f"   • Rows: {len(submission):,}")
+print(f"   • Mean: {final_test.mean():.6f}")
+print("="*80)
+================================================================================
+
+📈 BEST ENSEMBLE: Optimized
+   • OOF AUC: 0.923849
+   • Accuracy: 0.9071
+
+🔢 WEIGHTS: XGB=0.3466 | LGB=0.3253 | NN=0.3282
+
+💾 FILE: submission.csv
+   • Rows: 254,569
+   • Mean: 0.799878
+================================================================================
+🙏 Thank You for Reviewing
+Thank you for reviewing this far.
+If you find it interesting and valuable, I look forward to hearing from you.
+See you in other competitions 🚀
+Created By Ozan M.

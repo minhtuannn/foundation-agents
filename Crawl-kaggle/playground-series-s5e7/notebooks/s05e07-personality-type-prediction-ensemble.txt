@@ -1,0 +1,515 @@
+Imports and configs
+In [1]:
+!pip install scikit-learn==1.5.2 koolbox
+unfold_moreShow hidden output
+In [2]:
+from sklearn.feature_selection import mutual_info_regression
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import accuracy_score
+from catboost import CatBoostClassifier
+from lightgbm import LGBMClassifier
+from xgboost import XGBClassifier
+from scipy.special import logit
+from koolbox import Trainer
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import numpy as np
+import warnings
+import joblib
+import shutil
+import optuna
+import glob
+import json
+
+warnings.filterwarnings('ignore')
+In [3]:
+class CFG:
+    train_path = '/kaggle/input/playground-series-s5e7/train.csv'
+    test_path = '/kaggle/input/playground-series-s5e7/test.csv'
+    sample_sub_path = '/kaggle/input/playground-series-s5e7/sample_submission.csv'
+
+    original_path = "/kaggle/input/extrovert-vs-introvert-behavior-data-backup/personality_dataset.csv"
+    
+    target = 'Personality'
+    n_folds = 5
+    seed = 42
+    
+    cv = StratifiedKFold(n_splits=n_folds, random_state=seed, shuffle=True)
+    metric = accuracy_score
+    
+    n_optuna_trials = 500
+Data loading and preprocessing
+In [4]:
+train = pd.read_csv(CFG.train_path, index_col='id')
+test = pd.read_csv(CFG.test_path, index_col='id')
+
+train["Stage_fear"] = train["Stage_fear"].map({"No": 0, "Yes": 1})
+train["Drained_after_socializing"] = train["Drained_after_socializing"].map({"No": 0, "Yes": 1})
+
+test["Stage_fear"] = test["Stage_fear"].map({"No": 0, "Yes": 1})
+test["Drained_after_socializing"] = test["Drained_after_socializing"].map({"No": 0, "Yes": 1})
+
+train[CFG.target] = train[CFG.target].map({"Extrovert": 0, "Introvert": 1})
+
+X = train.drop(CFG.target, axis=1)
+y = train[CFG.target]
+X_test = test
+In [5]:
+sns.set_style("white")
+plt.figure(figsize=(8, 8))
+
+corr_train = train.corr()
+mask_train = np.triu(np.ones_like(corr_train, dtype=bool), k=1)
+
+sns.heatmap(
+    data=corr_train,
+    annot=True,
+    fmt='.4f',
+    mask=mask_train,
+    square=True,
+    cmap='coolwarm',
+    annot_kws={'size': 8},
+    cbar=False
+)
+
+plt.tight_layout()
+plt.show()
+In [6]:
+mutual_info = mutual_info_regression(X.fillna(0), y, random_state=CFG.seed)
+
+mutual_info = pd.Series(mutual_info)
+mutual_info.index = X.columns
+mutual_info = pd.DataFrame(mutual_info.sort_values(ascending=False), columns=['Mutual Information'])
+mutual_info.style.bar(subset=['Mutual Information'], cmap='RdYlGn')
+Out[6]:
+  Mutual Information
+Time_spent_Alone 0.353570
+Drained_after_socializing 0.337575
+Social_event_attendance 0.330482
+Stage_fear 0.314673
+Post_frequency 0.313469
+Going_outside 0.304151
+Friends_circle_size 0.288645
+In [7]:
+train = pd.read_csv(CFG.train_path, index_col='id')
+test = pd.read_csv(CFG.test_path, index_col='id')
+
+# Reference: https://www.kaggle.com/code/paddykb/ps-s5e7-don-t-look-at-me
+original = pd.read_csv(CFG.original_path)
+original = original.rename(columns={'Personality': 'match_p'})
+original = original.drop_duplicates(['Time_spent_Alone', 'Stage_fear', 'Social_event_attendance', 'Going_outside', 'Drained_after_socializing', 'Friends_circle_size', 'Post_frequency'])
+train = train.merge(original, how='left')
+test = test.merge(original, how='left')
+
+cat_cols = ["Stage_fear", "Drained_after_socializing"]
+train[cat_cols] = train[cat_cols].fillna("missing").astype("category")
+test[cat_cols] = test[cat_cols].fillna("missing").astype("category")
+
+train[CFG.target] = train[CFG.target].map({"Extrovert": 0, "Introvert": 1})
+train["match_p"] = train["match_p"].map({"Extrovert": 0, "Introvert": 1})
+test["match_p"] = test["match_p"].map({"Extrovert": 0, "Introvert": 1})
+
+X = train.drop(CFG.target, axis=1)
+y = train[CFG.target]
+X_test = test
+_X_test = test.copy()
+Training base models
+In [8]:
+def save_submission(name, X_test, test_pred_probs, score, threshold=0.5):
+    sub = pd.read_csv(CFG.sample_sub_path)
+    sub[CFG.target] = (test_pred_probs > threshold).astype(int)
+    sub.loc[X_test.match_p == 0, CFG.target] = 1
+    sub.loc[X_test.match_p == 1, CFG.target] = 0
+    sub[CFG.target] = sub[CFG.target].map({0: "Extrovert", 1: "Introvert"})
+    sub.to_csv(f'sub_{name}_{score:.6f}.csv', index=False)
+    return sub.head()
+unfold_moreShow hidden code
+In [10]:
+scores = {}
+oof_pred_probs = {}
+test_pred_probs = {}
+CatBoost
+In [11]:
+cb_trainer = Trainer(
+    CatBoostClassifier(**cb_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    use_early_stopping=False,
+    task="binary",
+    metric_precision=6,
+)
+
+cb_trainer.fit(X, y)
+
+scores["CatBoost"] = cb_trainer.fold_scores
+oof_pred_probs["CatBoost"] = cb_trainer.oof_preds
+test_pred_probs["CatBoost"] = cb_trainer.predict(X_test)
+Training CatBoostClassifier
+
+--- Fold 0 - accuracy_score: 0.972470 - Time: 8.97 s
+--- Fold 1 - accuracy_score: 0.969771 - Time: 8.89 s
+--- Fold 2 - accuracy_score: 0.969231 - Time: 9.14 s
+--- Fold 3 - accuracy_score: 0.971390 - Time: 9.25 s
+--- Fold 4 - accuracy_score: 0.973272 - Time: 8.90 s
+
+------ Overall accuracy_score: 0.971227 - Mean accuracy_score: 0.971227 ± 0.001540 - Time: 45.89 s
+XGBoost
+In [12]:
+xgb_trainer = Trainer(
+    XGBClassifier(**xgb_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    task="binary",
+    metric_precision=6,
+)
+
+xgb_trainer.fit(X, y)
+
+scores["XGBoost"] = xgb_trainer.fold_scores
+oof_pred_probs["XGBoost"] = xgb_trainer.oof_preds
+test_pred_probs["XGBoost"] = xgb_trainer.predict(X_test)
+Training XGBClassifier
+
+--- Fold 0 - accuracy_score: 0.969771 - Time: 0.45 s
+--- Fold 1 - accuracy_score: 0.968151 - Time: 0.40 s
+--- Fold 2 - accuracy_score: 0.966262 - Time: 0.50 s
+--- Fold 3 - accuracy_score: 0.971120 - Time: 0.39 s
+--- Fold 4 - accuracy_score: 0.970572 - Time: 0.40 s
+
+------ Overall accuracy_score: 0.969175 - Mean accuracy_score: 0.969175 ± 0.001768 - Time: 2.87 s
+HistGradientBoostingClassifier
+In [13]:
+hgb_trainer = Trainer(
+    HistGradientBoostingClassifier(**hgb_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    task="binary",
+    metric_precision=6,
+)
+
+hgb_trainer.fit(X, y)
+
+scores["HistGradientBoosting"] = hgb_trainer.fold_scores
+oof_pred_probs["HistGradientBoosting"] = hgb_trainer.oof_preds
+test_pred_probs["HistGradientBoosting"] = hgb_trainer.predict(X_test)
+Training HistGradientBoostingClassifier
+
+--- Fold 0 - accuracy_score: 0.972470 - Time: 0.30 s
+--- Fold 1 - accuracy_score: 0.969501 - Time: 0.74 s
+--- Fold 2 - accuracy_score: 0.967611 - Time: 0.51 s
+--- Fold 3 - accuracy_score: 0.971930 - Time: 0.88 s
+--- Fold 4 - accuracy_score: 0.971922 - Time: 0.59 s
+
+------ Overall accuracy_score: 0.970687 - Mean accuracy_score: 0.970687 ± 0.001850 - Time: 3.74 s
+LightGBM (gbdt)
+In [14]:
+lgbm_gbdt_trainer = Trainer(
+    LGBMClassifier(**lgbm_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    use_early_stopping=False,
+    task="binary",
+    metric_precision=6,
+)
+
+lgbm_gbdt_trainer.fit(X, y)
+
+scores["LightGBM (gbdt)"] = lgbm_gbdt_trainer.fold_scores
+oof_pred_probs["LightGBM (gbdt)"] = lgbm_gbdt_trainer.oof_preds
+test_pred_probs["LightGBM (gbdt)"] = lgbm_gbdt_trainer.predict(X_test)
+Training LGBMClassifier
+
+--- Fold 0 - accuracy_score: 0.972200 - Time: 0.47 s
+--- Fold 1 - accuracy_score: 0.969501 - Time: 0.35 s
+--- Fold 2 - accuracy_score: 0.967611 - Time: 0.38 s
+--- Fold 3 - accuracy_score: 0.971660 - Time: 0.43 s
+--- Fold 4 - accuracy_score: 0.972732 - Time: 0.40 s
+
+------ Overall accuracy_score: 0.970741 - Mean accuracy_score: 0.970741 ± 0.001912 - Time: 2.75 s
+LightGBM (goss)
+In [15]:
+lgbm_goss_trainer = Trainer(
+    LGBMClassifier(**lgbm_goss_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    use_early_stopping=False,
+    task="binary",
+    metric_precision=6,
+)
+
+lgbm_goss_trainer.fit(X, y)
+
+scores["LightGBM (goss)"] = lgbm_goss_trainer.fold_scores
+oof_pred_probs["LightGBM (goss)"] = lgbm_goss_trainer.oof_preds
+test_pred_probs["LightGBM (goss)"] = lgbm_goss_trainer.predict(X_test)
+Training LGBMClassifier
+
+--- Fold 0 - accuracy_score: 0.970040 - Time: 1.80 s
+--- Fold 1 - accuracy_score: 0.968961 - Time: 3.37 s
+--- Fold 2 - accuracy_score: 0.967881 - Time: 1.63 s
+--- Fold 3 - accuracy_score: 0.970850 - Time: 1.66 s
+--- Fold 4 - accuracy_score: 0.973002 - Time: 1.76 s
+
+------ Overall accuracy_score: 0.970147 - Mean accuracy_score: 0.970147 ± 0.001743 - Time: 10.96 s
+LightGBM (dart)
+In [16]:
+lgbm_dart_trainer = Trainer(
+    LGBMClassifier(**lgbm_dart_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    use_early_stopping=False,
+    task="binary",
+    metric_precision=6,
+)
+
+lgbm_dart_trainer.fit(X, y)
+
+scores["LightGBM (dart)"] = lgbm_dart_trainer.fold_scores
+oof_pred_probs["LightGBM (dart)"] = lgbm_dart_trainer.oof_preds
+test_pred_probs["LightGBM (dart)"] = lgbm_dart_trainer.predict(X_test)
+Training LGBMClassifier
+
+--- Fold 0 - accuracy_score: 0.970040 - Time: 62.51 s
+--- Fold 1 - accuracy_score: 0.968421 - Time: 60.33 s
+--- Fold 2 - accuracy_score: 0.966262 - Time: 56.90 s
+--- Fold 3 - accuracy_score: 0.971120 - Time: 61.85 s
+--- Fold 4 - accuracy_score: 0.971112 - Time: 62.06 s
+
+------ Overall accuracy_score: 0.969391 - Mean accuracy_score: 0.969391 ± 0.001850 - Time: 304.41 s
+AutoGluon
+In [17]:
+oof_pred_probs_files = glob.glob(f'/kaggle/input/s05e07-personality-type-prediction-autogluon/*_oof_pred_probs_*.pkl')
+test_pred_probs_files = glob.glob(f'/kaggle/input/s05e07-personality-type-prediction-autogluon/*_test_pred_probs_*.pkl')
+
+ag_oof_pred_probs = joblib.load(oof_pred_probs_files[0])
+ag_test_pred_probs = joblib.load(test_pred_probs_files[0])
+
+ag_scores = []
+for _, val_idx in CFG.cv.split(X, y):
+    y_val = y[val_idx]
+    y_preds = ag_oof_pred_probs[val_idx]
+    score = accuracy_score(y_val, y_preds >= 0.5)
+    ag_scores.append(score)
+    
+oof_pred_probs["AutoGluon"], test_pred_probs["AutoGluon"], scores["AutoGluon"] = ag_oof_pred_probs, ag_test_pred_probs, ag_scores
+Ensembling
+unfold_moreShow hidden code
+LogisticRegression
+In [19]:
+X = logit(pd.DataFrame(oof_pred_probs).clip(1e-15, 1-1e-15))
+X_test = logit(pd.DataFrame(test_pred_probs).clip(1e-15, 1-1e-15))
+
+joblib.dump(oof_pred_probs, "oof_pred_probs.pkl")
+joblib.dump(test_pred_probs, "test_pred_probs.pkl")
+Out[19]:
+['test_pred_probs.pkl']
+In [20]:
+def objective(trial):
+    solver_penalty_options = [
+        ('liblinear', 'l1'),
+        ('liblinear', 'l2'),
+        ('lbfgs', 'l2'),
+        ('lbfgs', None),
+        ('newton-cg', 'l2'),
+        ('newton-cg', None),
+        ('newton-cholesky', 'l2'),
+        ('newton-cholesky', None)
+    ]
+    solver, penalty = trial.suggest_categorical('solver_penalty', solver_penalty_options)
+    
+    params = {
+        'random_state': CFG.seed,
+        'max_iter': 1000,
+        'C': trial.suggest_float('C', 0, 1),
+        'tol': trial.suggest_float('tol', 1e-6, 1e-2),
+        'fit_intercept': trial.suggest_categorical('fit_intercept', [True, False]),
+        'class_weight': trial.suggest_categorical('class_weight', ['balanced', None]),
+        'solver': solver,
+        'penalty': penalty
+    }
+    
+    threshold = trial.suggest_float('threshold', 0, 1)
+    
+    trainer = Trainer(
+        LogisticRegression(**params),
+        cv=CFG.cv,
+        metric=CFG.metric,
+        metric_precision=6,
+        metric_threshold=threshold,
+        use_early_stopping=False,
+        verbose=False,
+        task="binary",
+    )
+    trainer.fit(X, y)
+    
+    return np.mean(trainer.fold_scores)
+
+sampler = optuna.samplers.TPESampler(seed=CFG.seed, multivariate=True, n_startup_trials=CFG.n_optuna_trials // 10)
+study = optuna.create_study(direction='maximize', sampler=sampler)
+study.optimize(objective, n_trials=CFG.n_optuna_trials, n_jobs=-1)
+best_params = study.best_params
+unfold_moreShow hidden output
+In [21]:
+solver, penalty = best_params['solver_penalty']
+lr_params = {
+    'random_state': CFG.seed,
+    'max_iter': 1000,
+    'C': best_params['C'],
+    'tol': best_params['tol'],
+    'fit_intercept': best_params['fit_intercept'],
+    'class_weight': best_params['class_weight'],
+    'solver': solver,
+    'penalty': penalty
+}
+In [22]:
+print(json.dumps(lr_params, indent=2))
+{
+  "random_state": 42,
+  "max_iter": 1000,
+  "C": 0.9849172818468388,
+  "tol": 0.005689000672481955,
+  "fit_intercept": false,
+  "class_weight": "balanced",
+  "solver": "newton-cg",
+  "penalty": null
+}
+In [23]:
+best_threshold = study.best_params['threshold']
+print(f'Best threshold: {best_threshold:.3f}')
+Best threshold: 0.583
+In [24]:
+lr_trainer = Trainer(
+    LogisticRegression(**lr_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    metric_threshold=best_threshold,
+    metric_precision=6,
+    use_early_stopping=False,
+    task="binary",
+)
+
+lr_trainer.fit(X, y)
+
+scores["LogisticRegression"] = lr_trainer.fold_scores
+lr_test_pred_probs = lr_trainer.predict(X_test)
+Training LogisticRegression
+
+--- Fold 0 - accuracy_score: 0.972740 - Time: 0.03 s
+--- Fold 1 - accuracy_score: 0.969771 - Time: 0.03 s
+--- Fold 2 - accuracy_score: 0.969231 - Time: 0.03 s
+--- Fold 3 - accuracy_score: 0.972470 - Time: 0.03 s
+--- Fold 4 - accuracy_score: 0.973812 - Time: 0.03 s
+
+------ Overall accuracy_score: 0.971604 - Mean accuracy_score: 0.971605 ± 0.001784 - Time: 0.90 s
+In [25]:
+save_submission('logistic-regression', _X_test, lr_test_pred_probs, np.mean(scores['LogisticRegression']), best_threshold)
+Out[25]:
+id Personality
+0 18524 Extrovert
+1 18525 Introvert
+2 18526 Extrovert
+3 18527 Extrovert
+4 18528 Introvert
+In [26]:
+lr_coeffs = np.zeros((1,len(X.columns)))
+for estimator in lr_trainer.estimators:
+    lr_coeffs += estimator.coef_ / CFG.n_folds
+In [27]:
+plot_weights(lr_coeffs, 'LR Coefficients')
+Weighted average
+In [28]:
+def objective(trial):
+    weights = np.array([trial.suggest_float(m, -1, 1) for m in oof_pred_probs.keys()])
+    weights /= np.sum(weights)
+    
+    preds = np.zeros(len(y))
+    for m, weight in zip(oof_pred_probs.keys(), weights):
+        preds += oof_pred_probs[m] * weight
+        
+    threshold = trial.suggest_float('threshold', 0, 1)
+            
+    return accuracy_score(y, (preds > threshold).astype(int))
+
+sampler = optuna.samplers.TPESampler(seed=CFG.seed, multivariate=True, n_startup_trials=CFG.n_optuna_trials // 10)
+study = optuna.create_study(direction='maximize', sampler=sampler)
+study.optimize(objective, n_trials=CFG.n_optuna_trials, n_jobs=-1)
+best_params = study.best_params
+unfold_moreShow hidden output
+In [29]:
+scores['WeightedAverage'] = [study.best_value] * CFG.n_folds
+In [30]:
+best_weights = np.array([study.best_params[m] for m in oof_pred_probs.keys()])
+best_weights /= np.sum(best_weights)
+
+best_weights = {
+    model: weight for model, weight in sorted(
+        zip(oof_pred_probs.keys(), best_weights),
+        key=lambda x: x[1],
+        reverse=True
+    )
+}
+print(json.dumps(best_weights, indent=2))
+{
+  "CatBoost": 1.213625787717924,
+  "AutoGluon": 1.0900857800061476,
+  "HistGradientBoosting": 0.6725529475823733,
+  "LightGBM (gbdt)": 0.1771371636756393,
+  "LightGBM (goss)": -0.44697488557101106,
+  "LightGBM (dart)": -0.7744857757306822,
+  "XGBoost": -0.9319410176803911
+}
+In [31]:
+best_threshold = study.best_params['threshold']
+print(f'Best threshold: {best_threshold:.3f}')
+Best threshold: 0.645
+In [32]:
+weighted_test_preds = np.zeros(len(test_pred_probs["CatBoost"]))
+for m, weight in best_weights.items():
+    weighted_test_preds += test_pred_probs[m] * weight
+In [33]:
+save_submission('weighted-ensemble', _X_test, weighted_test_preds, np.mean(scores['WeightedAverage']), best_threshold)
+Out[33]:
+id Personality
+0 18524 Extrovert
+1 18525 Introvert
+2 18526 Extrovert
+3 18527 Extrovert
+4 18528 Introvert
+Results
+In [34]:
+scores = pd.DataFrame(scores)
+mean_scores = scores.mean().sort_values(ascending=False)
+order = scores.mean().sort_values(ascending=False).index.tolist()
+
+min_score = mean_scores.min()
+max_score = mean_scores.max()
+padding = (max_score - min_score) * 0.5
+lower_limit = min_score - padding
+upper_limit = max_score + padding
+
+fig, axs = plt.subplots(1, 2, figsize=(15, scores.shape[1] * 0.4))
+
+boxplot = sns.boxplot(data=scores, order=order, ax=axs[0], orient='h', color='grey')
+axs[0].set_title('Fold Accuracy')
+axs[0].set_xlabel('')
+axs[0].set_ylabel('')
+
+barplot = sns.barplot(x=mean_scores.values, y=mean_scores.index, ax=axs[1], color='grey')
+axs[1].set_title('Average Accuracy')
+axs[1].set_xlabel('')
+axs[1].set_xlim(left=lower_limit, right=upper_limit)
+axs[1].set_ylabel('')
+
+for i, (score, model) in enumerate(zip(mean_scores.values, mean_scores.index)):
+    color = 'cyan' if 'logistic' in model.lower() or 'weighted' in model.lower() else 'grey'
+    barplot.patches[i].set_facecolor(color)
+    boxplot.patches[i].set_facecolor(color)
+    barplot.text(score, i, round(score, 6), va='center')
+
+plt.tight_layout()
+plt.show()
+In [35]:
+shutil.rmtree('catboost_info', ignore_errors=True)

@@ -1,0 +1,185 @@
+In [ ]:
+!pip install --upgrade pytabkit==1.5.0
+In [ ]:
+%load_ext cudf.pandas
+In [ ]:
+import pandas as pd
+import numpy as np
+import warnings
+import zipfile
+import gc
+import os
+from sklearn.model_selection import StratifiedKFold
+from pandas.errors import PerformanceWarning
+from cuml.preprocessing import TargetEncoder
+from sklearn.metrics import roc_auc_score
+from pytabkit import TabM_D_Classifier
+from itertools import combinations
+from tqdm import tqdm
+
+warnings.simplefilter(action="ignore", category=PerformanceWarning)
+TARGET = 'y'
+NUMS = ['age', 'balance', 'day', 'duration', 'campaign', 'pdays', 'previous']
+CATS = ['job', 'marital', 'education', 'default', 'housing', 'loan', 'contact', 'month', 'poutcome']
+In [ ]:
+train = pd.read_csv('/kaggle/input/playground-series-s5e8/train.csv', index_col='id')
+test = pd.read_csv('/kaggle/input/playground-series-s5e8/test.csv', index_col='id')
+orig = pd.read_csv('/kaggle/input/bank-marketing-dataset-full/bank-full.csv', delimiter=';')
+orig[TARGET] = orig[TARGET].replace({'no': 0, 'yes': 1})
+
+train[CATS] = train[CATS].astype('category')
+test[CATS] = test[CATS].astype('category')
+orig[CATS] = orig[CATS].astype('category')
+
+train['_duration_sin'] = np.sin(2*np.pi * train['duration'] / 540).astype('float32')
+train['_duration_cos'] = np.cos(2*np.pi * train['duration'] / 540).astype('float32')
+train['_balance_log'] = (np.sign(train['balance']) * np.log1p(np.abs(train['balance']))).astype('float32')
+train['_balance_sin'] = np.sin(2*np.pi * train['balance'] / 1000).astype('float32')
+train['_balance_cos'] = np.cos(2*np.pi * train['balance'] / 1000).astype('float32')
+train['_age_sin'] = np.sin(2*np.pi * train['age'] / 10).astype('float32')
+train['_pdays_sin'] = np.sin(2*np.pi * train['pdays'] / 7).astype('float32')
+
+test['_duration_sin'] = np.sin(2*np.pi * test['duration'] / 540).astype('float32')
+test['_duration_cos'] = np.cos(2*np.pi * test['duration'] / 540).astype('float32')
+test['_balance_log'] = (np.sign(test['balance']) * np.log1p(np.abs(test['balance']))).astype('float32')
+test['_balance_sin'] = np.sin(2*np.pi * test['balance'] / 1000).astype('float32')
+test['_balance_cos'] = np.cos(2*np.pi * test['balance'] / 1000).astype('float32')
+test['_age_sin'] = np.sin(2*np.pi * test['age'] / 10).astype('float32')
+test['_pdays_sin'] = np.sin(2*np.pi * test['pdays'] / 7).astype('float32')
+
+orig['_duration_sin'] = np.sin(2*np.pi * orig['duration'] / 540).astype('float32')
+orig['_duration_cos'] = np.cos(2*np.pi * orig['duration'] / 540).astype('float32')
+orig['_balance_log'] = (np.sign(orig['balance']) * np.log1p(np.abs(orig['balance']))).astype('float32')
+orig['_balance_sin'] = np.sin(2*np.pi * orig['balance'] / 1000).astype('float32')
+orig['_balance_cos'] = np.cos(2*np.pi * orig['balance'] / 1000).astype('float32')
+orig['_age_sin'] = np.sin(2*np.pi * orig['age'] / 10).astype('float32')
+orig['_pdays_sin'] = np.sin(2*np.pi * orig['pdays'] / 7).astype('float32')
+
+columns = NUMS
+
+for r in [2]:
+    for cols in tqdm(list(combinations(columns, r))):
+        name = '_x_'.join(cols)
+
+        train[name] = train[cols[0]]
+        for col in cols[1:]:
+            train[name] = train[name] * train[col]
+
+        test[name] = test[cols[0]]
+        for col in cols[1:]:
+            test[name] = test[name] * test[col]
+
+        orig[name] = orig[cols[0]]
+        for col in cols[1:]:
+            orig[name] = orig[name] * orig[col]
+
+TE_columns = []
+
+columns = NUMS + CATS
+
+for r in [2]:
+    for cols in tqdm(list(combinations(columns, r))):
+        name = '-'.join(cols)
+
+        train[name] = train[cols[0]].astype(str)
+        for col in cols[1:]:
+            train[name] = train[name] + '_' + train[col].astype(str)
+
+        test[name] = test[cols[0]].astype(str)
+        for col in cols[1:]:
+            test[name] = test[name] + '_' + test[col].astype(str)
+
+        orig[name] = orig[cols[0]].astype(str)
+        for col in cols[1:]:
+            orig[name] = orig[name] + '_' + orig[col].astype(str)
+
+        combined = pd.concat([train[name], test[name], orig[name]], ignore_index=True)
+        combined, _ = combined.factorize()
+        train[name] = combined[:len(train)]
+        test[name] = combined[len(train):len(train) + len(test)]
+        orig[name] = combined[len(train) + len(test):]
+
+        TE_columns.append(name)
+
+TE_ORIG = []
+CC = TE_columns + CATS + NUMS
+
+print(f"Processing {len(CC)} columns... ",end="")
+for i,c in enumerate(CC):
+    if i%10==0: print(f"{i}, ",end="")
+    tmp = orig.groupby(c).y.mean()
+    tmp = tmp.astype('float32')
+    tmp.name = f"TE_ORIG_{c}"
+    TE_ORIG.append( f"TE_ORIG_{c}" )
+    train = train.merge(tmp, on=c, how='left')
+    train[tmp.name] = train[tmp.name].fillna(train[tmp.name].mean())
+    test = test.merge(tmp, on=c, how='left')
+    test[tmp.name] = test[tmp.name].fillna(train[tmp.name].mean())
+
+    tmp = orig[c].value_counts()
+    TE_ORIG.append( f"CE_ORIG_{c}" )
+    train[f'CE_ORIG_{c}'] = train[c].map(tmp).fillna(0)
+    test[f'CE_ORIG_{c}'] = test[c].map(tmp).fillna(0)
+print()
+
+
+FEATURES = train.columns.tolist()
+FEATURES.remove(TARGET)
+In [ ]:
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message="Using a non-tuple sequence for multidimensional indexing is deprecated"
+)
+In [ ]:
+oof = np.zeros(len(train))
+pred = np.zeros(len(test))
+
+skf = StratifiedKFold(n_splits=5, random_state=42, shuffle=True)
+
+for idx, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(train)), train[TARGET])):
+    X_train, X_val = train.loc[train_idx, FEATURES], train.loc[val_idx, FEATURES]
+    y_train, y_val = train.loc[train_idx, TARGET], train.loc[val_idx, TARGET]
+    X_test = test.copy()
+
+    for col in tqdm(TE_columns):
+        encoder = TargetEncoder(n_folds=10, smooth=0, seed=42, split_method='random', stat='mean')
+        X_train[col] = encoder.fit_transform(X_train[col], y_train)
+        X_val[col] = encoder.transform(X_val[col])
+        X_test[col] = encoder.transform(X_test[col])
+
+    param_grid = {
+        'device': 'cuda',
+        'val_metric_name': '1-auc_ovr',
+        'random_state': 100,
+        'verbosity': 2,
+        'arch_type': 'tabm-mini',
+        'tabm_k': 32,
+        'num_emb_type': 'pwl',
+        'd_embedding': 12,
+        'batch_size': 256,
+        'lr': 1e-3,
+        'n_epochs': 10,
+        'dropout': 0.1,
+        'd_block': 512,
+        'n_blocks': 3
+    }
+
+    model = TabM_D_Classifier(**param_grid)
+    model.fit(X_train, y_train, X_val, y_val, cat_col_names=CATS)
+    oof[val_idx] = model.predict_proba(X_val)[:, 1]
+    pred += model.predict_proba(X_test)[:, 1]
+
+    print(f'Fold {idx + 1}: {roc_auc_score(y_val, oof[val_idx])}')
+
+    del model, X_train, X_val, y_train, y_val, X_test
+    gc.collect()
+
+pred /= 5
+print(f'CV AUC: {roc_auc_score(train[TARGET], oof)}')
+In [ ]:
+submission = pd.read_csv('/kaggle/input/playground-series-s5e8/sample_submission.csv')
+submission['y'] = pred
+submission.to_csv('tabm.csv', index=False)
+pd.DataFrame({'tabm_oof': oof}).to_csv('tabm_oof.csv', index=False)
+pd.DataFrame({'tabm_pred': pred}).to_csv('tabm_pred.csv', index=False)

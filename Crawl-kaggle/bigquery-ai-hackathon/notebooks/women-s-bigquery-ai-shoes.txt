@@ -1,0 +1,164 @@
+Published on August 12, 2025. By Prata, Marília (mpwolke)
+unfold_moreShow hidden cell
+Competition Citation:
+@misc{bigquery-ai-hackathon,
+author = {Wei Hsia and Jing Jing Long and Rachael Deacon-Smith and Gabe Weiss and Gautam Gupta and Omid Fatemieh and Yves-Laurent Kom Samo and Thibaud Hottelier and Ivan Santa Maria Filho and Jiaxun Wu},
+
+title = {BigQuery AI - Building the Future of Data},
+
+year = {2025},
+howpublished = {\url{https://kaggle.com/competitions/bigquery-ai-hackathon}},
+note = {Kaggle}
+}
+Welcome to the BigQuery AI Hackathon
+This is a Hackathon with no provided dataset.
+https://www.kaggle.com/competitions/bigquery-ai-hackathon/data?select=README
+Import Bigquery
+In [3]:
+from google.cloud import bigquery
+
+client = bigquery.Client()
+
+
+# List the tables in geo_openstreetmap dataset which resides in bigquery-public-data project:
+dataset = client.get_dataset('bigquery-public-data.geo_openstreetmap')
+tables = list(client.list_tables(dataset))
+print([table.table_id for table in tables])
+Using Kaggle's public dataset BigQuery integration.
+['history_changesets', 'history_layers', 'history_nodes', 'history_relations', 'history_ways', 'planet_changesets', 'planet_features', 'planet_features_lines', 'planet_features_multilinestrings', 'planet_features_multipolygons', 'planet_features_other_relations', 'planet_features_points', 'planet_layers', 'planet_nodes', 'planet_relations', 'planet_ways']
+In [4]:
+#By Anna Epishova https://www.kaggle.com/annaepishova/starter-geo-openstreetmap-bigquery-dataset
+
+sql = '''
+SELECT nodes.*
+FROM `bigquery-public-data.geo_openstreetmap.planet_nodes` AS nodes
+JOIN UNNEST(all_tags) AS tags
+WHERE tags.key = 'amenity'
+  AND tags.value IN ('hospital',
+    'clinic',
+    'doctors')
+LIMIT 10
+'''
+# Set up the query
+query_job = client.query(sql)
+
+# Make an API request  to run the query and return a pandas DataFrame
+df = query_job.to_dataframe()
+df.head(5)
+Out[4]:
+id version username changeset visible osm_timestamp geometry all_tags latitude longitude
+0 3817294366 2 mavrie 35879682 True 2015-12-11 08:05:15+00:00 POINT(5.238911 52.298466) [{'key': 'amenity', 'value': 'doctors'}, {'key... 52.298466000 5.238911000
+1 2830314860 2 De RXL 30750232 True 2015-05-03 14:43:11+00:00 POINT(4.9651506 52.3407617) [{'key': 'amenity', 'value': 'doctors'}, {'key... 52.340761700 4.965150600
+2 855681995 4 sander79 66048540 True 2019-01-05 14:32:34+00:00 POINT(5.1884385 52.3675454) [{'key': 'amenity', 'value': 'doctors'}, {'key... 52.367545400 5.188438500
+3 459733556 1 West Erop 2086330 True 2009-08-09 15:44:16+00:00 POINT(5.2077665 52.2675799) [{'key': 'amenity', 'value': 'hospital'}, {'ke... 52.267579900 5.207766500
+4 4404541091 1 Jan Vos A 42209775 True 2016-09-16 18:22:22+00:00 POINT(4.9769864 52.2936156) [{'key': 'amenity', 'value': 'doctors'}, {'key... 52.293615600 4.976986400
+In [5]:
+sql = '''
+SELECT nodes.*
+FROM `bigquery-public-data.geo_openstreetmap.planet_nodes` AS nodes
+JOIN UNNEST(all_tags) AS tags
+WHERE tags.key = 'amenity'
+  AND tags.value IN ('stores',
+    'clothes',
+    'shoes')
+LIMIT 10
+'''
+# Set up the query
+query_job = client.query(sql)
+
+# Make an API request  to run the query and return a pandas DataFrame
+df = query_job.to_dataframe()
+df.head()
+Out[5]:
+id version username changeset visible osm_timestamp geometry all_tags latitude longitude
+0 5292834110 1 Astromath 54748241 True 2017-12-19 04:25:29+00:00 POINT(-77.9510431 39.481956) [{'key': 'addr:city', 'value': 'Martinsburg'},... 39.481956000 -77.951043100
+1 1103330379 1 Burg-Kartograph 6968116 True 2011-01-14 15:12:17+00:00 POINT(8.2768427 47.3489955) [{'key': 'amenity', 'value': 'shoes'}] 47.348995500 8.276842700
+2 1102204102 1 Burg-Kartograph 6958703 True 2011-01-13 16:21:02+00:00 POINT(8.2731193 47.3497711) [{'key': 'amenity', 'value': 'clothes'}, {'key... 47.349771100 8.273119300
+3 6771287991 5 marvin2712 109296065 True 2021-08-07 07:05:26+00:00 POINT(8.06406 50.3883445) [{'key': 'addr:city', 'value': 'Limburg an der... 50.388344500 8.064060000
+4 3097387472 2 Jadah Francisco 96397418 True 2020-12-24 16:59:27+00:00 POINT(-72.4869101 7.9035107) [{'key': 'amenity', 'value': 'clothes'}, {'key... 7.903510700 -72.486910100
+Shoes on fourth column and other columns
+Longitude 8.2768427 Latitude 47.3489955 That's in Switzerland
+47°20'56.4"N 8°16'36.6"E: Wohlen, Switzerland
+In [6]:
+#Fifth row, fourth column 
+
+df.iloc[1,7]
+Out[6]:
+array([{'key': 'amenity', 'value': 'shoes'}], dtype=object)
+In [7]:
+df['all_tags'].value_counts()
+unfold_moreShow hidden output
+小脚印童鞋: Small footprint children's shoes
+Longitude 117.753525300 Latitude 39.886507300
+Google Maps: 39°53'11.4"N 117°45'12.7"E Yutian County, Hebei, Tangshan, Hebei, China.
+In [8]:
+df.iloc[5,7]
+Out[8]:
+array([{'key': 'amenity', 'value': 'shoes'},
+       {'key': 'name', 'value': '小脚印童鞋'}], dtype=object)
+新脚印鞋店: New Footprints Shoe Store
+Longitude 117.7536421 Latidude 39.8863103
+According to Google Maps: 39°53'10.7"N 117°45'13.1"E is in Yutian County, Hebei, Tangshan, Hebei, China.
+In [9]:
+df.iloc[6,7]
+Out[9]:
+array([{'key': 'amenity', 'value': 'shoes'},
+       {'key': 'name', 'value': '新脚印鞋店'}], dtype=object)
+In [10]:
+df.head(7)
+unfold_moreShow hidden output
+I wanted Milan since Manolo's and Louboutin's are made in Italy
+"Manolo Blahnik shoes are made in Italy. The brand has a strong connection to the region, particularly near Milan, due to the Italian craftsmanship and sense of beauty that the designer admires. While the shoes are crafted in Italy, Manolo Blahnik himself is Spanish, and the company is headquartered in London."
+"Christian Louboutin shoes are primarily crafted in Europe, with a strong emphasis on Italy and Spain. Specifically, the Louboutin factory outside Milan is a key location for the manufacturing of their footwear."
+Unfortunately, my locations are in China 😂 and Switzerland.
+In [11]:
+speeds_query = """
+               WITH milan AS (
+               SELECT ST_MAKEPOLYGON(ST_MAKELINE(
+               [ST_GEOGPOINT(8.2768427 47.3489955),ST_GEOGPOINT(117.7535253 39.8865073),
+               ST_GEOGPOINT(117.7536421 39.8863103)
+               ]
+               )) AS boundingbox
+               )
+               """
+Define to run query
+In [12]:
+def run_query(shoes_query):
+    return pd.read_sql_query(shoes_query, df) #Original was db
+Damm Cursor: AttributeError 'DataFrame' object has no attribute 'cursor'
+-> 2672 cur = self.con.cursor()
+-> 2738 cursor = self.execute(sql, params)
+In [13]:
+shoes_query = '''
+SELECT hist.*
+FROM `bigquery-public-data.geo_openstreetmap.history_nodes` AS hist
+INNER JOIN UNNEST(all_tags) AS tags
+INNER JOIN milan on ST_INTERSECTS(milan.boundingbox, hist.geometry)
+WHERE tags.key = 'nice'
+  AND tags.value IN ('stores',
+    'clothes',
+    'shoes')
+  AND hist.id NOT IN (
+    SELECT nodes.id
+    FROM `bigquery-public-data.geo_openstreetmap.planet_nodes` AS nodes
+    INNER JOIN UNNEST(all_tags) AS tags
+    INNER JOIN milan on ST_INTERSECTS(milan.boundingbox, nodes.geometry)
+    WHERE tags.key = 'nice'
+      AND tags.value IN ('stores',
+        'closes',
+        'shoes')
+)
+'''
+run_query(shoes_query)
+unfold_moreShow hidden output
+The importance of shoes to women. "WomMansplaining" the Notebook title
+"Shoes are very important to women, fulfilling both practical and stylistic needs. Shoes significantly impact a woman's outfit and overall appearance, influencing style and mood."
+No matter they are uncomfortable, it's all about Style.
+Draft Session (1h:57m)
+Forget the Manolo Blahnik or the Louboutin, it's just Blah code.
+After 2 locations in China and one in Switzerland, just a Cursor AttributeError and No Milan.
+Pinterest
+Acknowledgements:
+Anna Epishova https://www.kaggle.com/annaepishova/starter-geo-openstreetmap-bigquery-dataset
+DanB https://www.kaggle.com/code/dansbecker/select-from-where
+mpwolke https://www.kaggle.com/code/mpwolke/openstreemap-bquery

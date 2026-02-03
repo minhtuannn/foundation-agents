@@ -1,0 +1,456 @@
+In [ ]:
+!pip install scikit-learn==1.5.2
+In [ ]:
+import pandas as pd
+import numpy as np
+import warnings
+import gc
+import os
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import TargetEncoder
+from sklearn.metrics import roc_auc_score
+from itertools import combinations
+from xgboost import XGBClassifier
+from scipy.special import expit
+from tqdm import tqdm
+
+pd.set_option('display.max_columns', 500)
+pd.set_option('display.max_rows', 500)
+pd.set_option("display.max_colwidth", None)
+warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
+TARGET = 'loan_paid_back'
+NUMS = ['annual_income', 'debt_to_income_ratio', 'credit_score', 'loan_amount', 'interest_rate']
+CATS = ['gender', 'marital_status', 'education_level', 'employment_status', 'loan_purpose', 'grade_subgrade']
+In [ ]:
+train = pd.read_csv('/kaggle/input/playground-series-s5e11/train.csv', index_col='id')
+test = pd.read_csv('/kaggle/input/playground-series-s5e11/test.csv', index_col='id')
+orig = pd.read_csv('/kaggle/input/loan-prediction-dataset-2025/loan_dataset_20000.csv')[NUMS + CATS + [TARGET]]
+
+bin_features_train = pd.DataFrame(index=train.index)
+bin_features_test = pd.DataFrame(index=test.index)
+
+for c in NUMS:
+    for q in [5]:
+        try:
+            train_bins, bins = pd.qcut(train[c], q=q, labels=False, retbins=True, duplicates="drop")
+            bin_features_train[f"{c}_bin{q}"] = train_bins
+            bin_features_test[f"{c}_bin{q}"] = pd.cut(test[c], bins=bins, labels=False, include_lowest=True)
+        except Exception:
+            bin_features_train[f"{c}_bin{q}"] = 0
+            bin_features_test[f"{c}_bin{q}"] = 0
+train = pd.concat([train, bin_features_train], axis=1)
+test = pd.concat([test, bin_features_test], axis=1)
+
+train['default_risk'] = (train['debt_to_income_ratio'] * 0.40 + (850 - train['credit_score']) / 850 * 0.35 + train['interest_rate'] / 100 * 0.25)
+test['default_risk'] = (test['debt_to_income_ratio'] * 0.40 + (850 - test['credit_score']) / 850 * 0.35 + test['interest_rate'] / 100 * 0.25)
+orig['default_risk'] = (orig['debt_to_income_ratio'] * 0.40 + (850 - orig['credit_score']) / 850 * 0.35 + orig['interest_rate'] / 100 * 0.25)
+
+for c in ['credit_score']:
+    n = f'{c}2'
+    train[n] = train[c].copy()
+    test[n] = test[c].copy()
+    orig[n] = orig[c].copy()
+
+DIGITS = []
+for c in ['annual_income', 'loan_amount']:
+    for k in range(-4, 2):
+        n = f'{c}_d{k}'
+        train[n] = ((train[c] * 10**k) % 10).fillna(-1).astype("int8")
+        test[n] = ((test[c] * 10**k) % 10).fillna(-1).astype("int8")
+        orig[n] = ((orig[c] * 10**k) % 10).fillna(-1).astype("int8")
+        DIGITS.append(n)
+
+for c in ['interest_rate']:
+    for k in range(-1, 3):
+        n = f'{c}_d{k}'
+        train[n] = ((train[c] * 10**k) % 10).fillna(-1).astype("int8")
+        test[n] = ((test[c] * 10**k) % 10).fillna(-1).astype("int8")
+        orig[n] = ((orig[c] * 10**k) % 10).fillna(-1).astype("int8")
+        DIGITS.append(n)
+
+for c in ['debt_to_income_ratio']:
+    for k in range(1, 4):
+        n = f'{c}_d{k}'
+        train[n] = ((train[c] * 10**k) % 10).fillna(-1).astype("int8")
+        test[n] = ((test[c] * 10**k) % 10).fillna(-1).astype("int8")
+        orig[n] = ((orig[c] * 10**k) % 10).fillna(-1).astype("int8")
+        DIGITS.append(n)
+
+train['grade_subgrade_d1'] = train['grade_subgrade'].apply(lambda x: x[1]).astype('int8')
+test['grade_subgrade_d1'] = test['grade_subgrade'].apply(lambda x: x[1]).astype('int8')
+orig['grade_subgrade_d1'] = orig['grade_subgrade'].apply(lambda x: x[1]).astype('int8')
+
+ROUND = []
+RR = [-1, 0]
+for c in ['annual_income', 'loan_amount']:
+    for r in RR:
+        n = f"{c}_r{r}"
+        train[n] = train[c].round(r)
+        test[n] = test[c].round(r)
+        orig[n] = orig[c].round(r)
+        ROUND.append(n)
+
+for c in CATS + ['credit_score2']:
+    combined = pd.concat([train[c], test[c], orig[c]])
+    combined, _ = combined.factorize()
+    train[c] = combined[:len(train)]
+    test[c] = combined[len(train):len(train) + len(test)]
+    orig[c] = combined[len(train) + len(test):]
+
+TE_columns = []
+CE_columns = []
+PAIRS = []
+
+columns = NUMS + CATS + [ROUND[0]]
+
+for r in [2]:
+    for cols in tqdm(list(combinations(columns, r))):
+        name = '-'.join(cols)
+
+        train[name] = train[cols[0]].astype(str)
+        for col in cols[1:]:
+            train[name] = train[name] + '_' + train[col].astype(str)
+
+        test[name] = test[cols[0]].astype(str)
+        for col in cols[1:]:
+            test[name] = test[name] + '_' + test[col].astype(str)
+
+        orig[name] = orig[cols[0]].astype(str)
+        for col in cols[1:]:
+            orig[name] = orig[name] + '_' + orig[col].astype(str)
+
+        combined = pd.concat([train[name], test[name], orig[name]], ignore_index=True)
+        combined, _ = combined.factorize()
+        if pd.Series(combined).nunique() > len(combined) // 2:
+            train = train.drop(name, axis=1)
+            test = test.drop(name, axis=1)
+            orig = orig.drop(name, axis=1)
+            continue
+        train[name] = combined[:len(train)]
+        test[name] = combined[len(train):len(train) + len(test)]
+        orig[name] = combined[len(train) + len(test):]
+
+        TE_columns.append(name)
+        CE_columns.append(name)
+        PAIRS.append(name)
+
+for c1 in DIGITS[:6]:
+    for c2 in ['employment_status', 'debt_to_income_ratio']:
+        name = f'{c1}-{c2}'
+
+        train[name] = train[c1].astype(str) + '_' + train[c2].astype(str)
+        test[name] = test[c1].astype(str) + '_' + test[c2].astype(str)
+        orig[name] = orig[c1].astype(str) + '_' + orig[c2].astype(str)
+
+        combined = pd.concat([train[name], test[name], orig[name]], ignore_index=True)
+        combined, _ = combined.factorize()
+        train[name] = combined[:len(train)]
+        test[name] = combined[len(train):len(train) + len(test)]
+        orig[name] = combined[len(train) + len(test):]
+
+        TE_columns.append(name)
+
+for c1 in DIGITS[:6]:
+    for c2 in [DIGITS[6], DIGITS[7]]:
+        name = f'{c1}-{c2}'
+
+        train[name] = train[c1].astype(str) + '_' + train[c2].astype(str)
+        test[name] = test[c1].astype(str) + '_' + test[c2].astype(str)
+        orig[name] = orig[c1].astype(str) + '_' + orig[c2].astype(str)
+
+        combined = pd.concat([train[name], test[name], orig[name]], ignore_index=True)
+        combined, _ = combined.factorize()
+        train[name] = combined[:len(train)]
+        test[name] = combined[len(train):len(train) + len(test)]
+        orig[name] = combined[len(train) + len(test):]
+
+        TE_columns.append(name)
+
+for cols in tqdm([['annual_income', 'gender', 'marital_status']]):
+    name = '-'.join(cols)
+
+    train[name] = train[cols[0]].astype(str)
+    for col in cols[1:]:
+        train[name] = train[name] + '_' + train[col].astype(str)
+
+    test[name] = test[cols[0]].astype(str)
+    for col in cols[1:]:
+        test[name] = test[name] + '_' + test[col].astype(str)
+
+    orig[name] = orig[cols[0]].astype(str)
+    for col in cols[1:]:
+        orig[name] = orig[name] + '_' + orig[col].astype(str)
+
+    combined = pd.concat([train[name], test[name], orig[name]], ignore_index=True)
+    combined, _ = combined.factorize()
+    train[name] = combined[:len(train)]
+    test[name] = combined[len(train):len(train) + len(test)]
+    orig[name] = combined[len(train) + len(test):]
+
+    TE_columns.append(name)
+
+TE_ORIG = []
+CC = CATS + NUMS + DIGITS[:16]
+
+print(f"Processing {len(CC)} columns... ",end="")
+for i,c in enumerate(CC):
+    if i%10==0: print(f"{i}, ",end="")
+    tmp = orig.groupby(c)[TARGET].mean()
+    tmp = tmp.astype('float32')
+    tmp.name = f"TE_ORIG_{c}"
+    TE_ORIG.append( f"TE_ORIG_{c}" )
+    train = train.merge(tmp, on=c, how='left')
+    train[tmp.name] = train[tmp.name].fillna(train[tmp.name].mean())
+    test = test.merge(tmp, on=c, how='left')
+    test[tmp.name] = test[tmp.name].fillna(train[tmp.name].mean())
+
+    tmp = orig[c].value_counts()
+    TE_ORIG.append( f"CE_ORIG_{c}" )
+    train[f'CE_ORIG_{c}'] = train[c].map(tmp).fillna(0)
+    test[f'CE_ORIG_{c}'] = test[c].map(tmp).fillna(0)
+print()
+
+CC = CATS + NUMS
+
+print(f"Processing {len(CC)} columns... ",end="")
+for i,c in enumerate(CC):
+    if i%10==0: print(f"{i}, ",end="")
+    tmp = orig.groupby(c)['employment_status'].mean()
+    tmp = tmp.astype('float32')
+    tmp.name = f"TE_ORIG_(employment_status)_{c}"
+    TE_ORIG.append( f"TE_ORIG_(employment_status)_{c}" )
+    train = train.merge(tmp, on=c, how='left')
+    train[tmp.name] = train[tmp.name].fillna(train[tmp.name].mean())
+    test = test.merge(tmp, on=c, how='left')
+    test[tmp.name] = test[tmp.name].fillna(train[tmp.name].mean())
+
+print()
+
+DIGIT_PAIRS = []
+for r in [2, 3, 4]:
+    for cols in tqdm(list(combinations(DIGITS[:6], r))):
+        name = '-'.join(cols)
+
+        train[name] = train[cols[0]].astype(str)
+        for col in cols[1:]:
+            train[name] = train[name] + '_' + train[col].astype(str)
+
+        test[name] = test[cols[0]].astype(str)
+        for col in cols[1:]:
+            test[name] = test[name] + '_' + test[col].astype(str)
+
+        orig[name] = orig[cols[0]].astype(str)
+        for col in cols[1:]:
+            orig[name] = orig[name] + '_' + orig[col].astype(str)
+
+        combined = pd.concat([train[name], test[name], orig[name]], ignore_index=True)
+        combined, _ = combined.factorize()
+        train[name] = combined[:len(train)]
+        test[name] = combined[len(train):len(train) + len(test)]
+        orig[name] = combined[len(train) + len(test):]
+
+        DIGIT_PAIRS.append(name)
+        TE_columns.append(name)
+        CE_columns.append(name)
+
+for r in [2, 3, 4]:
+    for cols in tqdm(list(combinations(DIGITS[6:12], r))):
+        name = '-'.join(cols)
+
+        train[name] = train[cols[0]].astype(str)
+        for col in cols[1:]:
+            train[name] = train[name] + '_' + train[col].astype(str)
+
+        test[name] = test[cols[0]].astype(str)
+        for col in cols[1:]:
+            test[name] = test[name] + '_' + test[col].astype(str)
+
+        orig[name] = orig[cols[0]].astype(str)
+        for col in cols[1:]:
+            orig[name] = orig[name] + '_' + orig[col].astype(str)
+
+        combined = pd.concat([train[name], test[name], orig[name]], ignore_index=True)
+        combined, _ = combined.factorize()
+        train[name] = combined[:len(train)]
+        test[name] = combined[len(train):len(train) + len(test)]
+        orig[name] = combined[len(train) + len(test):]
+
+        DIGIT_PAIRS.append(name)
+        TE_columns.append(name)
+        CE_columns.append(name)
+
+for r in [2, 3, 4]:
+    for cols in tqdm(list(combinations(DIGITS[12:16], r))):
+        name = '-'.join(cols)
+
+        train[name] = train[cols[0]].astype(str)
+        for col in cols[1:]:
+            train[name] = train[name] + '_' + train[col].astype(str)
+
+        test[name] = test[cols[0]].astype(str)
+        for col in cols[1:]:
+            test[name] = test[name] + '_' + test[col].astype(str)
+
+        orig[name] = orig[cols[0]].astype(str)
+        for col in cols[1:]:
+            orig[name] = orig[name] + '_' + orig[col].astype(str)
+
+        combined = pd.concat([train[name], test[name], orig[name]], ignore_index=True)
+        combined, _ = combined.factorize()
+        train[name] = combined[:len(train)]
+        test[name] = combined[len(train):len(train) + len(test)]
+        orig[name] = combined[len(train) + len(test):]
+
+        DIGIT_PAIRS.append(name)
+        TE_columns.append(name)
+        CE_columns.append(name)
+
+for r in [2, 3]:
+    for cols in tqdm(list(combinations(DIGITS[16:19], r))):
+        name = '-'.join(cols)
+
+        train[name] = train[cols[0]].astype(str)
+        for col in cols[1:]:
+            train[name] = train[name] + '_' + train[col].astype(str)
+
+        test[name] = test[cols[0]].astype(str)
+        for col in cols[1:]:
+            test[name] = test[name] + '_' + test[col].astype(str)
+
+        orig[name] = orig[cols[0]].astype(str)
+        for col in cols[1:]:
+            orig[name] = orig[name] + '_' + orig[col].astype(str)
+
+        combined = pd.concat([train[name], test[name], orig[name]], ignore_index=True)
+        combined, _ = combined.factorize()
+        train[name] = combined[:len(train)]
+        test[name] = combined[len(train):len(train) + len(test)]
+        orig[name] = combined[len(train) + len(test):]
+
+        DIGIT_PAIRS.append(name)
+        TE_columns.append(name)
+        CE_columns.append(name)
+
+for c in NUMS + CATS:
+    if c != 'employment_status':
+        tmp = train.groupby(c)['employment_status'].mean()
+        tmp.name = f'TE_mean_(employment_status)_{c}'
+        train = train.merge(tmp, on=c, how='left')
+        train[tmp.name] = train[tmp.name].fillna(train[tmp.name].mean())
+        test = test.merge(tmp, on=c, how='left')
+        test[tmp.name] = test[tmp.name].fillna(train[tmp.name].mean())
+
+for c in NUMS + CATS:
+    if c != 'debt_to_income_ratio':
+        tmp = train.groupby(c)['debt_to_income_ratio'].mean()
+        tmp.name = f'TE_mean_(debt_to_income_ratio)_{c}'
+        train = train.merge(tmp, on=c, how='left')
+        train[tmp.name] = train[tmp.name].fillna(train[tmp.name].mean())
+        test = test.merge(tmp, on=c, how='left')
+        test[tmp.name] = test[tmp.name].fillna(train[tmp.name].mean())
+
+for c in test.columns.tolist():
+    if test[c].dtype == 'float64':
+        train[c] = train[c].astype('float32')
+        test[c] = test[c].astype('float32')
+    if test[c].dtype == 'int64':
+        train[c] = train[c].astype('int32')
+        test[c] = test[c].astype('int32')
+
+FEATURES = train.columns.tolist()
+FEATURES.remove(TARGET)
+In [ ]:
+def count_encode(train, valid, test, col):
+    counts = train[col].value_counts()
+
+    train[f'CE_{col}'] = train[col].map(counts)
+    valid[f'CE_{col}'] = valid[col].map(counts).fillna(0)
+    test[f'CE_{col}'] = test[col].map(counts).fillna(0)
+    return (train, valid, test)
+In [ ]:
+oof = np.zeros(len(train))
+pred = np.zeros(len(test))
+models = []
+
+skf = StratifiedKFold(n_splits=20, random_state=42, shuffle=True)
+
+for idx, (train_idx, val_idx) in enumerate(skf.split(np.zeros(len(train)), train[TARGET])):
+    X_train, X_val = train.loc[train_idx, FEATURES], train.loc[val_idx, FEATURES]
+    y_train, y_val = train.loc[train_idx, TARGET], train.loc[val_idx, TARGET]
+    X_test = test.copy()
+
+    for col in tqdm(CE_columns):
+        X_train, X_val, X_test = count_encode(X_train, X_val, X_test, col)
+
+    for col in tqdm(TE_columns + ['credit_score2']):
+        encoder = TargetEncoder(cv=10, random_state=42, shuffle=True)
+        X_train[col] = encoder.fit_transform(pd.DataFrame(X_train[col]), y_train).flatten()
+        X_val[col] = encoder.transform(pd.DataFrame(X_val[col])).flatten()
+        X_test[col] = encoder.transform(pd.DataFrame(X_test[col])).flatten()
+
+    for col in tqdm(ROUND):
+        n = f'TE_mean_{col}'
+        encoder = TargetEncoder(cv=10, random_state=42, shuffle=True)
+        X_train[n] = encoder.fit_transform(pd.DataFrame(X_train[col]), y_train).flatten()
+        X_val[n] = encoder.transform(pd.DataFrame(X_val[col])).flatten()
+        X_test[n] = encoder.transform(pd.DataFrame(X_test[col])).flatten()
+
+    agg_list = ['mean', 'std', 'min', 'max']
+
+    for agg in agg_list:
+        X_train[f'TE_{agg}'] = X_train[TE_columns].agg(agg, axis=1)
+        X_val[f'TE_{agg}'] = X_val[TE_columns].agg(agg, axis=1)
+        X_test[f'TE_{agg}'] = X_test[TE_columns].agg(agg, axis=1)
+
+    for c in X_train.columns.tolist():
+        if X_train[c].dtype == 'float64':
+            X_train[c] = X_train[c].astype('float32')
+            X_val[c] = X_val[c].astype('float32')
+            X_test[c] = X_test[c].astype('float32')
+        if X_train[c].dtype == 'int64':
+            X_train[c] = X_train[c].astype('int32')
+            X_val[c] = X_val[c].astype('int32')
+            X_test[c] = X_test[c].astype('int32')
+
+    combined = pd.concat([X_train, X_val, X_test])
+    combined[DIGITS] = combined[DIGITS].astype('category')
+    X_train = combined[:len(X_train)]
+    X_val = combined[len(X_train):len(X_train) + len(X_val)]
+    X_test = combined[len(X_train) + len(X_val):]
+    del combined
+    gc.collect()
+
+    param_grid = {'colsample_bytree': 0.2364,
+                  'gamma': 0.034283,
+                  'max_depth': 6,
+                  'reg_alpha': 0.71367,
+                  'reg_lambda': 4.43564,
+                  'subsample': 0.59394}
+
+    model = XGBClassifier(**param_grid,
+                          n_estimators=10000,
+                          objective='binary:logistic',
+                          eval_metric='auc',
+                          learning_rate=0.01,
+                          early_stopping_rounds=500,
+                          max_bin=1024,
+                          random_state=42,
+                          enable_categorical=True,
+                          device='cuda',
+                          n_jobs=-1)
+    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
+    oof[val_idx] = model.predict_proba(X_val)[:, 1]
+    pred += model.predict_proba(X_test)[:, 1]
+    print(f'Fold {idx + 1}: {roc_auc_score(y_val, oof[val_idx])}', flush=True)
+
+    models.append(model)
+    del X_train, X_val, y_train, y_val, model
+    gc.collect()
+
+pred /= 5
+print(f'CV AUC: {roc_auc_score(train[TARGET], oof)}')
+In [ ]:
+submission = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+submission[TARGET] = pred
+submission.to_csv('xgb.csv', index=False)
+pd.DataFrame({'xgb_oof': oof}).to_csv('xgb_oof.csv', index=False)

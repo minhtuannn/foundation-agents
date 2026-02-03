@@ -1,0 +1,586 @@
+unfold_moreShow hidden cell
+[1] 🎒 Introduction
+[1] 🎒📦 Introduction
+Welcome to my notebook for the Backpack Price Prediction Challenge from the 2025 Kaggle Playground Series! 🏆 This competition presents an exciting opportunity to explore tabular data, refine our feature engineering, and experiment with different machine learning models to predict backpack prices.
+In this notebook, we will:
+Perform Exploratory Data Analysis (EDA) 📊 – Uncover insights, visualize distributions, and handle missing values.
+Build and Compare Machine Learning Models 🤖 – Train different regression models to predict backpack prices.
+Optimize Hyperparameters ⚙️ – Fine-tune models for better performance.
+Generate and Submit Predictions 📤 – Submit our best-performing model’s predictions to Kaggle.
+[1.1] 🗂 Dataset Description
+The dataset used in this competition has been synthetically generated from a deep learning model trained on the Student Bag Price Prediction Dataset. It contains various attributes related to backpacks, which we will use to predict the Price.
+📁 Files Provided:
+train.csv 📄 – The training dataset, containing various backpack features along with their corresponding prices (our target variable).
+test.csv 📄 – The test dataset, where we need to predict the price based on given features.
+sample_submission.csv 📄 – A sample submission file in the correct format
+[1.2] 📏 Evaluation Metric – Root Mean Squared Error (RMSE)
+Submissions in this competition are evaluated based on Root Mean Squared Error (RMSE), which is calculated as:
+🤔 Why RMSE?
+Penalizes Large Errors More 🚨: Since RMSE squares the errors before averaging, it gives more weight to larger deviations.
+Provides a Clear Measure of Accuracy 📉: A lower RMSE indicates that the model's predictions are closer to actual values.
+Maintains Interpretability 📖: Since RMSE is in the same unit as the target variable (Price), it's easy to understand its impact.
+Our goal is to minimize RMSE by selecting the best features, handling missing values effectively, and experimenting with different regression models
+[2] 🔍 Dataset Overview
+[2] 📊🔍 Dataset Overview
+unfold_moreShow hidden code
+[2.1] Loading the Datasets & Libraries :
+In [3]:
+# Reading .csv data file
+
+train_data = pd.read_csv("/kaggle/input/playground-series-s5e2/train.csv")
+test_data = pd.read_csv("/kaggle/input/playground-series-s5e2/test.csv")
+original_data = pd.read_csv('/kaggle/input/student-bag-price-prediction-dataset/Noisy_Student_Bag_Price_Prediction_Dataset.csv')
+[2.2] Initial Observations or Trends :
+In [4]:
+ # Having a look at the dataset
+In [5]:
+train_data.head()
+Out[5]:
+id Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 0 Jansport Leather Medium 7.0 Yes No Tote Black 11.611723 112.15875
+1 1 Jansport Canvas Small 10.0 Yes Yes Messenger Green 27.078537 68.88056
+2 2 Under Armour Leather Small 2.0 Yes No Messenger Red 16.643760 39.17320
+3 3 Nike Nylon Small 8.0 Yes No Messenger Green 12.937220 80.60793
+4 4 Adidas Canvas Medium 1.0 Yes Yes Messenger Green 17.749338 86.02312
+In [6]:
+test_data.head()
+Out[6]:
+id Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg)
+0 300000 Puma Leather Small 2.0 No No Tote Green 20.671147
+1 300001 Nike Canvas Medium 7.0 No Yes Backpack Green 13.564105
+2 300002 Adidas Canvas Large 9.0 No Yes Messenger Blue 11.809799
+3 300003 Adidas Nylon Large 1.0 Yes No Messenger Green 18.477036
+4 300004 NaN Nylon Large 2.0 Yes Yes Tote Black 9.907953
+In [7]:
+original_data.head()
+Out[7]:
+Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 Jansport Nylon Small 2.0 No Yes Backpack Green 13.340058 143.445135
+1 Under Armour Nylon Large 4.0 Yes Yes Tote Pink 5.918030 72.086319
+2 Nike Nylon Large NaN No Yes Messenger Red 24.088386 29.699631
+3 Nike Nylon Small 1.0 Yes No Messenger Pink 5.000000 27.181990
+4 Under Armour Leather Small 8.0 Yes No NaN Black 11.258172 71.953236
+unfold_moreShow hidden code
+Training Data:
+Number of Rows: 300000
+Number of Columns: 11
+
+Test Data:
+Number of Rows: 200000
+Number of Columns: 10
+
+Original Data:
+Number of Rows: 52500
+Number of Columns: 10
+unfold_moreShow hidden code
+Out[9]:
+Feature [TRAIN] No. of Missing Values [TRAIN] % of Missing Values [TEST] No.of Missing Values [TEST] % of Missing Values [ORIGINAL] No.of Missing Values [ORIGINAL] % of Missing Values No. of Unique Values[FROM TRAIN] DataType
+0 id 0 0.000000 0.0 0.0000 NaN NaN 300000 int64
+1 Brand 9705 3.235000 6227.0 3.1135 2625.0 5.0 5 object
+2 Material 8347 2.782333 5613.0 2.8065 2625.0 5.0 4 object
+3 Size 6595 2.198333 4381.0 2.1905 2625.0 5.0 3 object
+4 Compartments 0 0.000000 0.0 0.0000 2625.0 5.0 10 float64
+5 Laptop Compartment 7444 2.481333 4962.0 2.4810 2625.0 5.0 2 object
+6 Waterproof 7050 2.350000 4811.0 2.4055 2625.0 5.0 2 object
+7 Style 7970 2.656667 5153.0 2.5765 2625.0 5.0 3 object
+8 Color 9950 3.316667 6785.0 3.3925 2625.0 5.0 6 object
+9 Weight Capacity (kg) 138 0.046000 77.0 0.0385 2625.0 5.0 181596 float64
+10 Price 0 0.000000 NaN NaN 2625.0 5.0 48212 float64
+unfold_moreShow hidden code
+Number of duplicate rows in train_data: 0
+Number of duplicate rows in test_data: 0
+Number of duplicate rows in original_data: 2
+unfold_moreShow hidden code
+Out[11]:
+count mean std min 25% 50% 75% max
+id 300000.0 149999.500000 86602.684716 0.0 74999.750000 149999.500000 224999.250000 299999.0
+Compartments 300000.0 5.443590 2.890766 1.0 3.000000 5.000000 8.000000 10.0
+Weight Capacity (kg) 299862.0 18.029994 6.966914 5.0 12.097867 18.068614 24.002375 30.0
+Price 300000.0 81.411107 39.039340 15.0 47.384620 80.956120 115.018160 150.0
+📊 Dataset Observations
+
+📌 Dataset Shape
+Training Data: 300,000 rows × 11 columns
+Test Data: 200,000 rows × 10 columns
+Original Data: 52,500 rows × 10 columns
+
+📉 Missing Values Analysis
+Several features contain missing values in both the training and test sets. Proper handling of these missing values is crucial for maintaining data integrity and improving model performance. Below are the key observations:
+Color: ~3.32% missing in train, ~3.39% in test
+Brand: ~3.24% missing in train, ~3.11% in test
+Material: ~2.78% missing in train, ~2.81% in test
+Size: ~2.20% missing in train, ~2.19% in test
+Style: ~2.66% missing in train, ~2.58% in test
+Laptop Compartment: ~2.48% missing in train, ~2.48% in test
+Waterproof: ~2.35% missing in train, ~2.41% in test
+Weight Capacity (kg): ~0.05% missing in train, ~0.04% in test
+Some features such as Compartments and Price have no missing values in the training set, while others like Original Data show variations in missing data proportions.
+Strategies such as imputation (mean, median, mode) or predictive modeling can be applied to handle these missing values appropriately.
+
+🧐 Key Observations on Data
+ID: A unique identifier for each backpack.
+Brand, Material, Size, Style: Categorical variables that require encoding for machine learning models.
+Compartments: Numeric, ranges from 1 to 10.
+Laptop Compartment & Waterproof: Binary categorical features (Yes/No).
+Color: 6 unique values, with missing data.
+Weight Capacity (kg): A numerical feature with a wide range, possibly requiring scaling.
+Price: The target variable in the training set, ranging from 15 to 150.
+
+📊 Summary Statistics
+Compartments: Mean: ~5.44, Min: 1, Max: 10.
+Weight Capacity (kg): Mean: ~18.03, Min: 5, Max: 30.
+Price: Mean: ~81.41, Min: 15, Max: 150.
+
+🔍 Key Takeaways
+The dataset includes categorical and numerical features, requiring different preprocessing steps.
+Handling missing values in categorical variables will be a priority.
+Weight Capacity and Price have relatively wide distributions, suggesting possible feature scaling or transformation.
+Feature engineering on categorical variables (like Brand and Material) may improve model performance.
+
+[3] 💡 Exploratory Data Analysis (EDA)
+[3] 📈💡EDA
+Exploratory Data Analysis (EDA) is like detective work for data! 🕵️‍♂️ It helps us understand patterns, detect anomalies, and uncover relationships before diving into modeling. Through EDA, we can visualize, clean, and transform the dataset in meaningful ways.
+🏗️ What We'll Do in Our EDA:
+1️⃣ Numerical Feature Analysis 📊
+We'll use boxplots to check for outliers and distribution shape.
+Histograms will help us visualize how the numerical data is spread.
+2️⃣ Categorical Feature Analysis 🔠
+Countplots will show the frequency of each category.
+Pie charts will help us understand the proportion of different categories.
+3️⃣ Target Variable Analysis 🎯
+Since the target variable is continuous, we'll use histograms to see its distribution.
+Boxplots will help detect any extreme values or patterns.
+📝 NOTE: Some features that appear as numerical in the dataset are actually more categorical in nature (since they have very few unique values). We’ll treat them accordingly to ensure meaningful insights!
+unfold_moreShow hidden code
+[3.1] Numerical Feature Analysis
+unfold_moreShow hidden code
+[3.2] Categorical Feature Analysis
+unfold_moreShow hidden code
+[3.3] Target Feature Analysis
+unfold_moreShow hidden code
+[3.4] Bivariate Analysis
+unfold_moreShow hidden code
+[4] 🛠️ Data Preprocessing
+[4] 🛠️🧹 Data Preprocessing
+In [17]:
+# Drop null values from original_data
+original_data = original_data.dropna()
+
+# Print the count of null values in original_data
+print(original_data.isnull().sum())
+
+# Combine original_data with train_data
+train_data = pd.concat([train_data, original_data], axis=0).reset_index(drop=True)
+unfold_moreShow hidden output
+[4.1] Data Imputation (Handling missing values)
+Understanding Each Feature and Missing Data Handling
+1️⃣ Brand (~3.24% missing in train, ~3.11% in test)
+Unique Values: Jansport, Under Armour, Nike, Adidas, Puma, NaN
+Imputation Strategy: Since it's categorical with only 5 unique brands, we can impute missing values with the mode (most frequent brand).
+2️⃣ Material (~2.78% missing in train, ~2.81% in test)
+Unique Values: Leather, Canvas, Nylon, Polyester, NaN
+Imputation Strategy: Mode imputation works best here since materials are limited categories.
+3️⃣ Size (~2.20% missing in train, ~2.19% in test)
+Unique Values: Medium, Small, Large, NaN
+Imputation Strategy: Since it's a well-defined categorical variable, we use mode imputation.
+4️⃣ Compartments (✅ No missing values)
+Unique Values: 10 unique numerical values
+Imputation Strategy: ✅ No action needed.
+5️⃣ Laptop Compartment (~2.48% missing in train, ~2.48% in test)
+Unique Values: Yes, No, NaN
+Imputation Strategy: Since it's a binary categorical variable, we use mode imputation.
+6️⃣ Waterproof (~2.35% missing in train, ~2.41% in test)
+Unique Values: Yes, No, NaN
+Imputation Strategy: Mode imputation is best.
+7️⃣ Style (~2.66% missing in train, ~2.58% in test)
+Unique Values: Tote, Messenger, Backpack, NaN
+Imputation Strategy: Mode imputation.
+8️⃣ Color (~3.32% missing in train, ~3.39% in test)
+Unique Values: Black, Green, Red, Blue, Gray, Pink, NaN
+Imputation Strategy: Mode imputation.
+9️⃣ Weight Capacity (kg) (~0.05% missing in train, ~0.04% in test)
+Unique Values: Numeric
+Imputation Strategy: Since it is a continuous numerical variable, we use median imputation to prevent extreme values from affecting the distribution.
+In [18]:
+# Define imputation strategies
+categorical_features = ["Brand", "Material", "Size", "Laptop Compartment", "Waterproof", "Style", "Color"]
+numerical_features = ["Weight Capacity (kg)"]
+
+# Fill categorical missing values with mode (most frequent value)
+for col in categorical_features:
+    train_data[col].fillna(train_data[col].mode()[0], inplace=True)
+    test_data[col].fillna(test_data[col].mode()[0], inplace=True)
+
+# Fill numerical missing values with median
+for col in numerical_features:
+    train_data[col].fillna(train_data[col].median(), inplace=True)
+    test_data[col].fillna(test_data[col].median(), inplace=True)
+[4.2] Feature Engineering
+Imagine you're making a smoothie. You have raw ingredients like bananas, strawberries, and milk. But instead of using them as they are, you blend them together to create a delicious, more useful drink. 🎉
+Feature extraction in Machine Learning works the same way! Instead of using raw data directly, we combine, transform, or derive new features to make the data more meaningful and powerful for prediction models.
+🔥 Why Feature Extraction is Important?
+Helps the model understand relationships better.
+Reduces noise by focusing on important aspects.
+Improves prediction accuracy by making data more useful.
+Helps in dimensionality reduction (fewer, better features = better performance).
+In [19]:
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+
+def perform_feature_engineering(df):
+    # Brand Material Interaction - Certain materials may be common for specific brands
+    df['Brand_Material'] = df['Brand'] + '_' + df['Material']
+
+    # Brand & Size Interaction - Some brands may produce only specific sizes
+    df['Brand_Size'] = df['Brand'] + '_' + df['Size']
+
+    # Has Laptop Compartment - Convert Yes/No to 1/0 for easier analysis
+    df['Has_Laptop_Compartment'] = df['Laptop Compartment'].map({'Yes': 1, 'No': 0})
+
+    # Is Waterproof - Convert Yes/No to 1/0 for easier analysis
+    df['Is_Waterproof'] = df['Waterproof'].map({'Yes': 1, 'No': 0})
+
+    # Compartments Binning - Group compartments into categories
+    df['Compartments_Category'] = pd.cut(df['Compartments'], bins=[0, 2, 5, 10, np.inf], labels=['Few', 'Moderate', 'Many', 'Very Many'])
+
+    # Weight Capacity Ratio - Normalize weight capacity using the max value
+    df['Weight_Capacity_Ratio'] = df['Weight Capacity (kg)'] / df['Weight Capacity (kg)'].max()
+
+    # Interaction Feature: Weight vs. Compartments - Some bags may hold more with less compartments
+    df['Weight_to_Compartments'] = df['Weight Capacity (kg)'] / (df['Compartments'] + 1)  # Avoid division by zero
+
+    # Style and Size Interaction - Certain styles may correlate with sizes
+    df['Style_Size'] = df['Style'] + '_' + df['Size']
+
+    return df
+
+# Apply the function to the training data
+train_data = perform_feature_engineering(train_data)
+
+# Apply the function to the test data
+test_data = perform_feature_engineering(test_data)
+unfold_moreShow hidden code
+[4.3] Outlier Detection
+Imagine you’re a teacher grading a math test. Most students score between 60 and 90, but one student scores 5 and another scores 100. These are outliers—extreme values that don’t follow the usual trend. 📊
+Outlier detection helps us identify and handle these unusual values so that they don’t mislead our models.
+🔥 Why is Outlier Detection Important?
+Prevents models from being biased by extreme values.
+Improves accuracy by focusing on realistic data.
+Avoids overfitting, where the model learns from noise instead of real patterns.
+Helps in feature scaling, ensuring values are within a reasonable range.
+📉 Outlier Detection in Action! (Using IQR)
+One of the most common methods for detecting outliers is the Interquartile Range (IQR) method.
+Here’s how it works:
+Find Q1 (10th percentile) and Q3 (90th percentile) → These define the middle range of the data.
+Calculate the Interquartile Range (IQR):
+IQR = Q3 - Q1
+Define Lower and Upper Boundaries:
+Lower Bound = Q1 - 1.5 IQR Upper Bound = Q3 + 1.5 IQR
+Anything outside these bounds is considered an outlier! 🚨
+unfold_moreShow hidden code
+Rows deleted for Weight Capacity (kg): 0
+Rows deleted for Weight_Capacity_Ratio: 0
+Rows deleted for Weight_to_Compartments: 5158
+Total rows deleted: 5158
+In [22]:
+y = train_data['Price']
+[4.4] Transformation of Distributions
+Sometimes, numerical features in a dataset are highly skewed, meaning their distribution is not symmetrical.
+A skewed distribution can negatively impact machine learning models, especially those that assume normality (like linear regression).
+🔥 Why Do We Transform Skewed Data?
+Improves model performance by making data closer to a normal distribution.
+Reduces the impact of extreme values (outliers).
+Enhances interpretability of data for statistical analysis.
+unfold_moreShow hidden code
+Features to be transformed (skewness > 0.75):
+array([], dtype=object)
+In [24]:
+# [FOR TEST]
+# Identify features with skewness greater than 0.75
+skewed_features = test_data[numerical_variables].skew()[test_data[numerical_variables].skew() > 0.75].index.values
+
+# Print the list of variables to be transformed
+print("Features to be transformed (skewness > 0.75):")
+display(skewed_features)
+
+# Plot skewed features before transformation
+for feature in skewed_features:
+    plt.figure(figsize=(8, 4))
+    sns.histplot(test_data[feature], bins=50, kde=True, color='blue')
+    plt.title(f'Distribution of {feature} before log transformation')
+    plt.show()
+
+# Apply log1p transformation to skewed features
+test_data[skewed_features] = np.log1p(test_data[skewed_features])
+Features to be transformed (skewness > 0.75):
+array([], dtype=object)
+unfold_moreShow hidden code
+[4.4] Feature Encoding
+Imagine you're teaching a robot about colors. It doesn’t understand words like "Red" or "Blue", but it understands numbers! 🤖
+Feature encoding helps us convert categorical data into a format that machine learning models can understand. 🚀
+🔥 Why Feature Encoding?
+ML models work with numbers, not text.
+Helps in handling categorical data efficiently.
+Reduces complexity and improves model performance.
+In [26]:
+# Selecting specific columns for encoding
+columns_to_encode = ['Brand', 'Material', 'Size', 'Laptop Compartment','Waterproof', 'Style', 'Color','Brand_Material', 'Brand_Size', 'Has_Laptop_Compartment','Is_Waterproof', 'Compartments_Category', 'Style_Size']
+train_data_to_encode = train_data[columns_to_encode]
+test_data_to_encode = test_data[columns_to_encode]
+
+# Dropping selected columns for scaling
+train_data_to_scale = train_data.drop(columns_to_encode, axis=1)
+test_data_to_scale = test_data.drop(columns_to_encode, axis=1)
+
+train_data_encoded = pd.get_dummies(train_data_to_encode, columns=columns_to_encode, drop_first=True)
+test_data_encoded = pd.get_dummies(test_data_to_encode, columns=columns_to_encode, drop_first=True)
+In [27]:
+train_data_encoded.head()
+Out[27]:
+Brand_Jansport Brand_Nike Brand_Puma Brand_Under Armour Material_Leather Material_Nylon Material_Polyester Size_Medium Size_Small Laptop Compartment_Yes ... Compartments_Category_Many Compartments_Category_Very Many Style_Size_Backpack_Medium Style_Size_Backpack_Small Style_Size_Messenger_Large Style_Size_Messenger_Medium Style_Size_Messenger_Small Style_Size_Tote_Large Style_Size_Tote_Medium Style_Size_Tote_Small
+0 True False False False True False False True False True ... True False False False False False False False True False
+1 True False False False False False False False True True ... True False False False False False True False False False
+2 False False False True True False False False True True ... False False False False False False True False False False
+3 False True False False False True False False True True ... True False False False False False True False False False
+4 False False False False False False False True False True ... False False False False False True False False False False
+5 rows × 64 columns
+In [28]:
+test_data_encoded.head()
+Out[28]:
+Brand_Jansport Brand_Nike Brand_Puma Brand_Under Armour Material_Leather Material_Nylon Material_Polyester Size_Medium Size_Small Laptop Compartment_Yes ... Compartments_Category_Many Compartments_Category_Very Many Style_Size_Backpack_Medium Style_Size_Backpack_Small Style_Size_Messenger_Large Style_Size_Messenger_Medium Style_Size_Messenger_Small Style_Size_Tote_Large Style_Size_Tote_Medium Style_Size_Tote_Small
+0 False False True False True False False False True False ... False False False False False False False False False True
+1 False True False False False False False True False False ... True False True False False False False False False False
+2 False False False False False False False False False False ... True False False False True False False False False False
+3 False False False False False True False False False True ... False False False False True False False False False False
+4 False False False False False True False False False True ... False False False False False False False True False False
+5 rows × 64 columns
+unfold_moreShow hidden markdown
+Imagine you're comparing the height of buildings and the weight of apples. One is in meters, the other in grams—they have completely different scales! 📏🍏
+Feature scaling helps us standardize numerical data so that all features have a similar range, preventing models from favoring one over another.
+🔥 Why Feature Scaling?
+Prevents bias toward larger values (e.g., Weight Capacity (kg) vs Price).
+Improves model convergence (especially for gradient-based algorithms like Neural Networks & Logistic Regression).
+Enhances performance of distance-based models (like KNN, SVM).
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+Out[30]:
+Compartments Weight Capacity (kg) Weight_Capacity_Ratio Weight_to_Compartments
+0 0.666667 0.264469 0.264469 0.077850
+1 1.000000 0.883141 0.883141 0.156738
+2 0.111111 0.465750 0.465750 0.397742
+3 0.777778 0.317489 0.317489 0.076757
+4 0.000000 0.509974 0.509974 0.657529
+In [31]:
+scaled_test_df.head()
+Out[31]:
+Compartments Weight Capacity (kg) Weight_Capacity_Ratio Weight_to_Compartments
+0 0.111111 0.626846 0.626846 0.502575
+1 0.666667 0.342564 0.342564 0.096907
+2 0.888889 0.272392 0.272392 0.056727
+3 0.000000 0.539081 0.539081 0.685942
+4 0.111111 0.196318 0.196318 0.222409
+In [32]:
+# Concatenate train datasets
+train_data_combined = pd.concat([train_data_encoded.reset_index(drop=True), scaled_train_df.reset_index(drop=True)], axis=1)
+
+# Concatenate test datasets
+test_data_combined = pd.concat([test_data_encoded.reset_index(drop=True), scaled_test_df.reset_index(drop=True)], axis=1)
+In [33]:
+train_data_combined.head()
+Out[33]:
+Brand_Jansport Brand_Nike Brand_Puma Brand_Under Armour Material_Leather Material_Nylon Material_Polyester Size_Medium Size_Small Laptop Compartment_Yes ... Style_Size_Messenger_Large Style_Size_Messenger_Medium Style_Size_Messenger_Small Style_Size_Tote_Large Style_Size_Tote_Medium Style_Size_Tote_Small Compartments Weight Capacity (kg) Weight_Capacity_Ratio Weight_to_Compartments
+0 True False False False True False False True False True ... False False False False True False 0.666667 0.264469 0.264469 0.077850
+1 True False False False False False False False True True ... False False True False False False 1.000000 0.883141 0.883141 0.156738
+2 False False False True True False False False True True ... False False True False False False 0.111111 0.465750 0.465750 0.397742
+3 False True False False False True False False True True ... False False True False False False 0.777778 0.317489 0.317489 0.076757
+4 False False False False False False False True False True ... False True False False False False 0.000000 0.509974 0.509974 0.657529
+5 rows × 68 columns
+In [34]:
+test_data_combined.head()
+Out[34]:
+Brand_Jansport Brand_Nike Brand_Puma Brand_Under Armour Material_Leather Material_Nylon Material_Polyester Size_Medium Size_Small Laptop Compartment_Yes ... Style_Size_Messenger_Large Style_Size_Messenger_Medium Style_Size_Messenger_Small Style_Size_Tote_Large Style_Size_Tote_Medium Style_Size_Tote_Small Compartments Weight Capacity (kg) Weight_Capacity_Ratio Weight_to_Compartments
+0 False False True False True False False False True False ... False False False False False True 0.111111 0.626846 0.626846 0.502575
+1 False True False False False False False True False False ... False False False False False False 0.666667 0.342564 0.342564 0.096907
+2 False False False False False False False False False False ... True False False False False False 0.888889 0.272392 0.272392 0.056727
+3 False False False False False True False False False True ... True False False False False False 0.000000 0.539081 0.539081 0.685942
+4 False False False False False True False False False True ... False False False True False False 0.111111 0.196318 0.196318 0.222409
+5 rows × 68 columns
+[5] 🏗️ Model Building & Evaluation
+[5] 🏗️📊 Model Building & Evaluation
+In [35]:
+# Define Cross-Validation strategy
+kf = KFold(n_splits=10, shuffle=True, random_state=42)
+
+# CatBoost parameters (optimized)
+catboost_params = {
+    "iterations": 300,
+    "learning_rate": 0.1,
+    "depth": 6,
+    "verbose": 0,
+    "random_seed": 42
+}
+
+# Lists to store results
+rmse_scores = []
+mae_scores = []
+oof_preds = np.zeros(len(train_data_combined))
+test_preds_cb = np.zeros(len(test_data_combined))
+
+# Store feature importances
+feature_importance_list = np.zeros(train_data_combined.shape[1])
+
+# Perform K-Fold Cross Validation
+print("Training using Cross-Validation...")
+for fold, (train_idx, val_idx) in enumerate(kf.split(train_data_combined)):
+    print(f"\nTraining Fold {fold+1}...")
+
+    X_train, X_val = train_data_combined.iloc[train_idx], train_data_combined.iloc[val_idx]
+    y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+    # Define model
+    cb_model = cb.CatBoostRegressor(**catboost_params)
+
+    # Train model
+    cb_model.fit(X_train, y_train, eval_set=(X_val, y_val), early_stopping_rounds=50, verbose=0)
+
+    # Predict on validation set
+    val_preds_cb = cb_model.predict(X_val)
+    oof_preds[val_idx] = val_preds_cb
+
+    # Calculate and store scores
+    rmse = np.sqrt(mean_squared_error(y_val, val_preds_cb))
+    mae = mean_absolute_error(y_val, val_preds_cb)
+    rmse_scores.append(rmse)
+    mae_scores.append(mae)
+
+    print(f"Fold {fold+1} RMSE: {rmse:.4f}, MAE: {mae:.4f}")
+
+    # Accumulate feature importances
+    feature_importance_list += cb_model.get_feature_importance() / kf.get_n_splits()
+
+    # Predict on test data and average across folds
+    test_preds_cb += cb_model.predict(test_data_combined) / kf.get_n_splits()
+Training using Cross-Validation...
+
+Training Fold 1...
+Fold 1 RMSE: 38.9501, MAE: 33.6905
+
+Training Fold 2...
+Fold 2 RMSE: 39.0186, MAE: 33.7532
+
+Training Fold 3...
+Fold 3 RMSE: 38.9054, MAE: 33.6572
+
+Training Fold 4...
+Fold 4 RMSE: 39.1533, MAE: 33.8988
+
+Training Fold 5...
+Fold 5 RMSE: 39.1924, MAE: 33.9253
+
+Training Fold 6...
+Fold 6 RMSE: 39.0387, MAE: 33.8167
+
+Training Fold 7...
+Fold 7 RMSE: 39.0522, MAE: 33.7752
+
+Training Fold 8...
+Fold 8 RMSE: 39.0576, MAE: 33.8812
+
+Training Fold 9...
+Fold 9 RMSE: 39.0328, MAE: 33.7650
+
+Training Fold 10...
+Fold 10 RMSE: 38.9726, MAE: 33.7099
+In [36]:
+# Final evaluation
+cv_rmse = np.mean(rmse_scores)
+cv_mae = np.mean(mae_scores)
+
+print("\nCross-Validation Results:")
+print(f"Mean RMSE: {cv_rmse:.4f}")
+print(f"Mean MAE: {cv_mae:.4f}")
+
+# Plot RMSE per fold if needed
+if len(rmse_scores) > 1:
+    plt.figure(figsize=(8, 5))
+    plt.plot(range(1, len(rmse_scores) + 1), rmse_scores, marker='o', linestyle='--', color='b', label='RMSE per Fold')
+    plt.axhline(y=cv_rmse, color='r', linestyle='-', label=f'Avg RMSE: {cv_rmse:.4f}')
+    plt.xlabel('Fold')
+    plt.ylabel('RMSE')
+    plt.title('RMSE per Fold')
+    plt.legend()
+    plt.show()
+unfold_moreShow hidden output
+unfold_moreShow hidden code
+Selected 28 features out of 68 using threshold: 0.7157
+[5.1] 🔀 Twist: When Simplicity Wins Over Complexity 🤡
+So after hours of hyperparameter tuning, diving deep into EDA, feature engineering, trying fancy transformations, gradient boosting and stacking models – what do we get?
+Not even close to two ridiculously simple baselines. (Credits : @cdeotte)
+🔹 Moral of the Story? 👉 Sometimes, less is more. Or in our case: less effort, better results. 🤡
+And so, in the spirit of humility and with a tear of acceptance, we set aside our sophisticated methods and do the only logical thing – use Chris's baseline method (with a few small tweaks) and generate our final submission.
+In [38]:
+from cuml.preprocessing import TargetEncoder  # RAPIDS Target Encoding
+[5.1.1] Baseline 1 – Global Mean Prediction
+In [39]:
+# Compute the mean price from training data
+train_mean_price = train_data['Price'].mean()
+
+# Apply to test data
+test_data['Baseline1_Price'] = train_mean_price
+
+print(f"Baseline 1 - Mean Price Prediction: {train_mean_price:.2f}")
+Baseline 1 - Mean Price Prediction: 81.45
+[5.1.2] Baseline 2 – Target Encoding on "Weight Capacity (kg)"
+In [40]:
+# Initialize RAPIDS Target Encoder
+TE = TargetEncoder(n_folds=25, smooth=20, split_method='random', stat='mean')
+
+# Fit on training data
+train_data['Baseline2_Price'] = TE.fit_transform(train_data['Weight Capacity (kg)'], train_data['Price'])
+
+# Apply transformation to test data
+test_data['Baseline2_Price'] = TE.transform(test_data['Weight Capacity (kg)'])
+
+print("Target Encoding on Weight Capacity Applied.")
+Target Encoding on Weight Capacity Applied.
+[5.1.3] Enhancement – Averaging of Both Baselines
+In [41]:
+# Blend both predictions - weighted average
+test_data['Final_Price'] = 0.5 * test_data['Baseline1_Price'] + 0.5 * test_data['Baseline2_Price']
+
+print("Final Prediction Created using Blended Approach.")
+Final Prediction Created using Blended Approach.
+In [42]:
+# Create submission file
+submission_df = pd.DataFrame({
+    'id': id_test,
+    'Price': test_data['Final_Price'].values
+})
+
+# Save to CSV
+submission_df.to_csv("submission.csv", index=False)
+
+submission_df.head(5)
+Out[42]:
+id Price
+0 300000 82.992788
+1 300001 80.987193
+2 300002 83.245012
+3 300003 82.150709
+4 300004 81.451179
+📝Submission Notes
+Test Score Notes Version
+39.27571 XGBoost, LightGBM, CatBoost, RandomForest (Simple Average Ensemble) v6
+39.18808 XGBoost, LightGBM, CatBoost, RandomForest (Weighted Average Ensemble) v11
+39.18955 XGBoost, LightGBM, CatBoost, RandomForest (Weighted Average Ensemble with Feature Importance) v12
+39.18618 XGBoost, LightGBM, CatBoost, RandomForest (Weighted Average Ensemble with Feature Importance) v13
+39.15355 ONLY CatBoost v14
+39.14376 ONLY CatBoost w 10 fold CV v18
+39.14428 ONLY CatBoost w 8 fold CV and Feature Selection v20
+39.14335 ONLY CatBoost w 8 fold CV, Feature Selection and Outlier Removal (10%) v21
+39.14211 ONLY CatBoost w 8 fold CV, Feature Selection (5% of highest)and Outlier Removal (10%) v22
+- Average of Two Simple Baselines v23
+🙌 Thank You!
+Thanks for reading! 💙 If you have any suggestions, feel free to drop a comment – I’m eager to learn and grow in this amazing community! 🌱 I’ll be continuously updating this notebook with feature engineering, modeling, and detailed EDA observations for this competition.
+📢 If you found this helpful, please upvote to support! 👍 Happy coding and best of luck! 🚀😊

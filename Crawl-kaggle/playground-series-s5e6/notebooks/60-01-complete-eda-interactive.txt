@@ -1,0 +1,259 @@
+If you want see the interactive version of the code, please see versions 1 and 2. THe interactive part makes the code really heavy, so I have commented them out in version 3 and added mere screenshots.
+For interactive visuals refer versions 1 and 3
+Overall Insight
+The dataset is clean, balanced, and low-correlated. Discriminative power comes from:
+Subtle nutrient-level differences (N, P, K and their ratios).
+Interaction of categorical variables (Soil Type × Crop Type).
+Effective solutions will therefore:
+Engineer nutrient ratios and composite categorical encodings.
+Favour non-linear learners (LightGBM, CatBoost, XGBoost, shallow MLP).
+Use solid cross-validation rather than heavy preprocessing or dimensionality reduction.
+Use these insights to shape your feature-engineering roadmap and model selection.
+1. Imports and Global Setup
+In [1]:
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.figure_factory as ff
+import plotly.io as pio
+import seaborn as sns
+
+import gc, os, random, warnings
+
+plt.style.use("ggplot")
+sns.set(font_scale=1.1)
+warnings.filterwarnings("ignore")
+
+RANDOM_STATE = 42
+np.random.seed(RANDOM_STATE)
+random.seed(RANDOM_STATE)
+2. Load Data
+In [2]:
+PATH = "/kaggle/input/playground-series-s5e6"
+train = pd.read_csv(f"{PATH}/train.csv")
+test  = pd.read_csv(f"{PATH}/test.csv")
+
+print("Train shape :", train.shape)
+print("Test  shape :", test.shape)
+display(train.head())
+Train shape : (750000, 10)
+Test  shape : (250000, 9)
+id Temparature Humidity Moisture Soil Type Crop Type Nitrogen Potassium Phosphorous Fertilizer Name
+0 0 37 70 36 Clayey Sugarcane 36 4 5 28-28
+1 1 27 69 65 Sandy Millets 30 6 18 28-28
+2 2 29 63 32 Sandy Millets 24 12 16 17-17-17
+3 3 35 62 54 Sandy Barley 39 12 4 10-26-26
+4 4 35 58 43 Red Paddy 37 2 16 DAP
+Key take-aways
+Train: 750000 × 10 | Test: 250000 × 9
+Target column is Fertilizer Name (7 classes) and appears only in train.
+3. Basic Summary
+In [3]:
+display(train.info())
+display(train.describe(include="all").T.sort_index())
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 750000 entries, 0 to 749999
+Data columns (total 10 columns):
+ #   Column           Non-Null Count   Dtype 
+---  ------           --------------   ----- 
+ 0   id               750000 non-null  int64 
+ 1   Temparature      750000 non-null  int64 
+ 2   Humidity         750000 non-null  int64 
+ 3   Moisture         750000 non-null  int64 
+ 4   Soil Type        750000 non-null  object
+ 5   Crop Type        750000 non-null  object
+ 6   Nitrogen         750000 non-null  int64 
+ 7   Potassium        750000 non-null  int64 
+ 8   Phosphorous      750000 non-null  int64 
+ 9   Fertilizer Name  750000 non-null  object
+dtypes: int64(7), object(3)
+memory usage: 57.2+ MB
+None
+count unique top freq mean std min 25% 50% 75% max
+Crop Type 750000 11 Paddy 85754 NaN NaN NaN NaN NaN NaN NaN
+Fertilizer Name 750000 7 14-35-14 114436 NaN NaN NaN NaN NaN NaN NaN
+Humidity 750000.0 NaN NaN NaN 61.038912 6.647695 50.0 55.0 61.0 67.0 72.0
+Moisture 750000.0 NaN NaN NaN 45.184147 11.794594 25.0 35.0 45.0 55.0 65.0
+Nitrogen 750000.0 NaN NaN NaN 23.093808 11.216125 4.0 13.0 23.0 33.0 42.0
+Phosphorous 750000.0 NaN NaN NaN 21.073227 12.346831 0.0 10.0 21.0 32.0 42.0
+Potassium 750000.0 NaN NaN NaN 9.478296 5.765622 0.0 4.0 9.0 14.0 19.0
+Soil Type 750000 5 Sandy 156710 NaN NaN NaN NaN NaN NaN NaN
+Temparature 750000.0 NaN NaN NaN 31.503565 4.025574 25.0 28.0 32.0 35.0 38.0
+id 750000.0 NaN NaN NaN 374999.5 216506.495284 0.0 187499.75 374999.5 562499.25 749999.0
+Key take-aways
+No missing cells (int64 = 7, object = 3).
+Numeric ranges are compact and integer-valued → scaling is optional.
+Three categoricals: Soil Type, Crop Type, Fertilizer Name (Target).
+4. Missing Value Analysis
+In [4]:
+plt.figure(figsize=(10,3))
+sns.heatmap(train.isna(), cbar=False)
+plt.title("Missing‐value pattern"); plt.show()
+Key take-aways
+Heat-map confirms zero NaNs → no imputation pipeline needed.
+5. Target Analysis
+In [5]:
+target_col = "Fertilizer Name"
+vc = train[target_col].value_counts().sort_values(ascending=False)
+vc_pct = vc / len(train) * 100
+
+fig, ax = plt.subplots(1,2,figsize=(14,4))
+vc.plot.bar(ax=ax[0])
+ax[0].set_title("Absolute counts"); ax[0].set_ylabel("records")
+
+vc_pct.plot.bar(ax=ax[1])
+ax[1].set_title("Percentage share"); ax[1].set_ylabel("% of train")
+plt.suptitle("Target distribution"); plt.show()
+Key take-aways
+Class imbalance is mild (largest ≈ 15 %, smallest ≈ 12 %).
+Macro-averaged metrics or class-weighting won’t be critical.
+6. Categorical Features Ananysis
+In [6]:
+cat_cols = ["Soil Type", "Crop Type"]
+for col in cat_cols:
+    plt.figure(figsize=(8,3))
+    sns.countplot(data=train, x=col, order=train[col].value_counts().index)
+    plt.title(f"{col} distribution"); plt.xticks(rotation=45); plt.show()
+Key take-aways
+5 soil types, near-uniform.
+11 crops; Paddy has the largest share but imbalance stays modest.
+7. Numerical Features Analysis
+7.1 - Distribution
+In [7]:
+num_cols = train.select_dtypes(include="number").columns.drop("id")
+ncols = 3
+nrows = int(np.ceil(len(num_cols) / ncols))
+fig, axes = plt.subplots(nrows, ncols, figsize=(16, nrows*3))
+axes = axes.flatten()
+
+for ax, col in zip(axes, num_cols):
+    sns.histplot(train[col], kde=True, ax=ax)
+    ax.set_title(col)
+
+plt.tight_layout(); plt.show()
+Key take-aways
+Most variables span limited integer bands with quasi-uniform histograms.
+No heavy skew/outliers → tree-based models fine without transformation.
+7.2 - Features vs Target
+In [8]:
+for col in num_cols:
+    plt.figure(figsize=(14,6))
+    sns.boxplot(
+        data=train,
+        x=target_col, y=col,
+        order=vc.index
+    )
+    plt.title(f"{col} by Fertilizer")
+    plt.xticks(rotation=45)
+    plt.show()
+Key take-aways
+Nutrient columns (N, P, K) show noticeable median shifts by fertilizer → strong predictors.
+Climate variables overlap more → may need interactions with soil/crop to add power.
+8. Spearman Correlation
+In [9]:
+corr = train[num_cols].corr(method="spearman")
+plt.figure(figsize=(9,7))
+sns.heatmap(corr, cmap="coolwarm", annot=True, square=True)
+plt.title("Spearman correlation")
+plt.show()
+Key take-aways
+Correlations among numerics are all |ρ| < 0.15 → multicollinearity negligible.
+Each numeric likely contributes independent signal.
+9. Pairwise Relationships
+In [10]:
+sns.pairplot(
+    train[num_cols.union([target_col])],
+    hue=target_col, corner=True, diag_kind="kde",
+    height=1.5, plot_kws=dict(alpha=.3, linewidth=0)
+)
+plt.suptitle("Pairwise relationships (sample)", y=1.02)
+plt.show()
+Key take-aways
+Fertilizer clusters overlap strongly in most 2-D projections → linear models will struggle.
+Suggests gains from non-linear learners (trees, boosted ensembles, NN).
+10. Fertilizer Share by (Soil Type, Crop Type)
+In [11]:
+ct = pd.crosstab(
+    [train["Soil Type"], train["Crop Type"]],
+    train[target_col],
+    normalize="index"
+)
+plt.figure(figsize=(14,6))
+sns.heatmap(ct, cmap="YlGnBu", linewidths=.3)
+plt.title("Fertilizer share by (Soil, Crop)")
+plt.ylabel("(Soil, Crop)")
+plt.show()
+Key take-aways
+Distinct preference patterns (e.g. Black-Maize → 10-26-26).
+Encoding the (soil, crop) interaction (e.g. one-hot of the tuple or target-encoding) is promising.
+11. Interactive Visuals
+In [12]:
+pio.renderers.default = "kaggle"
+11.1 - Stacked histograms for Temp/Humidity/Moisture/N/P/K
+In [13]:
+# for col in num_cols:
+#     fig = px.histogram(train, x=col, nbins=50, color=target_col,
+#                        title=f"{col} distribution by fertilizer", opacity=0.7)
+#     fig.update_layout(bargap=0.05)
+#     fig.show()
+Key take-aways
+Small yet consistent class-specific density shifts across bins.
+Class-conditional statistics (e.g., per-fertiliser z-scores) may boost separation.
+11.2 - Scatter Matrix
+In [14]:
+# fig = px.scatter_matrix(
+#     train, dimensions=num_cols, color=target_col,
+#     title="Scatter-matrix", height=900, width=900
+# )
+# fig.update_traces(diagonal_visible=False, showupperhalf=False)
+# fig.show()
+11.3 - Sunburst (Fertiliser → Soil → Crop)
+In [15]:
+# fig = px.sunburst(
+#     train,
+#     path=[target_col, "Soil Type", "Crop Type"],
+#     title="Nested proportion of Fertilizer / Soil / Crop",
+# )
+# fig.show()
+Key take-aways
+Each fertiliser serves all soils/crops but with different weights.
+Confirms hierarchical structure; nested categorical features are valuable.
+11.4 - Fertiliser share by (Soil, Crop) heat-map
+In [16]:
+# fig = ff.create_annotated_heatmap(
+#     z=np.around(corr.values,3),
+#     x=corr.columns.tolist(), y=corr.index.tolist(),
+#     colorscale="Viridis", showscale=True, hoverinfo="z"
+# )
+# fig.update_layout(title_text="Spearman correlation (interactive)")
+# fig.show()
+Key take-aways
+Distinct preference patterns (e.g., Loamy × Oil Seeds leans to 28-28).
+Encoding (Soil, Crop) interactions or target encoding can add predictive power.
+11.5 - 3D Scatter (Temperature vs Humidity vs Moisture)
+In [17]:
+# fig = px.scatter_3d(
+#     train, x="Temparature", y="Humidity", z="Moisture",
+#     color=target_col, opacity=0.5,
+#     title="3-D micro-climate vs. fertilizer (sample)"
+# )
+# fig.show()
+Key take-aways
+Points form a dense cube; classes barely separate in climate space alone.
+Pure climate features are insufficient; must combine with nutrients and categorical context.
+Conclusion (Modelling Road-map)
+Finding Impact on Modelling
+No missing values Simple pipeline (no imputer).
+Mild class imbalance Standard multi-class log-loss is acceptable.
+Nutrient medians differ by fertilizer These features are predictive; try ratio features (N\:P\:K).
+Soil × Crop interaction is strong Include combined categorical or target-encoded pair.
+Low feature correlations Tree ensembles can exploit each variable independently.
+Overlap in 2-D space Non-linear learners or stacked models preferred over pure linear.
+One-hot encode Soil Type, Crop Type, plus a composite (Soil|Crop) token.
+Train a LightGBM/XGBoost multi-class model (depth ≤ 6, cat-loss handling).
+Ensemble with a simple MLP that ingests scaled numerics and embedded categoricals.
+Evaluate with stratified k-fold, optimise macro-F1 or log-loss.
+These steps build on the data insights surfaced in this EDA and align with winning strategies observed in recent Kaggle multi-class competitions.
+In [ ]:
+ 

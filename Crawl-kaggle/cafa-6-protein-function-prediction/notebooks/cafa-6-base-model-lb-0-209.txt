@@ -1,0 +1,1205 @@
+In [1]:
+# TSV FILES
+SAMPLE_SUBMISSION_TSV = "/kaggle/input/cafa-6-protein-function-prediction/sample_submission.tsv"
+IA_TSV = "/kaggle/input/cafa-6-protein-function-prediction/IA.tsv"
+TESTSUPERSET_TAXON_LIST_TSV = "/kaggle/input/cafa-6-protein-function-prediction/Test/testsuperset-taxon-list.tsv"
+TRAIN_TERMS_TSV = "/kaggle/input/cafa-6-protein-function-prediction/Train/train_terms.tsv"
+TRAIN_TAXONOMY_TSV = "/kaggle/input/cafa-6-protein-function-prediction/Train/train_taxonomy.tsv"
+
+# FASTA FILES
+TESTSUPERSET_FASTA = "/kaggle/input/cafa-6-protein-function-prediction/Test/testsuperset.fasta"
+TRAIN_SEQUENCES_FASTA = "/kaggle/input/cafa-6-protein-function-prediction/Train/train_sequences.fasta"
+
+# OBO FILE
+GO_BASIC_OBO = "/kaggle/input/cafa-6-protein-function-prediction/Train/go-basic.obo"
+
+# OUTPUT FILE
+OUTPUT_TSV = "/kaggle/working/submission.tsv"
+
+print("Files are listed!!!")
+Files are listed!!!
+Config
+In [2]:
+# ------------------------------------------------------------
+# CONFIG
+# ------------------------------------------------------------
+CONFIG = {
+    "TRAIN_FASTA": TRAIN_SEQUENCES_FASTA,
+    "TRAIN_TERMS": TRAIN_TERMS_TSV,
+    "TRAIN_TAXONOMY": TRAIN_TAXONOMY_TSV,
+    "GO_OBO": GO_BASIC_OBO,
+    "IA_FILE": IA_TSV,
+    "TEST_FASTA": TESTSUPERSET_FASTA,
+    "TEST_TAXON_LIST": TESTSUPERSET_TAXON_LIST_TSV,
+    "SAMPLE_SUBMISSION": SAMPLE_SUBMISSION_TSV,
+    "OUTPUT_SUBMISSION": OUTPUT_TSV,
+    # Embedding settings:
+    "USE_PLM_MODEL": False,  # set False to force TF-IDF fallback
+    # If using TF/HF transformer model, either place checkpoint in dataset and point here,
+    # or use model name if internet enabled. On Kaggle usually you must provide local model.
+    "PLM_MODEL_NAME_OR_PATH": "/kaggle/input/esm-2/keras/esm2_t6_8m/1",  
+    "PLM_BATCH_SIZE": 8,
+    # Memory & batch sizes for streaming
+    "EMBED_BATCH_SIZE": 8,          # batch size used when embedding (train & test)
+    "PREDICT_BATCH_SIZE": 64,       # how many examples to predict at once (fit to memory)
+    # Label limitation to keep model small
+    "TOP_K_LABELS": 3000,
+    # Model training hyperparams
+    "RANDOM_SEED": 42,
+    "BATCH_SIZE": 32,
+    "EPOCHS": 10,
+    "LEARNING_RATE": 1e-3,
+    "HIDDEN_UNITS": 512,
+    "DROPOUT": 0.2,
+    # Submission postprocessing
+    "TOP_K_PER_PROTEIN": 200,
+    "GLOBAL_THRESHOLD_SEARCH": True,
+    "THRESHOLD_GRID": [i/100 for i in range(1, 51)],
+    # Propagation
+    "PROPAGATE_TRAIN_LABELS": True,
+    "PROPAGATE_PREDICTIONS": True,
+
+    # On-disk paths for memmaps/embeddings
+    "TRAIN_EMB_MEMMAP": "/kaggle/working/train_embs.memmap",
+    "TRAIN_EMB_SHAPE_FILE": "/kaggle/working/train_embs_shape.npy",
+}
+
+
+print("config...")
+config...
+In [3]:
+# ------------------------------------------------------------
+# imports
+# ------------------------------------------------------------
+import os, gc, math, random, sys, time
+from collections import defaultdict, Counter
+from typing import List, Dict, Tuple, Set
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+import tensorflow as tf
+from tensorflow.keras import layers, models, callbacks, optimizers, losses, metrics
+import esm   # after installing from GitHub
+import torch
+import numpy as np
+import gc
+from pathlib import Path
+
+# optional PLM imports
+try:
+    import torch
+    from transformers import AutoTokenizer, AutoModel
+    TORCH_AVAILABLE = True
+except Exception as e:
+    TORCH_AVAILABLE = False
+
+# deterministic seeds
+random.seed(CONFIG["RANDOM_SEED"])
+np.random.seed(CONFIG["RANDOM_SEED"])
+tf.random.set_seed(CONFIG["RANDOM_SEED"])
+
+print("import done!!!")
+2025-10-17 11:39:03.871504: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:477] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1760701144.295213      34 cuda_dnn.cc:8310] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1760701144.414301      34 cuda_blas.cc:1418] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+import done!!!
+In [4]:
+# ------------------------------------------------------------
+# tiny utils for FASTA/TSV/OBO parsing 
+# ------------------------------------------------------------
+def read_fasta(path: str) -> Dict[str, str]:
+    seqs = {}
+    with open(path, "r") as f:
+        pid = None; seq_parts = []
+        for line in f:
+            line=line.strip()
+            if line.startswith(">"):
+                if pid: seqs[pid] = "".join(seq_parts)
+                header=line[1:].split()[0]
+                if "|" in header:
+                    parts=header.split("|"); pid = parts[1] if len(parts)>=2 else header
+                else:
+                    pid = header
+                seq_parts=[]
+            else:
+                seq_parts.append(line.strip())
+        if pid: seqs[pid] = "".join(seq_parts)
+    print(f"[io] Read {len(seqs)} sequences from {path}")
+    return seqs
+
+def read_train_terms(path: str) -> Dict[str, List[str]]:
+    mapping = defaultdict(list)
+    df = pd.read_csv(path, sep="\t", header=None, names=["protein","go","ont"], dtype=str)
+    for _, r in df.iterrows(): mapping[r.protein].append(r.go)
+    print(f"[io] Read training annotations for {len(mapping)} proteins from {path}")
+    return mapping
+
+def parse_obo(go_obo_path: str) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]]]:
+    parents = defaultdict(set); children = defaultdict(set)
+    if not os.path.exists(go_obo_path): return parents, children
+    with open(go_obo_path,"r") as f:
+        cur_id=None
+        for line in f:
+            line=line.strip()
+            if line=="[Term]": cur_id=None
+            elif line.startswith("id: "): cur_id=line.split("id: ")[1].strip()
+            elif line.startswith("is_a: "):
+                pid=line.split()[1].strip()
+                if cur_id: parents[cur_id].add(pid); children[pid].add(cur_id)
+            elif line.startswith("relationship: part_of "):
+                parts=line.split(); 
+                if len(parts)>=3:
+                    pid=parts[2].strip()
+                    if cur_id: parents[cur_id].add(pid); children[pid].add(cur_id)
+    print(f"[io] Parsed OBO: {len(parents)} nodes with parents")
+    return parents, children
+
+def get_ancestors(go_id: str, parents: Dict[str, Set[str]]) -> Set[str]:
+    ans=set(); stack=[go_id]
+    while stack:
+        cur=stack.pop()
+        for p in parents.get(cur,[]): 
+            if p not in ans:
+                ans.add(p); stack.append(p)
+    return ans
+In [5]:
+# ------------------------------------------------------------
+# Load the data
+# ------------------------------------------------------------
+train_seqs = read_fasta(CONFIG["TRAIN_FASTA"])
+train_terms = read_train_terms(CONFIG["TRAIN_TERMS"])
+parents_map, children_map = parse_obo(CONFIG["GO_OBO"])
+test_seqs = read_fasta(CONFIG["TEST_FASTA"])
+
+# Keep proteins present in both seq & terms
+train_proteins = [p for p in train_terms.keys() if p in train_seqs]
+print(f"[io] {len(train_proteins)} train proteins with sequences available")
+
+# propagate train labels (optional)
+if CONFIG["PROPAGATE_TRAIN_LABELS"] and parents_map:
+    print("[prep] Propagating train labels up GO graph")
+    propagated={}
+    for p in train_proteins:
+        terms=set(train_terms[p])
+        extra=set()
+        for t in list(terms): extra |= get_ancestors(t, parents_map)
+        propagated[p]=sorted(terms|extra)
+    train_terms = propagated
+
+# choose top-k labels (to control model size)
+all_term_counts = Counter()
+for p in train_proteins: all_term_counts.update(train_terms[p])
+all_terms_sorted = [t for t,_ in all_term_counts.most_common()]
+if CONFIG["TOP_K_LABELS"] is not None:
+    chosen_terms = set(all_terms_sorted[:CONFIG["TOP_K_LABELS"]])
+    print(f"[prep] Restricting to top-{CONFIG['TOP_K_LABELS']} GO terms")
+else:
+    chosen_terms = set(all_terms_sorted)
+print(f"[prep] Using {len(chosen_terms)} target GO terms")
+
+for p in train_proteins:
+    train_terms[p] = [t for t in train_terms[p] if t in chosen_terms]
+
+X_proteins = train_proteins
+y_labels = [train_terms[p] for p in X_proteins]
+
+mlb = MultiLabelBinarizer(classes=sorted(chosen_terms))
+Y = mlb.fit_transform(y_labels).astype(np.float32)
+print("[prep] Label matrix shape:", Y.shape)
+[io] Read 82404 sequences from /kaggle/input/cafa-6-protein-function-prediction/Train/train_sequences.fasta
+[io] Read training annotations for 82405 proteins from /kaggle/input/cafa-6-protein-function-prediction/Train/train_terms.tsv
+[io] Parsed OBO: 40121 nodes with parents
+[io] Read 224309 sequences from /kaggle/input/cafa-6-protein-function-prediction/Test/testsuperset.fasta
+[io] 82404 train proteins with sequences available
+[prep] Propagating train labels up GO graph
+[prep] Restricting to top-3000 GO terms
+[prep] Using 3000 target GO terms
+[prep] Label matrix shape: (82404, 3000)
+In [6]:
+# ------------------------------------------------------------
+# PLM embedding helpers (ESM2); memory-conscious: produce numpy arrays per-batch
+# ------------------------------------------------------------
+def seqs_for_plm_input_esm(seqs: List[str]) -> List[str]:
+    # ESM expects raw sequences (no spaces); we simply uppercase and replace unknowns
+    out=[]
+    for s in seqs:
+        s2 = s.upper().replace("U","X").replace("O","X").replace("B","X").replace("Z","X")
+        out.append(s2)
+    return out
+
+def embed_with_plm_to_memmap(all_seq_ids: List[str],
+                             seqs_dict: Dict[str,str],
+                             memmap_path: str,
+                             batch_size:int=8,
+                             model_name_or_path: str = CONFIG["PLM_MODEL_NAME_OR_PATH"]):
+    """
+    Compute embeddings using the ESM loader and write to disk-backed memmap.
+    Returns memmap object and embedding dimension.
+    This function expects the local directory model_name_or_path to contain the ESM checkpoint
+    produced by the ESM tooling (e.g., esm2_t33_650M_UR50D.pt or a model dir).
+    """
+    if not TORCH_AVAILABLE:
+        raise RuntimeError("Torch not available; cannot load ESM model.")
+
+    model_dir = str(model_name_or_path)
+    if not Path(model_dir).exists():
+        raise FileNotFoundError(f"ESM model path not found: {model_dir}")
+
+    # Try to load via esm loader that understands local formats
+    try:
+        # If model_name_or_path is a directory that contains a model checkpoint,
+        # this loader will try to read it. If it points directly to a .pt file it also works.
+        print(f"[esm] Loading local ESM model from: {model_dir}")
+        model, alphabet = esm.pretrained.load_model_and_alphabet_local(model_dir)
+    except Exception as e:
+        # some ESM checkpoints use slightly different utilities - try the convenience function names:
+        try:
+            # If the user packaged a directory like "esm2_t33_650M_UR50D" that contains model.pt
+            print(f"[esm] load_model_and_alphabet_local failed, attempting esm2 convenience loader...")
+            model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()  # fallback: only works if model files are accessible
+        except Exception as e2:
+            raise RuntimeError("Failed to load ESM model via esm.pretrained. Ensure the directory contains a valid ESM checkpoint.") from e
+
+    model.eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
+    batch_converter = alphabet.get_batch_converter()
+    N = len(all_seq_ids)
+
+    # Determine embedding dimension using a tiny sample (1 sequence)
+    sample_seq = seqs_dict[all_seq_ids[0]]
+    _, _, sample_tokens = batch_converter([(all_seq_ids[0], sample_seq)])
+    sample_tokens = sample_tokens.to(device)
+    with torch.no_grad():
+        results = model(sample_tokens, repr_layers=[model.num_layers], return_contacts=False)
+        # pick the highest repr layer in results
+        repr_keys = sorted(results["representations"].keys())
+        last_layer_key = repr_keys[-1]
+        emb_dim = results["representations"][last_layer_key].shape[-1]
+    # create memmap file on disk (float32)
+    mem = np.memmap(memmap_path, dtype=np.float32, mode="w+", shape=(N, int(emb_dim)))
+
+    idx = 0
+    for i in range(0, N, batch_size):
+        batch_ids = all_seq_ids[i:i+batch_size]
+        # Prepare list of (id, seq) tuples
+        batch_pairs = [(pid, seqs_dict[pid]) for pid in batch_ids]
+        labels, sequences, tokens = batch_converter(batch_pairs)  # tokens: (B, L)
+        tokens = tokens.to(device)
+        with torch.no_grad():
+            results = model(tokens, repr_layers=[model.num_layers], return_contacts=False)
+            repr_keys = sorted(results["representations"].keys())
+            last_layer_key = repr_keys[-1]
+            repr_tensor = results["representations"][last_layer_key].cpu()   # (B, L, C)
+        # For each sequence, slice out residues and mean-pool (drop BOS/EOS token at positions 0 and -1)
+        for j, seq in enumerate(sequences):
+            seq_len = len(seq)
+            # ESM token layout: tokens include BOS at pos 0 and EOS at pos seq_len+1 so we slice 1:seq_len+1
+            seq_repr = repr_tensor[j, 1:seq_len+1, :]   # (seq_len, C)
+            seq_embed = seq_repr.mean(axis=0).numpy().astype(np.float32)
+            mem[idx + j, :] = seq_embed
+        idx += len(batch_ids)
+
+        # free intermediate tensors and empty CUDA cache
+        del tokens, results, repr_tensor, seq_repr, seq_embed
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print(f"[esm] Wrote embeddings {i}..{i+len(batch_ids)} / {N}")
+
+    mem.flush()
+    print(f"[esm] Finished writing memmap to {memmap_path} with dim {emb_dim}")
+    return mem, int(emb_dim)
+In [7]:
+# ------------------------------------------------------------
+# Embedding training set (memmap) OR fallback TF-IDF (also memory-friendly)
+# ------------------------------------------------------------
+USE_PLM = CONFIG["USE_PLM_MODEL"] and TORCH_AVAILABLE
+if USE_PLM:
+    # compute training embeddings to disk memmap to avoid storing huge array in RAM
+    train_ids = X_proteins
+    train_memmap_path = CONFIG["TRAIN_EMB_MEMMAP"]
+    if not os.path.exists(train_memmap_path):
+        print("[plm] Computing train embeddings to memmap. This may take time but keeps RAM low.")
+        train_mem, D = embed_with_plm_to_memmap(train_ids, train_seqs, train_memmap_path,
+                                                batch_size=CONFIG["EMBED_BATCH_SIZE"],
+                                                model_name_or_path=CONFIG["PLM_MODEL_NAME_OR_PATH"])
+        # Save shape info for later reopening
+        np.save(CONFIG["TRAIN_EMB_SHAPE_FILE"], np.array([len(train_ids), D], dtype=np.int64))
+        # Keep mem as memmap object reference
+        emb_train = np.array(train_mem)  # small temporary conversion for training. If too large, we will reopen memmap later.
+        # To be safe, copy to np.float32 if necessary
+        if emb_train.dtype != np.float32: emb_train = emb_train.astype(np.float32)
+        del train_mem; gc.collect()
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+    else:
+        # memmap already exists: load shape and open
+        shape = np.load(CONFIG["TRAIN_EMB_SHAPE_FILE"])
+        Nshape, D = int(shape[0]), int(shape[1])
+        emb_train = np.memmap(train_memmap_path, dtype=np.float32, mode="r", shape=(Nshape, D))
+    embedding_method = "plm"
+else:
+    # TF-IDF fallback (fits in memory usually; if not, you can also memmap)
+    print("[fallback] Using TF-IDF k-mer embeddings for train (memory-friendly for moderate sizes)")
+    def kmers(seq, k=3):
+        return " ".join([seq[i:i+k] for i in range(len(seq)-k+1)])
+    train_texts = [kmers(train_seqs[p], k=3) for p in X_proteins]
+    tfidf = TfidfVectorizer(analyzer="word", token_pattern=r"(?u)\b\w+\b", max_features=20000)
+    emb_train = tfidf.fit_transform(train_texts).astype(np.float32).toarray()
+    embedding_method = "tfidf"
+
+print(f"[embed] Train embeddings: method={embedding_method}, shape={emb_train.shape}, dtype={emb_train.dtype}")
+[fallback] Using TF-IDF k-mer embeddings for train (memory-friendly for moderate sizes)
+[embed] Train embeddings: method=tfidf, shape=(82404, 8558), dtype=float32
+In [8]:
+# ------------------------------------------------------------
+# Train / validation split (we load train embeddings into memory here - if it's too big, we can train with memmap directly)
+# ------------------------------------------------------------
+# If embeddings are memmap and too big, we can load a subset or use a generator; here we assume emb_train fits for training.
+X_emb = emb_train
+y = Y
+X_tr, X_val, y_tr, y_val, prot_tr, prot_val = train_test_split(
+    X_emb, y, X_proteins, test_size=0.15, random_state=CONFIG["RANDOM_SEED"]
+)
+print("[train] shapes:", X_tr.shape, X_val.shape, y_tr.shape, y_val.shape)
+[train] shapes: (70043, 8558) (12361, 8558) (70043, 3000) (12361, 3000)
+In [9]:
+# ------------------------------------------------------------
+# Keras model
+# ------------------------------------------------------------
+D = X_tr.shape[1]; M = y_tr.shape[1]
+def build_model(input_dim, output_dim, hidden_units=512, dropout=0.4, lr=1e-3):
+    inp = layers.Input(shape=(input_dim,))
+    x = layers.Dense(hidden_units, activation="relu")(inp)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(dropout)(x)
+    x = layers.Dense(hidden_units//2, activation="relu")(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(dropout)(x)
+    out = layers.Dense(output_dim, activation="sigmoid")(x)
+    model = models.Model(inp, out)
+    model.compile(optimizer=optimizers.Adam(learning_rate=lr),
+                  loss=losses.BinaryCrossentropy(),
+                  metrics=[metrics.Precision(), metrics.Recall()])
+    return model
+
+model = build_model(D, M, hidden_units=CONFIG["HIDDEN_UNITS"], dropout=CONFIG["DROPOUT"], lr=CONFIG["LEARNING_RATE"])
+model.summary()
+
+es = callbacks.EarlyStopping(monitor="val_loss", patience=3, restore_best_weights=True, verbose=1)
+ckpt_path = "/kaggle/working/best_model.h5"
+mc = callbacks.ModelCheckpoint(ckpt_path, monitor="val_loss", save_best_only=True, verbose=1)
+I0000 00:00:1760701245.957558      34 gpu_device.cc:2022] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 13942 MB memory:  -> device: 0, name: Tesla T4, pci bus id: 0000:00:04.0, compute capability: 7.5
+I0000 00:00:1760701245.958336      34 gpu_device.cc:2022] Created device /job:localhost/replica:0/task:0/device:GPU:1 with 13942 MB memory:  -> device: 1, name: Tesla T4, pci bus id: 0000:00:05.0, compute capability: 7.5
+Model: "functional"
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Layer (type)                    ┃ Output Shape           ┃       Param # ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ input_layer (InputLayer)        │ (None, 8558)           │             0 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ dense (Dense)                   │ (None, 512)            │     4,382,208 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ batch_normalization             │ (None, 512)            │         2,048 │
+│ (BatchNormalization)            │                        │               │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ dropout (Dropout)               │ (None, 512)            │             0 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ dense_1 (Dense)                 │ (None, 256)            │       131,328 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ batch_normalization_1           │ (None, 256)            │         1,024 │
+│ (BatchNormalization)            │                        │               │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ dropout_1 (Dropout)             │ (None, 256)            │             0 │
+├─────────────────────────────────┼────────────────────────┼───────────────┤
+│ dense_2 (Dense)                 │ (None, 3000)           │       771,000 │
+└─────────────────────────────────┴────────────────────────┴───────────────┘
+ Total params: 5,287,608 (20.17 MB)
+ Trainable params: 5,286,072 (20.16 MB)
+ Non-trainable params: 1,536 (6.00 KB)
+In [10]:
+# ------------------------------------------------------------
+# Train
+# ------------------------------------------------------------
+history = model.fit(X_tr, y_tr, validation_data=(X_val, y_val),
+                    epochs=CONFIG["EPOCHS"], batch_size=CONFIG["BATCH_SIZE"],
+                    callbacks=[es, mc], verbose=2)
+Epoch 1/10
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1760701258.899434      77 service.cc:148] XLA service 0x794a7800c6a0 initialized for platform CUDA (this does not guarantee that XLA will be used). Devices:
+I0000 00:00:1760701258.901046      77 service.cc:156]   StreamExecutor device (0): Tesla T4, Compute Capability 7.5
+I0000 00:00:1760701258.901066      77 service.cc:156]   StreamExecutor device (1): Tesla T4, Compute Capability 7.5
+I0000 00:00:1760701259.333248      77 cuda_dnn.cc:529] Loaded cuDNN version 90300
+I0000 00:00:1760701261.540855      77 device_compiler.h:188] Compiled cluster using XLA!  This line is logged at most once for the lifetime of the process.
+Epoch 1: val_loss improved from inf to 0.04521, saving model to /kaggle/working/best_model.h5
+2189/2189 - 18s - 8ms/step - loss: 0.0768 - precision: 0.1392 - recall: 0.1656 - val_loss: 0.0452 - val_precision: 0.6312 - val_recall: 0.1785
+Epoch 2/10
+
+Epoch 2: val_loss improved from 0.04521 to 0.04403, saving model to /kaggle/working/best_model.h5
+2189/2189 - 8s - 4ms/step - loss: 0.0444 - precision: 0.6404 - recall: 0.1816 - val_loss: 0.0440 - val_precision: 0.6368 - val_recall: 0.1896
+Epoch 3/10
+
+Epoch 3: val_loss improved from 0.04403 to 0.04387, saving model to /kaggle/working/best_model.h5
+2189/2189 - 8s - 4ms/step - loss: 0.0415 - precision: 0.6575 - recall: 0.2052 - val_loss: 0.0439 - val_precision: 0.6152 - val_recall: 0.2058
+Epoch 4/10
+
+Epoch 4: val_loss did not improve from 0.04387
+2189/2189 - 8s - 4ms/step - loss: 0.0390 - precision: 0.6708 - recall: 0.2335 - val_loss: 0.0439 - val_precision: 0.6072 - val_recall: 0.2132
+Epoch 5/10
+
+Epoch 5: val_loss did not improve from 0.04387
+2189/2189 - 8s - 4ms/step - loss: 0.0368 - precision: 0.6832 - recall: 0.2650 - val_loss: 0.0445 - val_precision: 0.5850 - val_recall: 0.2295
+Epoch 6/10
+
+Epoch 6: val_loss did not improve from 0.04387
+2189/2189 - 8s - 4ms/step - loss: 0.0348 - precision: 0.6949 - recall: 0.2977 - val_loss: 0.0456 - val_precision: 0.5882 - val_recall: 0.2256
+Epoch 6: early stopping
+Restoring model weights from the end of the best epoch: 3.
+In [11]:
+# ------------------------------------------------------------
+# Evaluate & select global threshold
+# ------------------------------------------------------------
+def weighted_precision_recall_f1(y_true, y_pred_bin, ia_map, mlb_obj):
+    tp = ((y_true==1)&(y_pred_bin==1)).sum(axis=0).astype(float)
+    fp = ((y_true==0)&(y_pred_bin==1)).sum(axis=0).astype(float)
+    fn = ((y_true==1)&(y_pred_bin==0)).sum(axis=0).astype(float)
+    eps=1e-12
+    prec = tp/(tp+fp+eps); rec = tp/(tp+fn+eps)
+    f1 = 2*prec*rec/(prec+rec+eps)
+    cls = mlb_obj.classes_
+    weights = np.array([ia_weights.get(c,1.0) for c in cls], dtype=float) if 'ia_weights' in globals() else np.ones(len(cls))
+    weighted_f1 = (f1*weights).sum()/(weights.sum()+eps)
+    weighted_prec = (prec*weights).sum()/(weights.sum()+eps)
+    weighted_rec = (rec*weights).sum()/(weights.sum()+eps)
+    return weighted_prec, weighted_rec, weighted_f1
+
+# load IA weights if available (safe)
+def read_IA_safe(path):
+    if not os.path.exists(path): return {}
+    df=pd.read_csv(path, sep="\t", header=None, names=["go","ia"], dtype=str)
+    d={}
+    for _,r in df.iterrows():
+        try: d[r.go]=float(r.ia)
+        except: 
+            try: d[r.go]=float(r.ia.replace(",",".")) 
+            except: d[r.go]=0.0
+    return d
+
+ia_weights = read_IA_safe(CONFIG["IA_FILE"])
+
+y_val_prob = model.predict(X_val, batch_size=CONFIG["BATCH_SIZE"], verbose=0)
+best_thresh = 0.5; best_score = -1.0
+if CONFIG["GLOBAL_THRESHOLD_SEARCH"]:
+    for t in CONFIG["THRESHOLD_GRID"]:
+        y_pred_bin = (y_val_prob >= t).astype(int)
+        _,_,f1 = weighted_precision_recall_f1(y_val, y_pred_bin, ia_weights, mlb)
+        if f1 > best_score: best_score=f1; best_thresh=t
+print(f"[eval] best_thresh {best_thresh} best IA-weighted F1 {best_score}")
+[eval] best_thresh 0.06 best IA-weighted F1 0.09005491511639777
+In [12]:
+# ------------------------------------------------------------
+# Streaming test-time: embed test sequences batchwise, predict, propagate, write submission lines immediately
+# ------------------------------------------------------------
+# Precompute helpful mappings for propagation
+term_to_idx = {t:i for i,t in enumerate(mlb.classes_)}
+idx_to_term = {i:t for t,i in term_to_idx.items()}
+
+# Build parents_map restricted to chosen_terms to speed propagation
+restricted_parents = {}
+for t in mlb.classes_:
+    restricted_parents[t] = set([p for p in parents_map.get(t, set()) if p in term_to_idx])
+
+# small propagation routine operating on a batch_of_probs (N_batch, M)
+def propagate_batch(pred_batch: np.ndarray, parents_map_local: Dict[str, Set[str]], classes_list: List[str], iterations=3):
+    # pred_batch: float32 shape (B, M)
+    B, Mloc = pred_batch.shape
+    idx_map = {i:classes_list[i] for i in range(Mloc)}
+    term_to_idx_local = {classes_list[i]: i for i in range(Mloc)}
+    for _ in range(iterations):
+        changed = False
+        # vectorized-ish: for each child index, update parent index with max
+        # loop over terms (M might be a few thousands => ok per small batch)
+        for child_idx in range(Mloc):
+            child_term = idx_map[child_idx]
+            child_scores = pred_batch[:, child_idx]
+            for pterm in parents_map_local.get(child_term, []):
+                pidx = term_to_idx_local[pterm]
+                # update parent where child's score exceeds parent
+                mask = child_scores > pred_batch[:, pidx]
+                if mask.any():
+                    pred_batch[mask, pidx] = child_scores[mask]
+                    changed = True
+        if not changed: break
+    return pred_batch
+
+# Open submission file for streaming write
+out_fpath = CONFIG["OUTPUT_SUBMISSION"]
+open(out_fpath, "w").close()  # truncate
+out_f = open(out_fpath, "a")
+
+# Create chunked iterator of test sequence IDs
+test_ids = list(test_seqs.keys())
+N_test = len(test_ids)
+print(f"[test] Streaming {N_test} test sequences in batches of {CONFIG['EMBED_BATCH_SIZE']} (embed) / predict {CONFIG['PREDICT_BATCH_SIZE']}")
+
+# If using PLM, prepare tokenizer & model once (on CPU/GPU)
+if USE_PLM:
+    tokenizer = AutoTokenizer.from_pretrained(CONFIG["PLM_MODEL_NAME_OR_PATH"], do_lower_case=False)
+    plm_model = AutoModel.from_pretrained(CONFIG["PLM_MODEL_NAME_OR_PATH"])
+    plm_model.eval()
+    if torch.cuda.is_available(): plm_model.to(torch.device("cuda"))
+
+# Helper to embed a list of sequences and return numpy array float32 of shape (len(seq_list), D)
+def embed_batch_return_np(seq_list: List[str]):
+    if USE_PLM:
+        proc = seqs_for_plm_input_esm(seq_list)
+        with torch.no_grad():
+            inputs = tokenizer(proc, return_tensors="pt", padding=True, truncation=True)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            inputs = {k:v.to(device) for k,v in inputs.items()}
+            out = plm_model(**inputs)
+            last_hidden = out.last_hidden_state  # (B, L, dim)
+            mask = inputs.get("attention_mask", None)
+            if mask is not None:
+                mask = mask.unsqueeze(-1)
+                summed = (last_hidden * mask).sum(1)
+                counts = mask.sum(1).clamp(min=1)
+                mean_pooled = (summed / counts).cpu().numpy().astype(np.float32)
+            else:
+                mean_pooled = last_hidden.mean(dim=1).cpu().numpy().astype(np.float32)
+        # free GPU memory
+        del inputs, out, last_hidden
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        gc.collect()
+        return mean_pooled
+    else:
+        # TF-IDF fallback: transform using vectorizer in small chunk
+        texts = [" ".join([seq[i:i+3] for i in range(len(seq)-3+1)]) for seq in seq_list]
+        arr = tfidf.transform(texts).astype(np.float32).toarray()
+        return arr
+
+# We'll process test samples in small "embed" batches and then accumulate a list of embedded rows
+# until we have PREDICT_BATCH_SIZE embeddings ready for model.predict(...) then predict and write submission lines.
+embed_batch = []
+embed_ids = []
+
+for i in range(0, N_test, CONFIG["EMBED_BATCH_SIZE"]):
+    batch_ids = test_ids[i:i+CONFIG["EMBED_BATCH_SIZE"]]
+    seqs_batch = [test_seqs[pid] for pid in batch_ids]
+    # compute embeddings for this mini-batch
+    emb_mini = embed_batch_return_np(seqs_batch)  # shape (Bmini, D)
+    # append to buffer
+    embed_batch.append(emb_mini)
+    embed_ids.extend(batch_ids)
+    # if enough buffered to predict, or we're at the end, flush to prediction
+    buffered_examples = sum(arr.shape[0] for arr in embed_batch)
+    if buffered_examples >= CONFIG["PREDICT_BATCH_SIZE"] or (i+CONFIG["EMBED_BATCH_SIZE"] >= N_test):
+        # stack buffered embeddings (should be moderate size)
+        X_buffer = np.vstack(embed_batch).astype(np.float32)  # shape (Bbuf, D)
+        # predict in one shot for this buffer
+        y_buffer_prob = model.predict(X_buffer, batch_size=min(128, X_buffer.shape[0]), verbose=0)
+        # propagate per-batch (if desired)
+        if CONFIG["PROPAGATE_PREDICTIONS"] and parents_map:
+            y_buffer_prob = propagate_batch(y_buffer_prob, restricted_parents, list(mlb.classes_), iterations=3)
+        # for each row, write top-K lines
+        for ridx, pid in enumerate(embed_ids):
+            probs = y_buffer_prob[ridx]
+            # pick top-K_PER_PROTEIN indices (and filter near-zero)
+            top_k = CONFIG["TOP_K_PER_PROTEIN"]
+            if top_k is None:
+                idxs = np.where(probs >= best_thresh)[0]
+            else:
+                idxs = np.argsort(probs)[-top_k:]
+                idxs = [int(x) for x in idxs if probs[x] > 1e-6]
+            idxs = sorted(idxs, key=lambda x: probs[x], reverse=True)
+            for idx in idxs:
+                score = float(probs[idx])
+                if score <= 0.0: continue
+                go_id = mlb.classes_[idx]
+                out_f.write(f"{pid}\t{go_id}\t{score:.3f}\n")
+        out_f.flush()
+        # free buffer
+        del X_buffer, y_buffer_prob, embed_batch
+        embed_batch = []
+        embed_ids = []
+        gc.collect()
+        if TORCH_AVAILABLE and torch.cuda.is_available(): torch.cuda.empty_cache()
+    # small progress print
+    if (i // CONFIG["EMBED_BATCH_SIZE"]) % 50 == 0:
+        print(f"[stream] processed {i} / {N_test}")
+
+out_f.close()
+print(f"[done] Submission written to {CONFIG['OUTPUT_SUBMISSION']}")
+[test] Streaming 224309 test sequences in batches of 8 (embed) / predict 64
+[stream] processed 0 / 224309
+[stream] processed 400 / 224309
+[stream] processed 800 / 224309
+[stream] processed 1200 / 224309
+[stream] processed 1600 / 224309
+[stream] processed 2000 / 224309
+[stream] processed 2400 / 224309
+[stream] processed 2800 / 224309
+[stream] processed 3200 / 224309
+[stream] processed 3600 / 224309
+[stream] processed 4000 / 224309
+[stream] processed 4400 / 224309
+[stream] processed 4800 / 224309
+[stream] processed 5200 / 224309
+[stream] processed 5600 / 224309
+[stream] processed 6000 / 224309
+[stream] processed 6400 / 224309
+[stream] processed 6800 / 224309
+[stream] processed 7200 / 224309
+[stream] processed 7600 / 224309
+[stream] processed 8000 / 224309
+[stream] processed 8400 / 224309
+[stream] processed 8800 / 224309
+[stream] processed 9200 / 224309
+[stream] processed 9600 / 224309
+[stream] processed 10000 / 224309
+[stream] processed 10400 / 224309
+[stream] processed 10800 / 224309
+[stream] processed 11200 / 224309
+[stream] processed 11600 / 224309
+[stream] processed 12000 / 224309
+[stream] processed 12400 / 224309
+[stream] processed 12800 / 224309
+[stream] processed 13200 / 224309
+[stream] processed 13600 / 224309
+[stream] processed 14000 / 224309
+[stream] processed 14400 / 224309
+[stream] processed 14800 / 224309
+[stream] processed 15200 / 224309
+[stream] processed 15600 / 224309
+[stream] processed 16000 / 224309
+[stream] processed 16400 / 224309
+[stream] processed 16800 / 224309
+[stream] processed 17200 / 224309
+[stream] processed 17600 / 224309
+[stream] processed 18000 / 224309
+[stream] processed 18400 / 224309
+[stream] processed 18800 / 224309
+[stream] processed 19200 / 224309
+[stream] processed 19600 / 224309
+[stream] processed 20000 / 224309
+[stream] processed 20400 / 224309
+[stream] processed 20800 / 224309
+[stream] processed 21200 / 224309
+[stream] processed 21600 / 224309
+[stream] processed 22000 / 224309
+[stream] processed 22400 / 224309
+[stream] processed 22800 / 224309
+[stream] processed 23200 / 224309
+[stream] processed 23600 / 224309
+[stream] processed 24000 / 224309
+[stream] processed 24400 / 224309
+[stream] processed 24800 / 224309
+[stream] processed 25200 / 224309
+[stream] processed 25600 / 224309
+[stream] processed 26000 / 224309
+[stream] processed 26400 / 224309
+[stream] processed 26800 / 224309
+[stream] processed 27200 / 224309
+[stream] processed 27600 / 224309
+[stream] processed 28000 / 224309
+[stream] processed 28400 / 224309
+[stream] processed 28800 / 224309
+[stream] processed 29200 / 224309
+[stream] processed 29600 / 224309
+[stream] processed 30000 / 224309
+[stream] processed 30400 / 224309
+[stream] processed 30800 / 224309
+[stream] processed 31200 / 224309
+[stream] processed 31600 / 224309
+[stream] processed 32000 / 224309
+[stream] processed 32400 / 224309
+[stream] processed 32800 / 224309
+[stream] processed 33200 / 224309
+[stream] processed 33600 / 224309
+[stream] processed 34000 / 224309
+[stream] processed 34400 / 224309
+[stream] processed 34800 / 224309
+[stream] processed 35200 / 224309
+[stream] processed 35600 / 224309
+[stream] processed 36000 / 224309
+[stream] processed 36400 / 224309
+[stream] processed 36800 / 224309
+[stream] processed 37200 / 224309
+[stream] processed 37600 / 224309
+[stream] processed 38000 / 224309
+[stream] processed 38400 / 224309
+[stream] processed 38800 / 224309
+[stream] processed 39200 / 224309
+[stream] processed 39600 / 224309
+[stream] processed 40000 / 224309
+[stream] processed 40400 / 224309
+[stream] processed 40800 / 224309
+[stream] processed 41200 / 224309
+[stream] processed 41600 / 224309
+[stream] processed 42000 / 224309
+[stream] processed 42400 / 224309
+[stream] processed 42800 / 224309
+[stream] processed 43200 / 224309
+[stream] processed 43600 / 224309
+[stream] processed 44000 / 224309
+[stream] processed 44400 / 224309
+[stream] processed 44800 / 224309
+[stream] processed 45200 / 224309
+[stream] processed 45600 / 224309
+[stream] processed 46000 / 224309
+[stream] processed 46400 / 224309
+[stream] processed 46800 / 224309
+[stream] processed 47200 / 224309
+[stream] processed 47600 / 224309
+[stream] processed 48000 / 224309
+[stream] processed 48400 / 224309
+[stream] processed 48800 / 224309
+[stream] processed 49200 / 224309
+[stream] processed 49600 / 224309
+[stream] processed 50000 / 224309
+[stream] processed 50400 / 224309
+[stream] processed 50800 / 224309
+[stream] processed 51200 / 224309
+[stream] processed 51600 / 224309
+[stream] processed 52000 / 224309
+[stream] processed 52400 / 224309
+[stream] processed 52800 / 224309
+[stream] processed 53200 / 224309
+[stream] processed 53600 / 224309
+[stream] processed 54000 / 224309
+[stream] processed 54400 / 224309
+[stream] processed 54800 / 224309
+[stream] processed 55200 / 224309
+[stream] processed 55600 / 224309
+[stream] processed 56000 / 224309
+[stream] processed 56400 / 224309
+[stream] processed 56800 / 224309
+[stream] processed 57200 / 224309
+[stream] processed 57600 / 224309
+[stream] processed 58000 / 224309
+[stream] processed 58400 / 224309
+[stream] processed 58800 / 224309
+[stream] processed 59200 / 224309
+[stream] processed 59600 / 224309
+[stream] processed 60000 / 224309
+[stream] processed 60400 / 224309
+[stream] processed 60800 / 224309
+[stream] processed 61200 / 224309
+[stream] processed 61600 / 224309
+[stream] processed 62000 / 224309
+[stream] processed 62400 / 224309
+[stream] processed 62800 / 224309
+[stream] processed 63200 / 224309
+[stream] processed 63600 / 224309
+[stream] processed 64000 / 224309
+[stream] processed 64400 / 224309
+[stream] processed 64800 / 224309
+[stream] processed 65200 / 224309
+[stream] processed 65600 / 224309
+[stream] processed 66000 / 224309
+[stream] processed 66400 / 224309
+[stream] processed 66800 / 224309
+[stream] processed 67200 / 224309
+[stream] processed 67600 / 224309
+[stream] processed 68000 / 224309
+[stream] processed 68400 / 224309
+[stream] processed 68800 / 224309
+[stream] processed 69200 / 224309
+[stream] processed 69600 / 224309
+[stream] processed 70000 / 224309
+[stream] processed 70400 / 224309
+[stream] processed 70800 / 224309
+[stream] processed 71200 / 224309
+[stream] processed 71600 / 224309
+[stream] processed 72000 / 224309
+[stream] processed 72400 / 224309
+[stream] processed 72800 / 224309
+[stream] processed 73200 / 224309
+[stream] processed 73600 / 224309
+[stream] processed 74000 / 224309
+[stream] processed 74400 / 224309
+[stream] processed 74800 / 224309
+[stream] processed 75200 / 224309
+[stream] processed 75600 / 224309
+[stream] processed 76000 / 224309
+[stream] processed 76400 / 224309
+[stream] processed 76800 / 224309
+[stream] processed 77200 / 224309
+[stream] processed 77600 / 224309
+[stream] processed 78000 / 224309
+[stream] processed 78400 / 224309
+[stream] processed 78800 / 224309
+[stream] processed 79200 / 224309
+[stream] processed 79600 / 224309
+[stream] processed 80000 / 224309
+[stream] processed 80400 / 224309
+[stream] processed 80800 / 224309
+[stream] processed 81200 / 224309
+[stream] processed 81600 / 224309
+[stream] processed 82000 / 224309
+[stream] processed 82400 / 224309
+[stream] processed 82800 / 224309
+[stream] processed 83200 / 224309
+[stream] processed 83600 / 224309
+[stream] processed 84000 / 224309
+[stream] processed 84400 / 224309
+[stream] processed 84800 / 224309
+[stream] processed 85200 / 224309
+[stream] processed 85600 / 224309
+[stream] processed 86000 / 224309
+[stream] processed 86400 / 224309
+[stream] processed 86800 / 224309
+[stream] processed 87200 / 224309
+[stream] processed 87600 / 224309
+[stream] processed 88000 / 224309
+[stream] processed 88400 / 224309
+[stream] processed 88800 / 224309
+[stream] processed 89200 / 224309
+[stream] processed 89600 / 224309
+[stream] processed 90000 / 224309
+[stream] processed 90400 / 224309
+[stream] processed 90800 / 224309
+[stream] processed 91200 / 224309
+[stream] processed 91600 / 224309
+[stream] processed 92000 / 224309
+[stream] processed 92400 / 224309
+[stream] processed 92800 / 224309
+[stream] processed 93200 / 224309
+[stream] processed 93600 / 224309
+[stream] processed 94000 / 224309
+[stream] processed 94400 / 224309
+[stream] processed 94800 / 224309
+[stream] processed 95200 / 224309
+[stream] processed 95600 / 224309
+[stream] processed 96000 / 224309
+[stream] processed 96400 / 224309
+[stream] processed 96800 / 224309
+[stream] processed 97200 / 224309
+[stream] processed 97600 / 224309
+[stream] processed 98000 / 224309
+[stream] processed 98400 / 224309
+[stream] processed 98800 / 224309
+[stream] processed 99200 / 224309
+[stream] processed 99600 / 224309
+[stream] processed 100000 / 224309
+[stream] processed 100400 / 224309
+[stream] processed 100800 / 224309
+[stream] processed 101200 / 224309
+[stream] processed 101600 / 224309
+[stream] processed 102000 / 224309
+[stream] processed 102400 / 224309
+[stream] processed 102800 / 224309
+[stream] processed 103200 / 224309
+[stream] processed 103600 / 224309
+[stream] processed 104000 / 224309
+[stream] processed 104400 / 224309
+[stream] processed 104800 / 224309
+[stream] processed 105200 / 224309
+[stream] processed 105600 / 224309
+[stream] processed 106000 / 224309
+[stream] processed 106400 / 224309
+[stream] processed 106800 / 224309
+[stream] processed 107200 / 224309
+[stream] processed 107600 / 224309
+[stream] processed 108000 / 224309
+[stream] processed 108400 / 224309
+[stream] processed 108800 / 224309
+[stream] processed 109200 / 224309
+[stream] processed 109600 / 224309
+[stream] processed 110000 / 224309
+[stream] processed 110400 / 224309
+[stream] processed 110800 / 224309
+[stream] processed 111200 / 224309
+[stream] processed 111600 / 224309
+[stream] processed 112000 / 224309
+[stream] processed 112400 / 224309
+[stream] processed 112800 / 224309
+[stream] processed 113200 / 224309
+[stream] processed 113600 / 224309
+[stream] processed 114000 / 224309
+[stream] processed 114400 / 224309
+[stream] processed 114800 / 224309
+[stream] processed 115200 / 224309
+[stream] processed 115600 / 224309
+[stream] processed 116000 / 224309
+[stream] processed 116400 / 224309
+[stream] processed 116800 / 224309
+[stream] processed 117200 / 224309
+[stream] processed 117600 / 224309
+[stream] processed 118000 / 224309
+[stream] processed 118400 / 224309
+[stream] processed 118800 / 224309
+[stream] processed 119200 / 224309
+[stream] processed 119600 / 224309
+[stream] processed 120000 / 224309
+[stream] processed 120400 / 224309
+[stream] processed 120800 / 224309
+[stream] processed 121200 / 224309
+[stream] processed 121600 / 224309
+[stream] processed 122000 / 224309
+[stream] processed 122400 / 224309
+[stream] processed 122800 / 224309
+[stream] processed 123200 / 224309
+[stream] processed 123600 / 224309
+[stream] processed 124000 / 224309
+[stream] processed 124400 / 224309
+[stream] processed 124800 / 224309
+[stream] processed 125200 / 224309
+[stream] processed 125600 / 224309
+[stream] processed 126000 / 224309
+[stream] processed 126400 / 224309
+[stream] processed 126800 / 224309
+[stream] processed 127200 / 224309
+[stream] processed 127600 / 224309
+[stream] processed 128000 / 224309
+[stream] processed 128400 / 224309
+[stream] processed 128800 / 224309
+[stream] processed 129200 / 224309
+[stream] processed 129600 / 224309
+[stream] processed 130000 / 224309
+[stream] processed 130400 / 224309
+[stream] processed 130800 / 224309
+[stream] processed 131200 / 224309
+[stream] processed 131600 / 224309
+[stream] processed 132000 / 224309
+[stream] processed 132400 / 224309
+[stream] processed 132800 / 224309
+[stream] processed 133200 / 224309
+[stream] processed 133600 / 224309
+[stream] processed 134000 / 224309
+[stream] processed 134400 / 224309
+[stream] processed 134800 / 224309
+[stream] processed 135200 / 224309
+[stream] processed 135600 / 224309
+[stream] processed 136000 / 224309
+[stream] processed 136400 / 224309
+[stream] processed 136800 / 224309
+[stream] processed 137200 / 224309
+[stream] processed 137600 / 224309
+[stream] processed 138000 / 224309
+[stream] processed 138400 / 224309
+[stream] processed 138800 / 224309
+[stream] processed 139200 / 224309
+[stream] processed 139600 / 224309
+[stream] processed 140000 / 224309
+[stream] processed 140400 / 224309
+[stream] processed 140800 / 224309
+[stream] processed 141200 / 224309
+[stream] processed 141600 / 224309
+[stream] processed 142000 / 224309
+[stream] processed 142400 / 224309
+[stream] processed 142800 / 224309
+[stream] processed 143200 / 224309
+[stream] processed 143600 / 224309
+[stream] processed 144000 / 224309
+[stream] processed 144400 / 224309
+[stream] processed 144800 / 224309
+[stream] processed 145200 / 224309
+[stream] processed 145600 / 224309
+[stream] processed 146000 / 224309
+[stream] processed 146400 / 224309
+[stream] processed 146800 / 224309
+[stream] processed 147200 / 224309
+[stream] processed 147600 / 224309
+[stream] processed 148000 / 224309
+[stream] processed 148400 / 224309
+[stream] processed 148800 / 224309
+[stream] processed 149200 / 224309
+[stream] processed 149600 / 224309
+[stream] processed 150000 / 224309
+[stream] processed 150400 / 224309
+[stream] processed 150800 / 224309
+[stream] processed 151200 / 224309
+[stream] processed 151600 / 224309
+[stream] processed 152000 / 224309
+[stream] processed 152400 / 224309
+[stream] processed 152800 / 224309
+[stream] processed 153200 / 224309
+[stream] processed 153600 / 224309
+[stream] processed 154000 / 224309
+[stream] processed 154400 / 224309
+[stream] processed 154800 / 224309
+[stream] processed 155200 / 224309
+[stream] processed 155600 / 224309
+[stream] processed 156000 / 224309
+[stream] processed 156400 / 224309
+[stream] processed 156800 / 224309
+[stream] processed 157200 / 224309
+[stream] processed 157600 / 224309
+[stream] processed 158000 / 224309
+[stream] processed 158400 / 224309
+[stream] processed 158800 / 224309
+[stream] processed 159200 / 224309
+[stream] processed 159600 / 224309
+[stream] processed 160000 / 224309
+[stream] processed 160400 / 224309
+[stream] processed 160800 / 224309
+[stream] processed 161200 / 224309
+[stream] processed 161600 / 224309
+[stream] processed 162000 / 224309
+[stream] processed 162400 / 224309
+[stream] processed 162800 / 224309
+[stream] processed 163200 / 224309
+[stream] processed 163600 / 224309
+[stream] processed 164000 / 224309
+[stream] processed 164400 / 224309
+[stream] processed 164800 / 224309
+[stream] processed 165200 / 224309
+[stream] processed 165600 / 224309
+[stream] processed 166000 / 224309
+[stream] processed 166400 / 224309
+[stream] processed 166800 / 224309
+[stream] processed 167200 / 224309
+[stream] processed 167600 / 224309
+[stream] processed 168000 / 224309
+[stream] processed 168400 / 224309
+[stream] processed 168800 / 224309
+[stream] processed 169200 / 224309
+[stream] processed 169600 / 224309
+[stream] processed 170000 / 224309
+[stream] processed 170400 / 224309
+[stream] processed 170800 / 224309
+[stream] processed 171200 / 224309
+[stream] processed 171600 / 224309
+[stream] processed 172000 / 224309
+[stream] processed 172400 / 224309
+[stream] processed 172800 / 224309
+[stream] processed 173200 / 224309
+[stream] processed 173600 / 224309
+[stream] processed 174000 / 224309
+[stream] processed 174400 / 224309
+[stream] processed 174800 / 224309
+[stream] processed 175200 / 224309
+[stream] processed 175600 / 224309
+[stream] processed 176000 / 224309
+[stream] processed 176400 / 224309
+[stream] processed 176800 / 224309
+[stream] processed 177200 / 224309
+[stream] processed 177600 / 224309
+[stream] processed 178000 / 224309
+[stream] processed 178400 / 224309
+[stream] processed 178800 / 224309
+[stream] processed 179200 / 224309
+[stream] processed 179600 / 224309
+[stream] processed 180000 / 224309
+[stream] processed 180400 / 224309
+[stream] processed 180800 / 224309
+[stream] processed 181200 / 224309
+[stream] processed 181600 / 224309
+[stream] processed 182000 / 224309
+[stream] processed 182400 / 224309
+[stream] processed 182800 / 224309
+[stream] processed 183200 / 224309
+[stream] processed 183600 / 224309
+[stream] processed 184000 / 224309
+[stream] processed 184400 / 224309
+[stream] processed 184800 / 224309
+[stream] processed 185200 / 224309
+[stream] processed 185600 / 224309
+[stream] processed 186000 / 224309
+[stream] processed 186400 / 224309
+[stream] processed 186800 / 224309
+[stream] processed 187200 / 224309
+[stream] processed 187600 / 224309
+[stream] processed 188000 / 224309
+[stream] processed 188400 / 224309
+[stream] processed 188800 / 224309
+[stream] processed 189200 / 224309
+[stream] processed 189600 / 224309
+[stream] processed 190000 / 224309
+[stream] processed 190400 / 224309
+[stream] processed 190800 / 224309
+[stream] processed 191200 / 224309
+[stream] processed 191600 / 224309
+[stream] processed 192000 / 224309
+[stream] processed 192400 / 224309
+[stream] processed 192800 / 224309
+[stream] processed 193200 / 224309
+[stream] processed 193600 / 224309
+[stream] processed 194000 / 224309
+[stream] processed 194400 / 224309
+[stream] processed 194800 / 224309
+[stream] processed 195200 / 224309
+[stream] processed 195600 / 224309
+[stream] processed 196000 / 224309
+[stream] processed 196400 / 224309
+[stream] processed 196800 / 224309
+[stream] processed 197200 / 224309
+[stream] processed 197600 / 224309
+[stream] processed 198000 / 224309
+[stream] processed 198400 / 224309
+[stream] processed 198800 / 224309
+[stream] processed 199200 / 224309
+[stream] processed 199600 / 224309
+[stream] processed 200000 / 224309
+[stream] processed 200400 / 224309
+[stream] processed 200800 / 224309
+[stream] processed 201200 / 224309
+[stream] processed 201600 / 224309
+[stream] processed 202000 / 224309
+[stream] processed 202400 / 224309
+[stream] processed 202800 / 224309
+[stream] processed 203200 / 224309
+[stream] processed 203600 / 224309
+[stream] processed 204000 / 224309
+[stream] processed 204400 / 224309
+[stream] processed 204800 / 224309
+[stream] processed 205200 / 224309
+[stream] processed 205600 / 224309
+[stream] processed 206000 / 224309
+[stream] processed 206400 / 224309
+[stream] processed 206800 / 224309
+[stream] processed 207200 / 224309
+[stream] processed 207600 / 224309
+[stream] processed 208000 / 224309
+[stream] processed 208400 / 224309
+[stream] processed 208800 / 224309
+[stream] processed 209200 / 224309
+[stream] processed 209600 / 224309
+[stream] processed 210000 / 224309
+[stream] processed 210400 / 224309
+[stream] processed 210800 / 224309
+[stream] processed 211200 / 224309
+[stream] processed 211600 / 224309
+[stream] processed 212000 / 224309
+[stream] processed 212400 / 224309
+[stream] processed 212800 / 224309
+[stream] processed 213200 / 224309
+[stream] processed 213600 / 224309
+[stream] processed 214000 / 224309
+[stream] processed 214400 / 224309
+[stream] processed 214800 / 224309
+[stream] processed 215200 / 224309
+[stream] processed 215600 / 224309
+[stream] processed 216000 / 224309
+[stream] processed 216400 / 224309
+[stream] processed 216800 / 224309
+[stream] processed 217200 / 224309
+[stream] processed 217600 / 224309
+[stream] processed 218000 / 224309
+[stream] processed 218400 / 224309
+[stream] processed 218800 / 224309
+[stream] processed 219200 / 224309
+[stream] processed 219600 / 224309
+[stream] processed 220000 / 224309
+[stream] processed 220400 / 224309
+[stream] processed 220800 / 224309
+[stream] processed 221200 / 224309
+[stream] processed 221600 / 224309
+[stream] processed 222000 / 224309
+[stream] processed 222400 / 224309
+[stream] processed 222800 / 224309
+[stream] processed 223200 / 224309
+[stream] processed 223600 / 224309
+[stream] processed 224000 / 224309
+[done] Submission written to /kaggle/working/submission.tsv
+In [13]:
+# # ------------------------------------------------------------
+# # Save model / artifacts if desired (lightweight)
+# # ------------------------------------------------------------
+# model.save("/kaggle/working/cafa6_baseline_model")
+# np.save("/kaggle/working/mlb_classes.npy", np.array(mlb.classes_, dtype=object))
+# print("[done] saved model and classes; notebook finished.")

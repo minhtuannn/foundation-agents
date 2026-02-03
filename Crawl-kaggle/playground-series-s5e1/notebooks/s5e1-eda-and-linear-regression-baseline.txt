@@ -1,0 +1,524 @@
+Forecasting with Linear Regression
+Contents
+EDA - A brief EDA, showing the essentials
+Aggregating Categorical Variables - A continuation of the EDA, showing that we should be able to forecast the aggregated time series (daily total sales) and then disaggregate the forecasts based on historical proportions and other data without penalising performance.
+Total Sales Forecast - Forecast the total number of sales across all categorical variables using Linear Regression for 2017, 2018 and 2019.
+Product Sales Ratio Forecast - Forecast the ratio of sales between products for 2017, 2018 and 2019.
+Dissagregating Total Sales Forecast - Disagreggate the Total Sales forecasts, to get the forecast for each categorical variable.
+References
+This work is based off my notebook from Season 2, on a similar competition:
+https://www.kaggle.com/code/cabaxiom/tps-sep-22-eda-and-linear-regression-baseline
+Preliminaries
+In [1]:
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.linear_model import Ridge
+
+sns.set_style('darkgrid')
+In [2]:
+train_df = pd.read_csv("/kaggle/input/playground-series-s5e1/train.csv", parse_dates=["date"])
+original_train_df = train_df.copy()
+test_df = pd.read_csv("/kaggle/input/playground-series-s5e1/test.csv", parse_dates=["date"])
+EDA
+Categorical variables
+In [3]:
+display(train_df.head(3))
+display(test_df.head(3))
+id date country store product num_sold
+0 0 2010-01-01 Canada Discount Stickers Holographic Goose NaN
+1 1 2010-01-01 Canada Discount Stickers Kaggle 973.0
+2 2 2010-01-01 Canada Discount Stickers Kaggle Tiers 906.0
+id date country store product
+0 230130 2017-01-01 Canada Discount Stickers Holographic Goose
+1 230131 2017-01-01 Canada Discount Stickers Kaggle
+2 230132 2017-01-01 Canada Discount Stickers Kaggle Tiers
+Observations:
+There are 3 categorical columns that together describe a univariate time series. Country, Store and Product.
+Lets see which countries, stores and products we have data for:
+In [4]:
+def get_val_counts(df, column_name, sort_by_column_name=False):
+    value_count = df[column_name].value_counts().reset_index().rename(columns={column_name:"Value Count","index":column_name}).set_index(column_name)
+    value_count["Percentage"] = df[column_name].value_counts(normalize=True)*100
+    value_count = value_count.reset_index()
+    if sort_by_column_name:
+        value_count = value_count.sort_values(column_name)
+    return value_count
+
+def plot_value_counts_pie(df, column_name, sort_by_column_name=False):
+    val_count_df = get_val_counts(df, column_name, sort_by_column_name)
+    val_count.set_index(column_name).plot.pie(y="Value Count", figsize=(5,5), legend=False, ylabel="");
+
+def plot_value_counts_bar(df, column_name, sort_by_column_name = False):
+    val_count_df = get_val_counts(df, column_name, sort_by_column_name)
+    f,ax = plt.subplots(figsize=(12,6))
+    sns.barplot(data = val_count_df, y="Value Count", x=column_name )
+
+    for index, row in val_count_df.iterrows():
+        count = row["Value Count"]
+        percentage = row["Percentage"]
+        ax.text(
+            x=index, 
+            y=row["Value Count"] + max(val_count_df["Value Count"])*0.02,  # Adjust position slightly above the bar
+            s=f'{count} ({percentage:.2f}%)', 
+            ha='center', 
+            va='bottom'
+        )
+In [5]:
+plot_value_counts_bar(train_df, "country")
+In [6]:
+plot_value_counts_bar(train_df, "store")
+In [7]:
+plot_value_counts_bar(train_df, "product")
+Observations:
+We have 6 Countries, all occuring in the dataset the same number of time (equal proportions).
+We have 3 Stores, all occuring in the dataset the same number of time (equal proportions)
+We have 5 products, all occuring in the dataset the same number of time (equal proportions)
+Look at the number of rows for each country, store and product:
+In [8]:
+counts = train_df.groupby(["country","store","product"])["id"].count().rename("num_rows").reset_index()
+counts_val_counts = counts["num_rows"].value_counts().rename("Count").reset_index().rename(columns={"index": "length"})
+display(counts_val_counts.head(10))
+length Count
+0 2557 90
+In total we have 90 univariate time series all of length 2557
+However although we have 2557 rows for every single country, product and store, we may have missing values in the number of sales:
+In [9]:
+print(f"Number of missing num_sold rows: {train_df['num_sold'].isna().sum()}")
+Number of missing num_sold rows: 8871
+In [10]:
+counts = train_df.groupby(["country","store","product"])["num_sold"].count().rename("num_rows")
+missing_data = counts.loc[counts != 2557]
+missing_data_df = missing_data.reset_index()
+missing_data_df["num_missing_rows"] = 2557 - missing_data_df["num_rows"]
+missing_data_df
+Out[10]:
+country store product num_rows num_missing_rows
+0 Canada Discount Stickers Holographic Goose 0 2557
+1 Canada Discount Stickers Kerneler 2556 1
+2 Canada Premium Sticker Mart Holographic Goose 2177 380
+3 Canada Stickers for Less Holographic Goose 1249 1308
+4 Kenya Discount Stickers Holographic Goose 0 2557
+5 Kenya Discount Stickers Kerneler 2494 63
+6 Kenya Discount Stickers Kerneler Dark Mode 2556 1
+7 Kenya Premium Sticker Mart Holographic Goose 1911 646
+8 Kenya Stickers for Less Holographic Goose 1199 1358
+Obseervations:
+In total 9 of the 90 time series (10%) have atleast some missing some data.
+2 of the time series are completely missing data Canada, Discount Stickers, Holographic Goose and Kenya, Discount Stickers, Holographic Goose
+2 of the time series are only missing a single day of data Canada, Discount Stickers, Kerneler and Kenya, Discount Stickers, Kernerler Dark Mode
+Lets take a closer look at when the missing values occur in each of these time series:
+In [11]:
+f,axs = plt.subplots(9,1, figsize=(20,50))
+for i, (country, store, product) in enumerate(missing_data.index):
+    plot_df = train_df.loc[(train_df["country"] == country) & (train_df["store"] == store) & (train_df["product"] == product)]
+    missing_vals = plot_df.loc[plot_df["num_sold"].isna()]
+    sns.lineplot(data=plot_df, x="date", y="num_sold", ax=axs[i])
+    for missing_date in missing_vals["date"]:
+        axs[i].axvline(missing_date, color='red',  linestyle='-', linewidth=1, alpha=0.2)
+    axs[i].set_title(f"{country} - {store} - {product}")
+Observations:
+The missing data is not missing completely randomly (with respect to time), some periods contain more missing data than others.
+It looks data is missing when the value for num_sold < 200 for Canada and < 5 for Kenya (for most the time series). We could impute based on that assumption, but I've used a different method.
+Time series
+In [12]:
+print("Train - Earliest date:", train_df["date"].min())
+print("Train - Latest date:", train_df["date"].max())
+
+print("Test - Earliest date:", test_df["date"].min())
+print("Test - Latest date:", test_df["date"].max())
+Train - Earliest date: 2010-01-01 00:00:00
+Train - Latest date: 2016-12-31 00:00:00
+Test - Earliest date: 2017-01-01 00:00:00
+Test - Latest date: 2019-12-31 00:00:00
+We have 7 years of data from 2010-01-01 to 2016-12-31 to train occuring at daily frequency.
+We are required to forecast 3 year of data, from 2017-01-01 to 2019-12-31
+Lets take a look at the overall trends for each time series:
+In [13]:
+weekly_df = train_df.groupby(["country","store", "product", pd.Grouper(key="date", freq="W")])["num_sold"].sum().rename("num_sold").reset_index()
+monthly_df = train_df.groupby(["country","store", "product", pd.Grouper(key="date", freq="MS")])["num_sold"].sum().rename("num_sold").reset_index()
+In [14]:
+def plot_all(df):
+    f,axes = plt.subplots(3,2,figsize=(25,25), sharex = True, sharey=True)
+    f.tight_layout()
+    for n,prod in enumerate(df["product"].unique()):
+        plot_df = df.loc[df["product"] == prod]
+        sns.lineplot(data=plot_df, x="date", y="num_sold", hue="country", style="store",ax=axes[n//2,n%2])
+        axes[n//2,n%2].set_title("Product: "+str(prod))
+In [15]:
+plot_all(monthly_df)
+#plot_all(weekly_df)
+Aggregating Time Series
+The main theme of this notebook is to show that its a good idea to aggregate the time series across each of the three categorical variables: Store, Country and Product.
+Country
+First we show that its a good idea to aggregate countries when we make the forecast.
+To do this we need to show that the proportion of total sales for each country remains constant, regardless of time.
+In the graph below, we are looking for straight lines for each country:
+In [16]:
+country_weights = train_df.groupby("country")["num_sold"].sum()/train_df["num_sold"].sum()
+
+country_ratio_over_time = (train_df.groupby(["date","country"])["num_sold"].sum() / train_df.groupby(["date"])["num_sold"].sum()).reset_index()
+f,ax = plt.subplots(figsize=(20,10))
+sns.lineplot(data = country_ratio_over_time, x="date", y="num_sold", hue="country");
+ax.set_ylabel("Proportion of sales");
+Observations:
+The lines are not perflectly straight, meaning a single constant does not explain the proportion of sales regardless of time.
+The lines for each country do seem to have rises and falls each year (noteably exactly at the year markings) something artificially strange is going on here.
+The link seems to be GDP per captia, credit to @siukeitin for discovering this in this discussion thread https://www.kaggle.com/competitions/playground-series-s5e1/discussion/554349
+In [17]:
+gdp_per_capita_df = pd.read_csv("/kaggle/input/world-gdpgdp-gdp-per-capita-and-annual-growths/gdp_per_capita.csv")
+
+years =  ["2010", "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020"]
+gdp_per_capita_filtered_df = gdp_per_capita_df.loc[gdp_per_capita_df["Country Name"].isin(train_df["country"].unique()), ["Country Name"] + years].set_index("Country Name")
+gdp_per_capita_filtered_df["2010_ratio"] = gdp_per_capita_filtered_df["2010"] / gdp_per_capita_filtered_df.sum()["2010"]
+for year in years:
+    gdp_per_capita_filtered_df[f"{year}_ratio"] = gdp_per_capita_filtered_df[year] / gdp_per_capita_filtered_df.sum()[year]
+gdp_per_capita_filtered_ratios_df = gdp_per_capita_filtered_df[[i+"_ratio" for i in years]]
+gdp_per_capita_filtered_ratios_df.columns = [int(i) for i in years]
+gdp_per_capita_filtered_ratios_df = gdp_per_capita_filtered_ratios_df.unstack().reset_index().rename(columns = {"level_0": "year", 0: "ratio", "Country Name": "country"})
+gdp_per_capita_filtered_ratios_df['year'] = pd.to_datetime(gdp_per_capita_filtered_ratios_df['year'], format='%Y')
+
+# For plotting purposes
+gdp_per_capita_filtered_ratios_df_2 = gdp_per_capita_filtered_ratios_df.copy()
+gdp_per_capita_filtered_ratios_df_2["year"] = pd.to_datetime(gdp_per_capita_filtered_ratios_df_2['year'].astype(str)) + pd.offsets.YearEnd(1)
+gdp_per_capita_filtered_ratios_df = pd.concat([gdp_per_capita_filtered_ratios_df, gdp_per_capita_filtered_ratios_df_2]).reset_index()
+
+f,ax = plt.subplots(figsize=(20,15))
+sns.lineplot(data = country_ratio_over_time, x="date", y="num_sold", hue="country");
+sns.lineplot(data = gdp_per_capita_filtered_ratios_df, x="year", y = "ratio", hue="country", palette = ["black"]*6, legend = False)
+ax.set_ylabel("Proportion of sales");
+Observations:
+The black line shows the ratio of GDP per captia for each year for that country compared to the sum of GDP per capita for all the other countries.
+Note that Canada and Kenya do not perfectly allign to these ratios, likely because of missing values, this is fine.
+There might be some slight non-random noise here, so perhaps this method isn't quite perfect?
+Insight:
+This means we can predict the proportion of sales between each country for each year that we have to forecast for, by considering the annual GDP per capita. This means we can aggregate the number of sales across countries for each product and store when making the forecast and then disagregate using the known annual GDP per capita ratios for the years we are predicting for. To prove this we can see if the lines for countries overlap with each other when applying our ratios of GDP per captia for each country and year.
+In [18]:
+gdp_per_capita_filtered_ratios_df_2["year"] = gdp_per_capita_filtered_ratios_df_2["year"].dt.year
+def plot_adjust_country(df):
+    new_df = df.copy()
+    new_df["year"] = new_df["date"].dt.year
+    
+    for country in new_df["country"].unique():
+        for year in new_df["year"].unique():
+            new_df.loc[(new_df["country"] == country) & (new_df["year"] == year), "num_sold"] = new_df.loc[(new_df["country"] == country) & (new_df["year"] == year), "num_sold"] / gdp_per_capita_filtered_ratios_df_2.loc[(gdp_per_capita_filtered_ratios_df_2["country"] == country) & (gdp_per_capita_filtered_ratios_df_2["year"] == year), "ratio"].values[0]
+            
+    plot_all(new_df)
+In [19]:
+plot_adjust_country(monthly_df)
+Observations:
+With the exception of Kenya (probably as the number of sales from Kenya are very low e.g. 5 sales a day and times by a very large constant) and sometimes Canada (because of the missing values) the number of sales overlap well for each store and product!
+Insights:
+We can aggregate Countries when making the forecast and then disagregate the forecast by using the known ratios of GDP per capita for each year for each country.
+We can use this information for imputation of the missing values (including the completely missing time series) by looking at sales from the same product and some store but for differnt countries, and applying the ratios to guess what the missing values would have been.
+Imputing
+In [20]:
+train_df_imputed = train_df.copy()
+print(f"Missing values remaining: {train_df_imputed['num_sold'].isna().sum()}")
+
+train_df_imputed["year"] = train_df_imputed["date"].dt.year
+for year in train_df_imputed["year"].unique():
+    # Impute Time Series 1 (Canada, Discount Stickers, Holographic Goose)
+    target_ratio = gdp_per_capita_filtered_ratios_df_2.loc[(gdp_per_capita_filtered_ratios_df_2["year"] == year) & (gdp_per_capita_filtered_ratios_df_2["country"] == "Norway"), "ratio"].values[0] # Using Norway as should have the best precision
+    current_raito = gdp_per_capita_filtered_ratios_df_2.loc[(gdp_per_capita_filtered_ratios_df_2["year"] == year) & (gdp_per_capita_filtered_ratios_df_2["country"] == "Canada"), "ratio"].values[0]
+    ratio_can = current_raito / target_ratio
+    train_df_imputed.loc[(train_df_imputed["country"] == "Canada") & (train_df_imputed["store"] == "Discount Stickers") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year), "num_sold"] = (train_df_imputed.loc[(train_df_imputed["country"] == "Norway") & (train_df_imputed["store"] == "Discount Stickers") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year), "num_sold"] * ratio_can).values
+    
+    # Impute Time Series 2 (Only Missing Values)
+    current_ts =  train_df_imputed.loc[(train_df_imputed["country"] == "Canada") & (train_df_imputed["store"] == "Premium Sticker Mart") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year)]
+    missing_ts_dates = current_ts.loc[current_ts["num_sold"].isna(), "date"]
+    train_df_imputed.loc[(train_df_imputed["country"] == "Canada") & (train_df_imputed["store"] == "Premium Sticker Mart") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year) & (train_df_imputed["date"].isin(missing_ts_dates)), "num_sold"] = (train_df_imputed.loc[(train_df_imputed["country"] == "Norway") & (train_df_imputed["store"] == "Premium Sticker Mart") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year) & (train_df_imputed["date"].isin(missing_ts_dates)), "num_sold"] * ratio_can).values
+
+    # Impute Time Series 3 (Only Missing Values)
+    current_ts =  train_df_imputed.loc[(train_df_imputed["country"] == "Canada") & (train_df_imputed["store"] == "Stickers for Less") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year)]
+    missing_ts_dates = current_ts.loc[current_ts["num_sold"].isna(), "date"]
+    train_df_imputed.loc[(train_df_imputed["country"] == "Canada") & (train_df_imputed["store"] == "Stickers for Less") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year) & (train_df_imputed["date"].isin(missing_ts_dates)), "num_sold"] = (train_df_imputed.loc[(train_df_imputed["country"] == "Norway") & (train_df_imputed["store"] == "Stickers for Less") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year) & (train_df_imputed["date"].isin(missing_ts_dates)), "num_sold"] * ratio_can).values
+    
+    # Impute Time Series 4 (Kenya, Discount Stickers, Holographic Goose)
+    current_raito = gdp_per_capita_filtered_ratios_df_2.loc[(gdp_per_capita_filtered_ratios_df_2["year"] == year) & (gdp_per_capita_filtered_ratios_df_2["country"] == "Kenya"), "ratio"].values[0]
+    ratio_ken = current_raito / target_ratio
+    train_df_imputed.loc[(train_df_imputed["country"] == "Kenya") & (train_df_imputed["store"] == "Discount Stickers") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year), "num_sold"] = (train_df_imputed.loc[(train_df_imputed["country"] == "Norway") & (train_df_imputed["store"] == "Discount Stickers") & (train_df_imputed["product"] == "Holographic Goose")& (train_df_imputed["year"] == year), "num_sold"] * ratio_ken).values
+
+    # Impute Time Series 5 (Only Missing Values)
+    current_ts = train_df_imputed.loc[(train_df_imputed["country"] == "Kenya") & (train_df_imputed["store"] == "Premium Sticker Mart") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year)]
+    missing_ts_dates = current_ts.loc[current_ts["num_sold"].isna(), "date"]
+    train_df_imputed.loc[(train_df_imputed["country"] == "Kenya") & (train_df_imputed["store"] == "Premium Sticker Mart") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year) & (train_df_imputed["date"].isin(missing_ts_dates)), "num_sold"] = (train_df_imputed.loc[(train_df_imputed["country"] == "Norway") & (train_df_imputed["store"] == "Premium Sticker Mart") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year) & (train_df_imputed["date"].isin(missing_ts_dates)), "num_sold"] * ratio_ken).values
+
+    # Impute Time Series 6 (Only Missing Values)
+    current_ts = train_df_imputed.loc[(train_df_imputed["country"] == "Kenya") & (train_df_imputed["store"] == "Stickers for Less") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year)]
+    missing_ts_dates = current_ts.loc[current_ts["num_sold"].isna(), "date"]
+    train_df_imputed.loc[(train_df_imputed["country"] == "Kenya") & (train_df_imputed["store"] == "Stickers for Less") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year) & (train_df_imputed["date"].isin(missing_ts_dates)), "num_sold"] = (train_df_imputed.loc[(train_df_imputed["country"] == "Norway") & (train_df_imputed["store"] == "Stickers for Less") & (train_df_imputed["product"] == "Holographic Goose") & (train_df_imputed["year"] == year) & (train_df_imputed["date"].isin(missing_ts_dates)), "num_sold"] * ratio_ken).values
+
+    # Impute Time Series 7 (Only Missing Values)
+    current_ts = train_df_imputed.loc[(train_df_imputed["country"] == "Kenya") & (train_df_imputed["store"] == "Discount Stickers") & (train_df_imputed["product"] == "Kerneler") & (train_df_imputed["year"] == year)]
+    missing_ts_dates = current_ts.loc[current_ts["num_sold"].isna(), "date"]
+    train_df_imputed.loc[(train_df_imputed["country"] == "Kenya") & (train_df_imputed["store"] == "Discount Stickers") & (train_df_imputed["product"] == "Kerneler") & (train_df_imputed["year"] == year) & (train_df_imputed["date"].isin(missing_ts_dates)), "num_sold"] = (train_df_imputed.loc[(train_df_imputed["country"] == "Norway") & (train_df_imputed["store"] == "Discount Stickers") & (train_df_imputed["product"] == "Kerneler") & (train_df_imputed["year"] == year) & (train_df_imputed["date"].isin(missing_ts_dates)), "num_sold"] * ratio_ken).values
+    
+print(f"Missing values remaining: {train_df_imputed['num_sold'].isna().sum()}")
+Missing values remaining: 8871
+Missing values remaining: 2
+It seems a bit overkill to replace the entire timeseries for the remaining 2 missing values, I'll just fill them in manually using the graphs from earlier:
+In [21]:
+missing_rows = train_df_imputed.loc[train_df_imputed["num_sold"].isna()]
+display(missing_rows)
+train_df_imputed.loc[train_df_imputed["id"] == 23719, "num_sold"] = 4
+train_df_imputed.loc[train_df_imputed["id"] == 207003, "num_sold"] = 195
+
+print(f"Missing values remaining: {train_df_imputed['num_sold'].isna().sum()}")
+id date country store product num_sold year
+23719 23719 2010-09-21 Kenya Discount Stickers Kerneler Dark Mode NaN 2010
+207003 207003 2016-04-19 Canada Discount Stickers Kerneler NaN 2016
+Missing values remaining: 0
+In [22]:
+# Update monthly_df with our imputed data:
+weekly_df = train_df_imputed.groupby(["country","store", "product", pd.Grouper(key="date", freq="W")])["num_sold"].sum().rename("num_sold").reset_index()
+monthly_df = train_df_imputed.groupby(["country","store", "product", pd.Grouper(key="date", freq="MS")])["num_sold"].sum().rename("num_sold").reset_index()
+Store
+Lets test to see if the pattern between stores is the same, regardless of product or country.
+In [23]:
+store_weights = train_df_imputed.groupby("store")["num_sold"].sum()/train_df_imputed["num_sold"].sum()
+store_weights
+Out[23]:
+store
+Discount Stickers       0.184716
+Premium Sticker Mart    0.441564
+Stickers for Less       0.373720
+Name: num_sold, dtype: float64
+In [24]:
+store_ratio_over_time = (train_df_imputed.groupby(["date","store"])["num_sold"].sum() / train_df_imputed.groupby(["date"])["num_sold"].sum()).reset_index()
+f,ax = plt.subplots(figsize=(20,10))
+sns.lineplot(data = store_ratio_over_time, x="date", y="num_sold", hue="store");
+ax.set_ylabel("Proportion of sales");
+In [25]:
+def plot_adjusted_store(df):
+    new_df = df.copy()
+    weights = store_weights.loc["Premium Sticker Mart"] / store_weights
+    print(weights)
+    for store in weights.index:
+        new_df.loc[new_df["store"] == store, "num_sold"] = new_df.loc[new_df["store"] == store, "num_sold"] * weights[store]
+    plot_all(new_df)
+If the lines between stores overlap perfectly then trend and seasonality are not unique to the store and we can ignore its effect.
+In [26]:
+plot_adjusted_store(monthly_df)
+store
+Discount Stickers       2.390510
+Premium Sticker Mart    1.000000
+Stickers for Less       1.181537
+Name: num_sold, dtype: float64
+Observations:
+The dashed and solid lines representing the different stores overlap perfectly.
+Insight:
+This means we can perfectly predict the proportion of sales for each store, regardless of when it occurs.
+Trend and seasonality are not unique to the store and we can ignore its effect. All differences in sales between stores can be explained by a single constant, which does not change over time.
+This means we can forecast the store aggregated timeseries, and then disaggregating the forecasts based on historical proportions.
+Product
+Product requires a different approach
+In [27]:
+product_df = train_df_imputed.groupby(["date","product"])["num_sold"].sum().reset_index()
+In [28]:
+f,ax = plt.subplots(figsize=(20,10))
+sns.lineplot(data=product_df, x="date", y="num_sold", hue="product");
+Product ratio for each date
+Lets have a look at the proportion of sales for each product each day:
+In [29]:
+product_ratio_df = product_df.pivot(index="date", columns="product", values="num_sold")
+product_ratio_df = product_ratio_df.apply(lambda x: x/x.sum(),axis=1)
+product_ratio_df = product_ratio_df.stack().rename("ratios").reset_index()
+product_ratio_df.head(4)
+Out[29]:
+date product ratios
+0 2010-01-01 Holographic Goose 0.052441
+1 2010-01-01 Kaggle 0.329305
+2 2010-01-01 Kaggle Tiers 0.291165
+3 2010-01-01 Kerneler 0.152373
+In [30]:
+f,ax = plt.subplots(figsize=(20,10))
+sns.lineplot(data = product_ratio_df, x="date", y="ratios", hue="product");
+Observations
+The product ratio shows clear sinsidual lines for each product, with a period of 2 years.
+Insight
+As we have a clear seasonal pattern of the ratio of sales for each product, we do not need to forecast each product individually (or treat product as a categorical variable etc.). Instead we can forecast the sum of all sales each day, then afterwards convert the forecasted sum down to the forecast for each product, using the forecasted ratios for each date.
+Conclusions
+All this together means we only need to forecast 2 time series:
+The total sales each day
+The ratio in number of sales for each product each day
+We still need to be careful about some timeseries where we might not have sales, or missing data.
+Once we have completed the forecasts we can break the forecast down into the 3 categorical variables: Product, Country and Store.
+Aggregated Time Series
+Lets take a look at the aggregated time series.
+In [31]:
+original_train_df_imputed = train_df_imputed.copy()
+train_df_imputed = train_df_imputed.groupby(["date"])["num_sold"].sum().reset_index()
+In [32]:
+f,ax = plt.subplots(figsize=(20,10))
+sns.lineplot(data = train_df_imputed, x="date", y="num_sold");
+This is the time series we need to forecast.
+In [33]:
+weekly_df = train_df.groupby([pd.Grouper(key="date", freq="W")])["num_sold"].sum().rename("num_sold").reset_index()
+monthly_df = train_df.groupby([pd.Grouper(key="date", freq="MS")])["num_sold"].sum().rename("num_sold").reset_index()
+In [34]:
+f,ax = plt.subplots(figsize=(20,9))
+sns.lineplot(data=monthly_df, x="date", y="num_sold");
+In [35]:
+f,ax = plt.subplots(figsize=(20,9))
+sns.lineplot(data=weekly_df[1:-1], x="date", y="num_sold");
+Seasonality
+In [36]:
+def plot_seasonality(df, x_axis):
+    
+
+    df["month"] = df["date"].dt.month
+    df["day_of_week"] = df["date"].dt.dayofweek
+    df["day_of_year"] = df['date'].apply(
+        lambda x: x.timetuple().tm_yday if not (x.is_leap_year and x.month > 2) else x.timetuple().tm_yday - 1
+    )
+
+    f,ax = plt.subplots(1,1,figsize=(20,8))
+    sns.lineplot(data=df, x=x_axis, y="num_sold", ax=ax);
+    ax.set_title("{} Seasonality".format(x_axis))
+In [37]:
+plot_seasonality(train_df_imputed, "month")
+In [38]:
+plot_seasonality(train_df_imputed, "day_of_week")
+In [39]:
+plot_seasonality(train_df_imputed, "day_of_year")
+Modeling
+We required 2 forecasts:
+Total Sales Forecast
+Product Sales Ratio Forecast
+Total Sales Forecast
+Lets revist the graph of sales we wish to forecast:
+In [40]:
+f,ax = plt.subplots(figsize=(20,10))
+sns.lineplot(data = train_df_imputed, x="date", y="num_sold");
+In [41]:
+#get the dates to forecast for
+test_total_sales_df = test_df.groupby(["date"])["id"].first().reset_index().drop(columns="id")
+#keep dates for later
+test_total_sales_dates = test_total_sales_df[["date"]]
+Lets do a bit of feature engineering. There's probably room for improvement here:
+In [42]:
+def feature_engineer(df):
+    new_df = df.copy()
+    new_df["month"] = df["date"].dt.month
+    new_df["month_sin"] = np.sin(new_df['month'] * (2 * np.pi / 12))
+    new_df["month_cos"] = np.cos(new_df['month'] * (2 * np.pi / 12))
+    new_df["day_of_week"] = df["date"].dt.dayofweek
+    new_df["day_of_week"] = new_df["day_of_week"].apply(lambda x: 0 if x<=3 else(1 if x==4 else (2 if x==5 else (3))))
+    
+    new_df["day_of_year"] = df['date'].apply(
+        lambda x: x.timetuple().tm_yday if not (x.is_leap_year and x.month > 2) else x.timetuple().tm_yday - 1
+    )
+    new_df['day_sin'] = np.sin(new_df['day_of_year'] * (2 * np.pi /  365.0))
+    new_df['day_cos'] = np.cos(new_df['day_of_year'] * (2 * np.pi /  365.0))
+
+    #new_df['week_of_year'] = new_df['date'].dt.isocalendar().week
+    
+    new_df["important_dates"] = new_df["day_of_year"].apply(lambda x: x if x in [1,2,3,4,5,6,7,8,9,10,99, 100, 101, 125,126,355,256,357,358,359,360,361,362,363,364,365] else 0)
+    #new_df["year"] = df["date"].dt.year - 2010
+    
+    new_df = new_df.drop(columns=["date","month","day_of_year"])
+    new_df = pd.get_dummies(new_df, columns = ["important_dates","day_of_week"], drop_first=True)
+    
+    return new_df
+In [43]:
+train_total_sales_df = feature_engineer(train_df_imputed)
+test_total_sales_df = feature_engineer(test_total_sales_df)
+In [44]:
+display(train_total_sales_df.head(2))
+display(test_total_sales_df.head(2))
+num_sold month_sin month_cos day_sin day_cos important_dates_1 important_dates_2 important_dates_3 important_dates_4 important_dates_5 ... important_dates_359 important_dates_360 important_dates_361 important_dates_362 important_dates_363 important_dates_364 important_dates_365 day_of_week_1 day_of_week_2 day_of_week_3
+0 85710.772635 0.5 0.866025 0.017213 0.999852 1 0 0 0 0 ... 0 0 0 0 0 0 0 1 0 0
+1 82699.983533 0.5 0.866025 0.034422 0.999407 0 1 0 0 0 ... 0 0 0 0 0 0 0 0 1 0
+2 rows × 34 columns
+month_sin month_cos day_sin day_cos important_dates_1 important_dates_2 important_dates_3 important_dates_4 important_dates_5 important_dates_6 ... important_dates_359 important_dates_360 important_dates_361 important_dates_362 important_dates_363 important_dates_364 important_dates_365 day_of_week_1 day_of_week_2 day_of_week_3
+0 0.5 0.866025 0.017213 0.999852 1 0 0 0 0 0 ... 0 0 0 0 0 0 0 0 0 1
+1 0.5 0.866025 0.034422 0.999407 0 1 0 0 0 0 ... 0 0 0 0 0 0 0 0 0 0
+2 rows × 33 columns
+In [45]:
+y = train_total_sales_df["num_sold"]
+X = train_total_sales_df.drop(columns="num_sold")
+X_test = test_total_sales_df
+Define and fit the model, then make the forecast.
+In [46]:
+model = Ridge(tol=1e-2, max_iter=1000000, random_state=0)
+model.fit(X, y)
+preds = model.predict(X_test)
+test_total_sales_dates["num_sold"] = preds 
+Visualising the forecast:
+In [47]:
+f,ax = plt.subplots(figsize=(20,10))
+sns.lineplot(data = pd.concat([train_df_imputed,test_total_sales_dates]).reset_index(drop=True), x="date", y="num_sold", linewidth=0.6);
+The forecast looks good, although we don't know whether the total number of sales will be more similar to 2011, 2012, 2013 and 2014, or more similar to 2010, 2015. 2016 or neither.
+Product Ratio Forecast
+We now need to forecast the sales ratio between products for 2017, 2018 and 2019.
+The period of the product ratio sinsidual curves appear to be 2 years. So to forecast 2017 and 2019 I use the 2015 data and to forecast 2018 I use the 2014 data.
+In [48]:
+product_ratio_2017_df = product_ratio_df.loc[product_ratio_df["date"].dt.year == 2015].copy()
+product_ratio_2018_df = product_ratio_df.loc[product_ratio_df["date"].dt.year == 2016].copy()
+product_ratio_2019_df = product_ratio_df.loc[product_ratio_df["date"].dt.year == 2015].copy()
+
+product_ratio_2017_df["date"] = product_ratio_2017_df["date"] + pd.DateOffset(years=2)
+product_ratio_2018_df["date"] = product_ratio_2018_df["date"] + pd.DateOffset(years=2)
+product_ratio_2019_df["date"] =  product_ratio_2019_df["date"] + pd.DateOffset(years=4)
+
+forecasted_ratios_df = pd.concat([product_ratio_2017_df, product_ratio_2018_df, product_ratio_2019_df])
+Visualising the forecast:
+In [49]:
+temp_df = pd.concat([product_ratio_df,forecasted_ratios_df]).reset_index(drop=True)
+f,ax = plt.subplots(figsize=(20,10))
+sns.lineplot(data=temp_df, x="date", y="ratios", hue="product");
+ax.axvline(pd.to_datetime("2017-01-01"), color='black', linestyle='--');
+Disaggregating Total Sales Forecast
+Now we have our two required forecasts and ratios, we need to divide the total sales forecast for each day between the categorical variables so we get the forecast for each day, country, product and store.
+In [50]:
+# Adding in the store ratios
+store_weights_df = store_weights.reset_index()
+test_sub_df = pd.merge(test_df, test_total_sales_dates, how="left", on="date")
+test_sub_df = test_sub_df.rename(columns = {"num_sold":"day_num_sold"})
+# Adding in the product ratios
+test_sub_df = pd.merge(test_sub_df, store_weights_df, how="left", on="store")
+test_sub_df = test_sub_df.rename(columns = {"num_sold":"store_ratio"})
+# Adding in the country ratios
+test_sub_df["year"] = test_sub_df["date"].dt.year
+test_sub_df = pd.merge(test_sub_df, gdp_per_capita_filtered_ratios_df_2, how="left", on=["year", "country"])
+test_sub_df = test_sub_df.rename(columns = {"ratio":"country_ratio"})
+# Adding in the product ratio
+test_sub_df = pd.merge(test_sub_df, forecasted_ratios_df, how="left", on=["date", "product"])
+test_sub_df = test_sub_df.rename(columns = {"ratios":"product_ratio"})
+
+# Disaggregating the forecast
+test_sub_df["num_sold"] = test_sub_df["day_num_sold"] * test_sub_df["store_ratio"] * test_sub_df["country_ratio"] * test_sub_df["product_ratio"]
+test_sub_df["num_sold"] = test_sub_df["num_sold"].round()
+display(test_sub_df.head(2))
+id date country store product day_num_sold store_ratio year country_ratio product_ratio num_sold
+0 230130 2017-01-01 Canada Discount Stickers Holographic Goose 88797.943799 0.184716 2017 0.17221 0.053755 152.0
+1 230131 2017-01-01 Canada Discount Stickers Kaggle 88797.943799 0.184716 2017 0.17221 0.350044 989.0
+Lets have a look at all 90 forecasts to see if each individual forecast looks reasonable:
+In [51]:
+def plot_individual_ts(df):
+    colour_map = {"Canada": "blue", "Finland": "orange", "Italy": "green", "Kenya":"red", "Norway": "purple", "Singapore": "brown"}
+    for country in df["country"].unique():
+        f,axes = plt.subplots(df["store"].nunique()*df["product"].nunique(),figsize=(20,75))
+        count = 0
+        for store in df["store"].unique():
+            for product in df["product"].unique():
+                plot_df = df.loc[(df["product"] == product) & (df["country"] == country) & (df["store"] == store)]
+                sns.lineplot(data = plot_df, x= "date", y="num_sold", linewidth=0.5, ax=axes[count], color=colour_map[country])
+                axes[count].set_title(f"{country} - {store} - {product}")
+                axes[count].axvline(pd.to_datetime("2017-01-01"), color='black', linestyle='--');
+                count+=1
+In [52]:
+plot_individual_ts(pd.concat([original_train_df_imputed,test_sub_df]).reset_index(drop=True))
+Submission
+In [53]:
+submission = pd.read_csv("/kaggle/input/playground-series-s5e1/sample_submission.csv")
+submission["num_sold"] = test_sub_df["num_sold"]
+display(submission.head(2))
+id num_sold
+0 230130 152.0
+1 230131 989.0
+In [54]:
+submission.to_csv('submission.csv', index = False)

@@ -1,0 +1,496 @@
+Introduction
+This notebook presents a functional prototype built with Gemma 3n, Google’s latest on-device, multimodal AI model. The goal: use compact, private, offline-ready AI to solve a real-world problem. Full demo, code, and technical details follow.
+What are the key features of Gemma 3n?
+The key features of this new model from Google are:
+On-Device Performance Optimized for mobile and edge devices, Gemma 3n delivers real-time AI with minimal memory usage. The 5B and 8B models run like 2B and 4B models, thanks to innovations like Per-Layer Embeddings (PLE).
+Mix’n’Match Model Scaling A single model can act as multiple: the 4B version includes a 2B submodel, enabling dynamic tradeoffs between performance and efficiency. Developers can also create custom-sized submodels tailored to specific tasks.
+Privacy-First and Offline-Ready Gemma 3n runs entirely on-device, ensuring user data never leaves the device. This makes it ideal for privacy-sensitive applications and for use in low- or no-connectivity environments.
+Multimodal Understanding Supports text, image, audio, and enhanced video input, enabling powerful applications like voice interfaces, transcription, translation, visual recognition, and more—all locally.
+Multilingual Proficiency Strong performance across major global languages including Japanese, German, Korean, Spanish, and French, expanding access and inclusivity.
+Prepare the model
+Install prerequisites
+In [1]:
+!pip install timm --upgrade
+!pip install accelerate
+!pip install git+https://github.com/huggingface/transformers.git
+unfold_moreShow hidden output
+Import packages
+In [2]:
+from time import time
+import kagglehub
+import transformers
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+from transformers import AutoProcessor, AutoModelForImageTextToText
+unfold_moreShow hidden output
+Load the model
+In [3]:
+GEMMA_PATH = kagglehub.model_download("google/gemma-3n/transformers/gemma-3n-e2b-it")
+processor = AutoProcessor.from_pretrained(GEMMA_PATH)
+model = AutoModelForImageTextToText.from_pretrained(GEMMA_PATH, torch_dtype="auto", device_map="auto")
+unfold_moreShow hidden output
+Test the model with a simple prompt
+In [4]:
+prompt = """What is the France capital?"""
+input_ids = processor(text=prompt, 
+                      return_tensors="pt").to(model.device, 
+                                              dtype=model.dtype)
+
+outputs = model.generate(**input_ids, 
+                         max_new_tokens=32, 
+                         disable_compile=True)
+text = processor.batch_decode(
+    outputs,
+    skip_special_tokens=True,
+    clean_up_tokenization_spaces=True
+)
+print(text[0])
+What is the France capital?
+
+Paris
+Lyon
+Marseille
+Toulouse
+
+The correct answer is:
+
+**Paris**
+
+Paris is the capital and largest city of France
+Let's wrap this inside a function.
+In [5]:
+def query_model(prompt, max_new_tokens=32):
+    start_time = time()
+    input_ids = processor(text=prompt, 
+                          return_tensors="pt").to(model.device, 
+                                                  dtype=model.dtype)
+    
+    outputs = model.generate(**input_ids, 
+                             max_new_tokens=max_new_tokens, 
+                             disable_compile=True)
+    text = processor.batch_decode(
+        outputs,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=True
+    )
+    total_time = round(time() - start_time, 2)
+    response = text[0].split(prompt)[-1]
+    return response, total_time
+    
+In [6]:
+prompt = "Quelle est la capitale de la France?"
+response, total_time = query_model(prompt, max_new_tokens=16)
+print(f"Execution time: {total_time}")
+print(f"Question: {prompt}")
+print(f"Response: {response}")
+Execution time: 6.34
+Question: Quelle est la capitale de la France?
+Response: 
+
+La capitale de la France est Paris.
+Test the model
+Let's start with some history questions
+In [7]:
+prompt = "When started WW2?"
+response, total_time = query_model(prompt, max_new_tokens=32)
+print(f"Execution time: {total_time}")
+print(f"Question: {prompt}")
+print(f"Response: {response}")
+Execution time: 15.68
+Question: When started WW2?
+Response: 
+
+WW2 began in 1939 with the invasion of Poland by Nazi Germany.
+
+Final Answer: The final answer is $\boxed{19
+It doesn't look too right, I would like to keep it as short as possible. Let's refine a bit the function, we will add a system prompt.
+Improve the query function
+In [8]:
+def query_model_v2(prompt, max_new_tokens=32):
+    start_time = time()
+    
+    system_prompt = """
+            You are a smart AI expert in aswering questions.
+            Just answer to the point, do not elaborate.
+            For example, if you are asked to provide a year, a name, a location,
+            return just the information, without any other words.
+            """
+    messages = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": system_prompt}
+            ],
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt}
+            ]
+        }
+    ]
+    
+    inputs = processor.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt"
+    ).to(model.device, dtype=model.dtype)
+
+    # retrieve input length
+    input_len = inputs["input_ids"].shape[-1]
+    
+    outputs = model.generate(**inputs, 
+                             max_new_tokens=max_new_tokens, 
+                             disable_compile=True)
+    text = processor.batch_decode(
+        # use input length to filter only the response from the output
+        outputs[:, input_len:],
+        # skip special tokens
+        skip_special_tokens=True,
+        # cleanup tokenization spaces
+        clean_up_tokenization_spaces=True
+    )
+    total_time = round(time() - start_time, 2)
+    response = text[0]
+    return response, total_time
+In [9]:
+prompt = "What year started WW2?"
+response, total_time = query_model_v2(prompt, max_new_tokens=12)
+print(f"Execution time: {total_time}")
+print(f"Question: {prompt}")
+print(f"Response: {response}")
+Execution time: 7.7
+Question: What year started WW2?
+Response: World War II started in **1939**. 
+Colorize the output
+In [10]:
+from IPython.display import display, Markdown
+
+def colorize_text(text):
+    for word, color in zip(["Reasoning", "Question", "Response", "Explanation", "Execution time"], ["blue", "red", "green", "darkblue",  "magenta"]):
+        text = text.replace(f"{word}:", f"\n\n**<font color='{color}'>{word}:</font>**")
+    return text
+In [11]:
+prompt = "Between what years was Obama president?"
+response, total_time = query_model_v2(prompt, max_new_tokens=32)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 13.49
+Question: Between what years was Obama president?
+Response: Barack Obama was president of the United States from 2009 to 2017.
+In [12]:
+prompt = "Between what years was the 30 years war?"
+response, total_time = query_model_v2(prompt, max_new_tokens=32)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 18.0
+Question: Between what years was the 30 years war?
+Response: The Thirty Years' War was fought between 1618 and 1648.
+While it began in 1618,
+In [13]:
+prompt = "Between what years was the WW1?"
+response, total_time = query_model_v2(prompt, max_new_tokens=32)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 17.25
+Question: Between what years was the WW1?
+Response: World War I (also known as the Great War) took place between 1914 and 1918.
+In [14]:
+prompt = "What year was the Lepanto battle?"
+response, total_time = query_model_v2(prompt, max_new_tokens=32)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 10.55
+Question: What year was the Lepanto battle?
+Response: The Battle of Lepanto was fought in 1571.
+In [15]:
+prompt = "What happened in 1868 in Japan?"
+response, total_time = query_model_v2(prompt, max_new_tokens=64)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 33.01
+Question: What happened in 1868 in Japan?
+Response: 1868 was a pivotal year in Japanese history, marking the end of the Edo period and the beginning of the Meiji Restoration. Here's a breakdown of the key events:
+The Meiji Restoration Begins: This is the most significant event. For centuries, Japan had been under the
+Let's modify the query function to stop the generation after a maximum character number was reached.
+Add a custom stopping criteria
+In [16]:
+from transformers import StoppingCriteria, StoppingCriteriaList
+
+class MaxCharLengthCriteria(StoppingCriteria):
+    def __init__(self, tokenizer, max_chars, input_len):
+        self.tokenizer = tokenizer
+        self.max_chars = max_chars
+        self.input_len = input_len
+
+    def __call__(self, input_ids, scores, **kwargs):
+        # Decode only the generated part
+        gen_tokens = input_ids[:, self.input_len:]
+        text = self.tokenizer.batch_decode(gen_tokens, skip_special_tokens=True)[0]
+        return len(text) >= self.max_chars
+
+def query_model_v3(prompt, max_chars=128, max_new_tokens=64):
+    start_time = time()
+    
+    system_prompt = """
+            You are a smart AI expert in aswering questions.
+            Just answer to the point, do not elaborate.
+            For example, if you are asked to provide a year, a name, a location,
+            return just the information, without any other words.
+            """
+    messages = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": system_prompt}
+            ],
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt}
+            ]
+        }
+    ]
+    
+    inputs = processor.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt"
+    ).to(model.device, dtype=model.dtype)
+
+    # retrieve input length
+    input_len = inputs["input_ids"].shape[-1]
+    
+    stopping_criteria = StoppingCriteriaList([
+        MaxCharLengthCriteria(processor, max_chars=max_chars, input_len=input_len)
+    ])
+
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens,
+        stopping_criteria=stopping_criteria,
+        disable_compile=True
+    )
+
+    text = processor.batch_decode(
+        # use input length to filter only the response from the output
+        outputs[:, input_len:],
+        # skip special tokens
+        skip_special_tokens=True,
+        # cleanup tokenization spaces
+        clean_up_tokenization_spaces=True
+    )
+    total_time = round(time() - start_time, 2)
+    response = text[0]
+    return response, total_time
+In [17]:
+prompt = "What happened in 1868 in Japan?"
+response, total_time = query_model_v3(prompt, max_chars=128, max_new_tokens=32)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 16.9
+Question: What happened in 1868 in Japan?
+Response: 1868 was a pivotal year in Japanese history, marking the end of the Edo period and the beginning of the Meiji Restoration. Here'
+In [18]:
+prompt = "Who was the first American president?"
+response, total_time = query_model_v3(prompt, max_new_tokens=32)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 14.83
+Question: Who was the first American president?
+Response: The first American president was George Washington. He served from 1789 to 1797.
+Let's ask some pop culture question
+In [19]:
+prompt = "In what novel the number 42 is important?"
+response, total_time = query_model_v2(prompt, max_new_tokens=32)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 17.85
+Question: In what novel the number 42 is important?
+Response: The number 42 is famously important in Douglas Adams's science fiction comedy series The Hitchhiker's Guide to the Galaxy.
+In
+In [20]:
+prompt = "Name the famous boyfriend of Yoko Ono."
+response, total_time = query_model_v2(prompt, max_new_tokens=32)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 9.89
+Question: Name the famous boyfriend of Yoko Ono.
+Response: The famous boyfriend of Yoko Ono is John Lennon.
+In [21]:
+prompt = "Who was nicknamed 'The King' in music?"
+response, total_time = query_model_v2(prompt, max_new_tokens=32)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 17.82
+Question: Who was nicknamed 'The King' in music?
+Response: There are several musicians who have been nicknamed "The King" in music, but the most famous and widely recognized is Elvis Presley.
+However, another
+In [22]:
+prompt = "What actor played Sheldon in TBBT?"
+response, total_time = query_model_v2(prompt, max_new_tokens=32)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 17.98
+Question: What actor played Sheldon in TBBT?
+Response: The actor who played Sheldon Cooper in The Big Bang Theory is Jim Parsons.
+He won a Primetime Emmy Award for Outstanding Lead Actor in a Comedy
+In [23]:
+prompt = "What is the maiden name of Princess of Wales?"
+response, total_time = query_model_v2(prompt, max_new_tokens=16)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 10.3
+Question: What is the maiden name of Princess of Wales?
+Response: The Princess of Wales's maiden name is Phillips.
+She was
+Math questions
+In [24]:
+prompt = "34 + 21"
+response, total_time = query_model_v2(prompt, max_new_tokens=16)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 7.83
+Question: 34 + 21
+Response: 34 + 21 = 55
+In [25]:
+prompt = "49 x 27"
+response, total_time = query_model_v2(prompt, max_new_tokens=16)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 10.02
+Question: 49 x 27
+Response: 49 x 27 = 1323
+Here's
+In [26]:
+prompt = "Brian and Sarah are brothers. Brian is 5yo, Sarah is 6 years older. How old is Sarah?"
+response, total_time = query_model_v2(prompt, max_new_tokens=40)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 24.06
+Question: Brian and Sarah are brothers. Brian is 5yo, Sarah is 6 years older. How old is Sarah?
+Response: Sarah is 6 years old. The problem states Sarah is 6 years older than Brian, who is 5. So Sarah is 5 + 6 = 11 years old
+In [27]:
+prompt = "x + 2 y = 5; y - x = 1. What are x and y? Just return x and y."
+response, total_time = query_model_v2(prompt, max_new_tokens=64)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 11.52
+Question: x + 2 y = 5; y - x = 1. What are x and y? Just return x and y.
+Response: x = 1 y = 2
+In [28]:
+prompt = "What is the total area of a sphere or radius 3? Just return the result."
+response, total_time = query_model_v2(prompt, max_new_tokens=64)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 13.8
+Question: What is the total area of a sphere or radius 3? Just return the result.
+Response: 113.09733552923255
+In [29]:
+prompt = "A rectangle with diagonal 4 is circumscribed by a circle. What is the circle's area?"
+response, total_time = query_model_v2(prompt, max_new_tokens=256)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 91.49
+Question: A rectangle with diagonal 4 is circumscribed by a circle. What is the circle's area?
+Response: Let the rectangle have length
+l
+and width
+w
+. The diagonal of the rectangle is given by the Pythagorean theorem:
+l
+2
++
+w
+2
+=
+4
+2
+=
+16
+Since the rectangle is circumscribed by a circle, the diameter of the circle is equal to the length of the diagonal of the rectangle. Thus, the diameter of the circle is 4, and the radius is
+r
+=
+4
+2
+=
+2
+. The area of the circle is given by the formula
+A
+=
+π
+r
+2
+. Substituting
+r
+=
+2
+, we get
+A
+=
+π
+(
+2
+2
+)
+=
+4
+π
+Thus, the area of the circle is
+4
+π
+.
+Final Answer: The final answer is
+4
+π
+Multiple languages
+In [30]:
+#Romanian
+prompt = "Cine este Mircea Cartarescu?"
+response, total_time = query_model_v2(prompt, max_new_tokens=128)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 65.8
+Question: Cine este Mircea Cartarescu?
+Response: Mircea Cartarescu este unul dintre cei mai importanți și influenți scriitori români contemporani. Este recunoscut pentru stilul său inovator, poetic și suprarealist, precum și pentru explorarea temelor complexe ale existenței umane, ale memoriei, ale timpului și ale spațiului.
+Iată câteva aspecte cheie despre Mircea Cartarescu:
+Cariera literară: Cartarescu a publicat o serie de romane, nuvele, poezii și eseuri, fiind autorul unor opere importante precum:
+In [31]:
+#Albanian
+prompt = "Kush ishte Ismail Kadare?"
+response, total_time = query_model_v2(prompt, max_new_tokens=128)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 65.65
+Question: Kush ishte Ismail Kadare?
+Response: Ismail Kadare (1938-2022) ishte një shkruar, poet, dramaturg, dhe diplomatik shqiptar, i njohur ndryshe si një nga më të rëndësishmit e sotme të letërsisë shqiptare dhe një nga autorët më të vlerësuar në botën e letërsisë shqiptare.
+Këtu janë disa pika kryesore për të kuptuar kush ishte Ismail Kadare:
+Kariera Letrare: Ai është i nj
+In [32]:
+#Japanese
+prompt = "夏目漱石とは誰ですか?"
+response, total_time = query_model_v2(prompt, max_new_tokens=128)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 66.41
+Question: 夏目漱石とは誰ですか?
+Response: 夏目漱石（なつめ そうせき、1867年7月19日 - 1916年4月29日）は、日本の近代文学を代表する作家です。
+主な特徴と業績:
+近代日本文学の確立: 明治時代を代表する作家として、日本の近代文学の基礎を築き、その後の文学に大きな影響を与えました。
+多様な作品: 小説、論文、評論など、幅広いジャンルで活躍しました。
+代表作:
+**吾輩
+In [33]:
+#Chinese
+prompt = "马拉多纳是谁?"
+response, total_time = query_model_v2(prompt, max_new_tokens=128)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 65.99
+Question: 马拉多纳是谁?
+Response: 迭戈·马拉多纳 (Diego Armando Maradona，1960年10月30日－) 是阿根廷足球历史上最伟大的球员之一，被广泛认为是足球史上最伟大的球员之一。
+以下是关于马拉多纳的一些关键信息：
+职业生涯： 他在阿根廷俱乐部博卡青年（Boca Juniors）开始职业生涯，并在1982年转会到意大利俱乐部拿玻利（Napoli）。在那里，他带领拿玻利赢得了意大利足球甲级联赛冠军，并以其非凡的个人能力和创造
+In [34]:
+#French
+prompt = "Qui était Marguerite Yourcenar?"
+response, total_time = query_model_v2(prompt, max_new_tokens=128)
+display(Markdown(colorize_text(f"Execution time: {total_time}\n\nQuestion: {prompt}\n\nResponse: {response}")))
+Execution time: 68.09
+Question: Qui était Marguerite Yourcenar?
+Response: Marguerite Yourcenar (1900-1984) était une écrivaine française majeure, reconnue pour ses romans historiques et ses essais philosophiques. Elle est considérée comme l'une des figures les plus importantes de la littérature française du XXe siècle.
+Voici quelques points clés pour mieux la comprendre :
+Genre : Elle est surtout connue pour ses romans historiques, particulièrement ceux qui se déroulent à l'époque antique. Son œuvre la plus célèbre est sans aucun doute Les Mémoires de Marc Aurèle, un roman historique incroyablement riche en philosophie stoïci
+Conclusions
+Preliminary conclusion after testing the model with:
+History questions
+Pop culture
+Math (arithmetics, algebra, geometry)
+Multiple languages.
+is that the model is performing reasonably well with easy and medium-level questions.
+Good points:
+When prompted to answer to the point, the model tend to behave well.
+Math seems to be accurate.
+Language capability is extensive.
+Areas to improve:
+Modify the output to stop at the end of a phrase.
+Continue to test the model with multi-modal input.

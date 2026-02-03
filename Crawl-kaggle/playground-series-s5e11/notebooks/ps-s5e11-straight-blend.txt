@@ -1,0 +1,381 @@
+unfold_moreShow hidden cell
+The four datasets presented here concentrate the results of public solutions
+version 1
+Lb = 0.92_698
+In [2]:
+df_92600 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92600.csv')
+df_92620 = pd.read_csv('/kaggle/input/4-november-2025-ps-s5e11/submission 0.92620.csv')
+df_92668 = pd.read_csv('/kaggle/input/4-november-2025-ps-s5e11/submission 0.92668.csv')
+
+df1 = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+
+df1['loan_paid_back'] = \
+    df_92600['loan_paid_back'] * 0.33333 + \
+    df_92620['loan_paid_back'] * 0.33333 + \
+    df_92668['loan_paid_back'] * 0.33334
+
+df1
+Out[2]:
+id loan_paid_back
+0 593994 0.941503
+1 593995 0.950655
+2 593996 0.289197
+3 593997 0.901141
+4 593998 0.951470
+... ... ...
+254564 848558 0.976754
+254565 848559 0.867223
+254566 848560 0.929535
+254567 848561 0.970141
+254568 848562 0.932742
+254569 rows × 2 columns
+version 2
+LB = 0.89_088
+In [3]:
+df_92603 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92603.csv')
+df_92632 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92632.csv')
+df_92643 = pd.read_csv('/kaggle/input/03-november-2025-ps-s5e11/submission 0.92643.csv')
+
+df2 = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+
+df2['loan_paid_back'] = \
+    df_92603['loan_paid_back'] * 0.33333 + \
+    df_92632['loan_paid_back'] * 0.33333 + \
+    df_92643['loan_paid_back'] * 0.33334
+
+df2
+Out[3]:
+id loan_paid_back
+0 593994 0.654268
+1 593995 0.648434
+2 593996 0.546897
+3 593997 0.918530
+4 593998 0.734320
+... ... ...
+254564 848558 0.986838
+254565 848559 0.886087
+254566 848560 0.885240
+254567 848561 0.958258
+254568 848562 0.933294
+254569 rows × 2 columns
+version 3
+LB = 0.92_732
+In [4]:
+df_92684 = pd.read_csv('/kaggle/input/03-november-2025-ps-s5e11/submission 0.92684.csv')
+df_92683 = pd.read_csv('/kaggle/input/03-november-2025-ps-s5e11/submission 0.92683.csv')
+df_92672 = pd.read_csv('/kaggle/input/03-november-2025-ps-s5e11/submission 0.92672.csv')
+df_92601 = pd.read_csv('/kaggle/input/03-november-2025-ps-s5e11/submission 0.92601.csv')
+
+df3 = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+
+df3['loan_paid_back'] = \
+    df_92684['loan_paid_back'] * 0.25 + \
+    df_92683['loan_paid_back'] * 0.25 + \
+    df_92672['loan_paid_back'] * 0.25 + \
+    df_92601['loan_paid_back'] * 0.25
+
+df3
+Out[4]:
+id loan_paid_back
+0 593994 0.949914
+1 593995 0.965783
+2 593996 0.477924
+3 593997 0.896164
+4 593998 0.970530
+... ... ...
+254564 848558 0.992488
+254565 848559 0.813194
+254566 848560 0.948847
+254567 848561 0.984746
+254568 848562 0.947849
+254569 rows × 2 columns
+version 4
+LB = 0.92_694
+In [5]:
+df_92664 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92664.csv')
+df_92677 = pd.read_csv('/kaggle/input/4-november-2025-ps-s5e11/submission 0.92677.csv')
+df_92655 = pd.read_csv('/kaggle/input/03-november-2025-ps-s5e11/submission 0.92655.csv')
+df_92657 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92657.csv')
+
+df4 = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+
+df4['loan_paid_back'] = \
+    df_92664['loan_paid_back'] * 0.25 + \
+    df_92677['loan_paid_back'] * 0.25 + \
+    df_92655['loan_paid_back'] * 0.25 + \
+    df_92657['loan_paid_back'] * 0.25
+
+df4
+Out[5]:
+id loan_paid_back
+0 593994 0.952416
+1 593995 0.962046
+2 593996 0.461797
+3 593997 0.896592
+4 593998 0.965077
+... ... ...
+254564 848558 0.992559
+254565 848559 0.810456
+254566 848560 0.942304
+254567 848561 0.985705
+254568 848562 0.947094
+254569 rows × 2 columns
+version 5
+LB = 0.92_661
+In [6]:
+df_92643 = pd.read_csv('/kaggle/input/03-november-2025-ps-s5e11/submission 0.92643.csv')
+df_92712 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92712.csv')
+df_92603 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92603.csv')
+df_92353 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92353.csv')
+
+df5 = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+
+df5['loan_paid_back'] = \
+    df_92643['loan_paid_back'] * 0.25 + \
+    df_92712['loan_paid_back'] * 0.25 + \
+    df_92603['loan_paid_back'] * 0.25 + \
+    df_92353['loan_paid_back'] * 0.25
+
+df5
+Out[6]:
+id loan_paid_back
+0 593994 0.943738
+1 593995 0.972753
+2 593996 0.461536
+3 593997 0.922714
+4 593998 0.963386
+... ... ...
+254564 848558 0.993394
+254565 848559 0.848638
+254566 848560 0.953102
+254567 848561 0.986892
+254568 848562 0.957326
+254569 rows × 2 columns
+Version 7
+LB = 0.92758
+In [7]:
+df1_0_92760 = pd.read_csv('/kaggle/input/ps-s5e11-h-blend-third-glance-1/submission.csv')
+df2_0_92756 = pd.read_csv('/kaggle/input/ps-s5e11-h-blend-third-glance-2/submission.csv')
+df3_0_92600 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92600.csv')
+
+df7 = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+
+df7['loan_paid_back'] = \
+    df1_0_92760['loan_paid_back'] * 0.500 + \
+    df2_0_92756['loan_paid_back'] * 0.493 + \
+    df3_0_92600['loan_paid_back'] * 0.007
+
+df7
+Out[7]:
+id loan_paid_back
+0 593994 0.951336
+1 593995 0.971817
+2 593996 0.427702
+3 593997 0.927996
+4 593998 0.972130
+... ... ...
+254564 848558 0.985981
+254565 848559 0.874714
+254566 848560 0.952788
+254567 848561 0.981308
+254568 848562 0.961556
+254569 rows × 2 columns
+Version 8
+LB = 0.92761
+In [8]:
+df1_0_92760 = pd.read_csv('/kaggle/input/ps-s5e11-h-blend-third-glance-1/submission.csv')
+df2_0_92761 = pd.read_csv('/kaggle/input/ps-s5e11-cycle-1/submission.csv')
+
+df8 = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+
+df8['loan_paid_back'] = \
+    df1_0_92760['loan_paid_back'] * 0.50 + \
+    df2_0_92761['loan_paid_back'] * 0.50
+
+df8
+Out[8]:
+id loan_paid_back
+0 593994 0.914805
+1 593995 0.934099
+2 593996 0.419682
+3 593997 0.891846
+4 593998 0.934812
+... ... ...
+254564 848558 0.947946
+254565 848559 0.839914
+254566 848560 0.916676
+254567 848561 0.943503
+254568 848562 0.924172
+254569 rows × 2 columns
+Version 9
+LB = 0.92760
+In [9]:
+df1_0_92762 = pd.read_csv('/kaggle/input/ps-s5e11-h-blend-third-glance-1/submission.csv')
+df2_0_92558 = pd.read_csv('/kaggle/input/ps5e11-pytorch-nn-baseline-with-gqa/submission_9.csv')
+
+df9 = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+
+df9['loan_paid_back'] = \
+    df1_0_92762['loan_paid_back'] * 0.9995 + \
+    df2_0_92558['loan_paid_back'] * 0.0005
+
+display(pd.merge(df9, df1_0_92762, on='id'))
+
+df9
+id loan_paid_back_x loan_paid_back_y
+0 593994 0.942582 0.942581
+1 593995 0.962764 0.962762
+2 593996 0.433434 0.433430
+3 593997 0.918747 0.918733
+4 593998 0.963444 0.963443
+... ... ... ...
+254564 848558 0.977239 0.977230
+254565 848559 0.864187 0.864191
+254566 848560 0.944520 0.944525
+254567 848561 0.972594 0.972587
+254568 848562 0.952571 0.952564
+254569 rows × 3 columns
+Out[9]:
+id loan_paid_back
+0 593994 0.942582
+1 593995 0.962764
+2 593996 0.433434
+3 593997 0.918747
+4 593998 0.963444
+... ... ...
+254564 848558 0.977239
+254565 848559 0.864187
+254566 848560 0.944520
+254567 848561 0.972594
+254568 848562 0.952571
+254569 rows × 2 columns
+Version 10
+In [10]:
+df1_0_92756 = pd.read_csv('/kaggle/input/11-november-2025-ps-s5e11/submission 0.92756.csv')
+df2_0_92740 = pd.read_csv('/kaggle/input/11-november-2025-ps-s5e11/submission 0.92740.csv')
+df3_0_92558 = pd.read_csv('/kaggle/input/11-november-2025-ps-s5e11/submission 0.92558.csv')
+
+df10 = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+
+df10['loan_paid_back'] = \
+    df1_0_92756['loan_paid_back'] * 0.600 + \
+    df2_0_92740['loan_paid_back'] * 0.230 + \
+    df3_0_92558['loan_paid_back'] * 0.170
+
+df = pd.merge(df1_0_92756, pd.merge(df2_0_92740, df3_0_92558, on='id'), on='id')
+
+df = df.rename(columns={
+    'loan_paid_back'  :'0_92756',
+    'loan_paid_back_x':'0_92740',
+    'loan_paid_back_y':'0_92558'}
+)
+
+display(df)
+
+df10
+id 0_92756 0_92740 0_92558
+0 593994 0.948534 0.927789 0.944043
+1 593995 0.954609 0.951199 0.966113
+2 593996 0.417144 0.354397 0.441357
+3 593997 0.930344 0.905499 0.946484
+4 593998 0.956348 0.949503 0.965625
+... ... ... ... ...
+254564 848558 0.962193 0.964367 0.994727
+254565 848559 0.898341 0.855020 0.855664
+254566 848560 0.945350 0.929433 0.933691
+254567 848561 0.960234 0.958788 0.986523
+254568 848562 0.952038 0.938474 0.964941
+254569 rows × 4 columns
+Out[10]:
+id loan_paid_back
+0 593994 0.942999
+1 593995 0.955780
+2 593996 0.406828
+3 593997 0.927374
+4 593998 0.956350
+... ... ...
+254564 848558 0.968224
+254565 848559 0.881122
+254566 848560 0.939707
+254567 848561 0.964370
+254568 848562 0.951112
+254569 rows × 2 columns
+Version.11
+In [11]:
+df1_0_92764 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92764.csv')
+df2_0_92766 = pd.read_csv('/kaggle/input/8-november-2025-ps-s5e11/submission 0.92766.csv')
+
+
+df11 = pd.read_csv('/kaggle/input/playground-series-s5e11/sample_submission.csv')
+
+df11['loan_paid_back'] = \
+    df1_0_92764['loan_paid_back'] * 0.03 + \
+    df2_0_92766['loan_paid_back'] * 0.97
+
+df = pd.merge(df1_0_92764, df2_0_92766, on='id')
+
+df = df.rename(columns={
+    'loan_paid_back_x':'0_92764',
+    'loan_paid_back_y':'0_92766'}
+)
+
+display(df)
+
+df11
+id 0_92764 0_92766
+0 593994 0.947534 0.949254
+1 593995 0.966453 0.969221
+2 593996 0.436315 0.439592
+3 593997 0.926179 0.924763
+4 593998 0.966434 0.968640
+... ... ... ...
+254564 848558 0.977057 0.979073
+254565 848559 0.867108 0.859414
+254566 848560 0.947887 0.948564
+254567 848561 0.973631 0.975716
+254568 848562 0.957791 0.958766
+254569 rows × 3 columns
+Out[11]:
+id loan_paid_back
+0 593994 0.949202
+1 593995 0.969138
+2 593996 0.439494
+3 593997 0.924806
+4 593998 0.968574
+... ... ...
+254564 848558 0.979012
+254565 848559 0.859645
+254566 848560 0.948543
+254567 848561 0.975653
+254568 848562 0.958736
+254569 rows × 2 columns
+Submit
+In [12]:
+df = df1  # LB=0.92_698
+df = df2  # LB=0.89_088
+df = df3  # LB=0.92_732
+df = df4  # LB=0.92_694
+df = df5  # LB=0.92_661
+df = df7  # LB=0.92_758
+df = df8  # LB=0.92_761
+df = df9  # LB=0.92_760
+df = df10 # LB=0.92_734
+
+df = df11
+In [13]:
+df.to_csv('submission.csv',index=False)
+df
+Out[13]:
+id loan_paid_back
+0 593994 0.949202
+1 593995 0.969138
+2 593996 0.439494
+3 593997 0.924806
+4 593998 0.968574
+... ... ...
+254564 848558 0.979012
+254565 848559 0.859645
+254566 848560 0.948543
+254567 848561 0.975653
+254568 848562 0.958736
+254569 rows × 2 columns

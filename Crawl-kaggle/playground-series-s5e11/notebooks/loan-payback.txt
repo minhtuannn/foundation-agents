@@ -1,0 +1,311 @@
+Needed Library
+In [1]:
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+import warnings
+#import pytabkit
+from sklearn.model_selection import train_test_split
+
+import lightgbm as lgb
+from sklearn.metrics import *
+
+from sklearn.pipeline import Pipeline
+from lightgbm import LGBMClassifier, early_stopping, log_evaluation,early_stopping
+from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
+from lightgbm import early_stopping, log_evaluation
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+
+
+warnings.filterwarnings('ignore')
+print('Done')
+Done
+Read Data Files
+In [2]:
+df = pd.read_csv("/kaggle/input/playground-series-s5e11/train.csv")
+df_test = pd.read_csv("/kaggle/input/playground-series-s5e11/test.csv")
+target = 'loan_paid_back'
+print(df.shape)
+print(df.columns.tolist())
+
+df.head()
+(593994, 13)
+['id', 'annual_income', 'debt_to_income_ratio', 'credit_score', 'loan_amount', 'interest_rate', 'gender', 'marital_status', 'education_level', 'employment_status', 'loan_purpose', 'grade_subgrade', 'loan_paid_back']
+Out[2]:
+id annual_income debt_to_income_ratio credit_score loan_amount interest_rate gender marital_status education_level employment_status loan_purpose grade_subgrade loan_paid_back
+0 0 29367.99 0.084 736 2528.42 13.67 Female Single High School Self-employed Other C3 1.0
+1 1 22108.02 0.166 636 4593.10 12.92 Male Married Master's Employed Debt consolidation D3 0.0
+2 2 49566.20 0.097 694 17005.15 9.76 Male Single High School Employed Debt consolidation C5 1.0
+3 3 46858.25 0.065 533 4682.48 16.10 Female Single High School Employed Debt consolidation F1 1.0
+4 4 25496.70 0.053 665 12184.43 10.21 Male Married High School Employed Other D1 1.0
+In [3]:
+def create_frequency_features(df, df_test):
+    df = df.copy()
+    df_test = df_test.copy()
+
+    freq_features_train = {}
+    freq_features_test = {}
+    bin_features_train = {}
+    bin_features_test = {}
+
+    for col in cols:
+
+        # Frequency Encoding
+        freq = df[col].value_counts()
+
+        # train freq
+        freq_features_train[f"{col}_freq"] = df[col].map(freq)
+
+        # test freq (fix unseen categories)
+        default_value = freq.mean() if len(freq) > 0 else 0
+        freq_features_test[f"{col}_freq"] = df_test[col].map(freq).fillna(default_value)
+
+        # Quantile Binning (numeric only)
+        if col in num:
+            for q in (5, 10, 15):
+
+                try:
+                    t_bins, edges = pd.qcut(df[col], q=q, labels=False,
+                                            retbins=True, duplicates='drop')
+
+                    bin_features_train[f"{col}_bin{q}"] = t_bins
+
+                    # Use same edges for test
+                    bin_features_test[f"{col}_bin{q}"] = pd.cut(
+                        df_test[col],
+                        bins=edges,
+                        labels=False,
+                        include_lowest=True
+                    )
+
+                except Exception:
+                    # If qcut fails (constant column, few unique values...)
+                    bin_features_train[f"{col}_bin{q}"] = pd.Series(0, index=df.index)
+                    bin_features_test[f"{col}_bin{q}"] = pd.Series(0, index=df_test.index)
+
+    # Merge all new features
+    df = pd.concat([df, pd.DataFrame(freq_features_train),
+                        pd.DataFrame(bin_features_train)], axis=1)
+
+    df_test = pd.concat([df_test, pd.DataFrame(freq_features_test),
+                               pd.DataFrame(bin_features_test)], axis=1)
+
+    return df, df_test
+In [4]:
+def target_encoding(train, predict, n_splits=8):
+    train = train.copy()
+    predict = predict.copy()
+
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+    mean_features_train = {}
+    mean_features_test = {}
+
+    # Compute global mean once
+    target_global = train[target].mean()
+
+    for col in cols:
+
+        # K-FOLD TARGET ENCODING
+        oof = np.zeros(len(train))
+
+        for tr_idx, val_idx in kf.split(train):
+            tr_fold = train.iloc[tr_idx]
+
+            # Mean for each category in this fold
+            fold_map = tr_fold.groupby(col)[target].mean()
+
+            # Map on validation fold
+            oof[val_idx] = train[col].iloc[val_idx].map(fold_map).fillna(target_global)
+
+        mean_features_train[f"mean_{col}"] = oof
+
+        # Apply encoding to the prediction set
+        global_map = train.groupby(col)[target].mean()
+        mean_features_test[f"mean_{col}"] = (
+            predict[col].map(global_map).fillna(target_global)
+        )
+
+    # ------------------------------------
+    # Attach all new features at once
+    # ------------------------------------
+    train = pd.concat([train, pd.DataFrame(mean_features_train)], axis=1)
+    predict = pd.concat([predict, pd.DataFrame(mean_features_test)], axis=1)
+
+    return train, predict
+In [5]:
+# Extract grade + subgrade
+for df_ in [df, df_test]:
+    df_["subgrade"] = df_["grade_subgrade"].str[1:].astype(int)
+    df_["grade"]    = df_["grade_subgrade"].str[0]
+
+# Identify feature list
+cols = (
+    df.drop(columns=[target, "id"], errors="ignore")
+      .columns
+      .tolist()
+)
+
+# Categorical
+cat = [c for c in cols if df[c].dtype in ("object", "category")]
+
+# Numeric
+num = [c for c in cols if df[c].dtype not in ("object", "category", "bool")]
+
+#  Feature Engineering (Target + Frequency + Binning)
+df, df_test = target_encoding(df, df_test, n_splits=10)
+df, df_test = create_frequency_features(df, df_test)
+
+# Convert categoricals properly
+df[cat] = df[cat].astype("category")
+df_test[cat] = df_test[cat].astype("category")
+
+# Drop unwanted features safely
+remove = [
+    "education_level", "loan_purpose", "grade_subgrade",
+    "interest_rate", "marital_status", "gender",
+    "employment_status_freq", "credit_score_bin5",
+    "loan_amount_bin5", "credit_score_freq",
+    "mean_subgrade", "subgrade_bin15", "subgrade_bin10",
+    "debt_to_income_ratio_bin5"
+]
+
+df.drop(columns=[c for c in remove if c in df.columns], inplace=True)
+df_test.drop(columns=[c for c in remove if c in df_test.columns], inplace=True)
+
+# Final cleaning
+df.drop(columns="id", errors="ignore", inplace=True)
+df.drop_duplicates(inplace=True)
+In [6]:
+X = df.drop(columns=[target])
+y = df[target]
+
+lgb_train = lgb.Dataset(X, label=y, free_raw_data=True)
+lgb_params = {
+    "objective": "binary",
+    "metric": "auc",
+    "boosting_type": "gbdt",  # or try 'dart' later
+    "learning_rate": 0.03,
+    "num_leaves": 80,
+    "max_depth": 6,
+    "min_child_samples": 20,
+    "colsample_bytree": 0.8,
+    "subsample": 0.8,
+    "subsample_freq": 2,
+    
+    "feature_fraction": 0.85,
+    "bagging_fraction": 0.9,
+
+    # Regularization (important for stable CV)
+    "reg_alpha": 0.2,
+    "reg_lambda": 0.4,
+    "min_split_gain": 0.01,
+    "min_data_in_leaf": 40,
+
+    "n_jobs": -1,
+    "device": "gpu",
+    "verbose": -1,
+    "random_state": 42
+}
+cv_results = lgb.cv(
+    params=lgb_params,
+    train_set=lgb_train,
+    num_boost_round=20000,
+    nfold=10,
+    stratified=True,
+    callbacks=[early_stopping(stopping_rounds=100), log_evaluation(period = 150)],
+    seed=42
+)
+
+cv_df = pd.DataFrame(cv_results)
+print(cv_df.tail())
+
+best_round = len(cv_results['valid auc-mean'])
+best_auc = cv_results['valid auc-mean'][-1]
+print(f"Best round: {best_round}, Best CV AUC: {best_auc:.7f}")
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+Training until validation scores don't improve for 100 rounds
+[150] valid's auc: 0.925114 + 0.00120091
+[300] valid's auc: 0.926203 + 0.00122285
+[450] valid's auc: 0.926486 + 0.00121665
+[600] valid's auc: 0.926592 + 0.00122016
+[750] valid's auc: 0.926624 + 0.00123069
+Early stopping, best iteration is:
+[728] valid's auc: 0.926633 + 0.00122934
+     valid auc-mean  valid auc-stdv
+723        0.926632        0.001231
+724        0.926633        0.001229
+725        0.926633        0.001229
+726        0.926632        0.001229
+727        0.926633        0.001229
+Best round: 728, Best CV AUC: 0.9266327
+Submission
+In [7]:
+lgb_params["n_estimators"] = best_round + 100
+print(best_round)
+728
+In [8]:
+# Prepare training data
+X_train = df.drop(columns=target)
+y_train = df[target]
+
+# Train LGBM model
+model = LGBMClassifier(**lgb_params)
+model.fit(X_train, y_train)
+
+# Predict on test set
+pred = model.predict_proba(df_test.drop(columns = "id"))[:, 1]
+
+# Prepare submission
+sub = pd.DataFrame({
+    "id": df_test["id"],
+    target: pred
+})
+
+# Save submission file
+sub.to_csv("submission.csv", index=False)
+In [9]:
+sub.head()
+Out[9]:
+id loan_paid_back
+0 593994 0.957870
+1 593995 0.965721
+2 593996 0.471401
+3 593997 0.907217
+4 593998 0.970657

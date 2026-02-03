@@ -1,0 +1,560 @@
+To run this, press "Runtime" and press "Run all" on a free Tesla T4 Google Kaggle instance!
+Join Discord if you need help + ⭐ Star us on Github ⭐
+To install Unsloth on your own computer, follow the installation instructions on our Github page here.
+You will learn how to do data prep, how to train, how to run the model, & how to save it
+Read our Gemma 3N Guide and check out our new Dynamic 2.0 quants which outperforms other quantization methods!
+Visit our docs for all our model uploads and notebooks.
+Gemma 3N Notebook collection:
+Gemma 3N Multimodal inference + conversational finetuning Kaggle Notebook
+Gemma 3N Vision finetuning Kaggle Notebook
+Gemma 3N Audio finetuning Kaggle Notebook ⬅️ Your are here
+Installation
+In [1]:
+%%capture
+import os
+if "COLAB_" not in "".join(os.environ.keys()):
+    !pip install unsloth
+else:
+    # Do this only in Colab notebooks! Otherwise use pip install unsloth
+    !pip install --no-deps bitsandbytes accelerate xformers==0.0.29.post3 peft trl triton cut_cross_entropy unsloth_zoo
+    !pip install sentencepiece protobuf "datasets>=3.4.1,<4.0.0" "huggingface_hub>=0.34.0" hf_transfer
+    !pip install --no-deps unsloth
+In [2]:
+%%capture
+# Install latest transformers for Gemma 3N
+!pip install --no-deps --upgrade transformers # Only for Gemma 3N
+!pip install --no-deps --upgrade timm # Only for Gemma 3N
+Unsloth
+FastModel supports loading nearly any model now! This includes Vision, Text and Audio models!
+In [3]:
+from unsloth import FastModel
+import torch
+
+fourbit_models = [
+    # 4bit dynamic quants for superior accuracy and low memory use
+    "unsloth/gemma-3n-E4B-it-unsloth-bnb-4bit",
+    "unsloth/gemma-3n-E2B-it-unsloth-bnb-4bit",
+    # Pretrained models
+    "unsloth/gemma-3n-E4B-unsloth-bnb-4bit",
+    "unsloth/gemma-3n-E2B-unsloth-bnb-4bit",
+
+    # Other Gemma 3 quants
+    "unsloth/gemma-3-1b-it-unsloth-bnb-4bit",
+    "unsloth/gemma-3-4b-it-unsloth-bnb-4bit",
+    "unsloth/gemma-3-12b-it-unsloth-bnb-4bit",
+    "unsloth/gemma-3-27b-it-unsloth-bnb-4bit",
+] # More models at https://huggingface.co/unsloth
+
+model, processor = FastModel.from_pretrained(
+    model_name = "unsloth/gemma-3n-E4B-it", # Or "unsloth/gemma-3n-E2B-it"
+    dtype = None, # None for auto detection
+    max_seq_length = 1024, # Choose any for long context!
+    load_in_4bit = True,  # 4 bit quantization to reduce memory
+    full_finetuning = False, # [NEW!] We have full finetuning now!
+    # token = "hf_...", # use one if using gated models
+)
+🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.
+2025-07-30 11:11:16.619543: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:477] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1753873876.986867      19 cuda_dnn.cc:8310] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1753873877.087733      19 cuda_blas.cc:1418] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+🦥 Unsloth Zoo will now patch everything to make training faster!
+==((====))==  Unsloth 2025.7.11: Fast Gemma3N patching. Transformers: 4.54.1.
+   \\   /|    Tesla T4. Num GPUs = 2. Max memory: 14.741 GB. Platform: Linux.
+O^O/ \_/ \    Torch: 2.6.0+cu124. CUDA: 7.5. CUDA Toolkit: 12.4. Triton: 3.2.0
+\        /    Bfloat16 = FALSE. FA [Xformers = 0.0.29.post3. FA2 = False]
+ "-____-"     Free license: http://github.com/unslothai/unsloth
+Unsloth: Fast downloading is enabled - ignore downloading bars which are red colored!
+Unsloth: Gemma3N does not support SDPA - switching to eager!
+model.safetensors.index.json:
+370k/? [00:00<00:00, 34.8MB/s]
+model-00001-of-00003.safetensors: 100%
+3.72G/3.72G [00:10<00:00, 756MB/s]
+model-00002-of-00003.safetensors: 100%
+4.99G/4.99G [00:19<00:00, 613MB/s]
+model-00003-of-00003.safetensors: 100%
+1.15G/1.15G [00:03<00:00, 762MB/s]
+Loading checkpoint shards: 100%
+3/3 [00:04<00:00,  1.25s/it]
+generation_config.json: 100%
+210/210 [00:00<00:00, 24.5kB/s]
+processor_config.json: 100%
+98.0/98.0 [00:00<00:00, 13.5kB/s]
+chat_template.jinja:
+1.63k/? [00:00<00:00, 209kB/s]
+preprocessor_config.json:
+1.09k/? [00:00<00:00, 137kB/s]
+tokenizer_config.json:
+1.20M/? [00:00<00:00, 80.1MB/s]
+tokenizer.model: 100%
+4.70M/4.70M [00:00<00:00, 440kB/s]
+tokenizer.json: 100%
+33.4M/33.4M [00:00<00:00, 69.2MB/s]
+special_tokens_map.json: 100%
+777/777 [00:00<00:00, 98.9kB/s]
+Gemma 3N can process Text, Vision and Audio!
+Let's first experience how Gemma 3N can handle multimodal inputs. We use Gemma 3N's recommended settings of temperature = 1.0, top_p = 0.95, top_k = 64 but for this example we use do_sample = False to disable sampling for ASR (speech recognition) to get determinstic outputs.
+Audio finetuning for Gemma 3N
+In this notebook, our goal is to transcribe German with higher accuracy by finetuning Gemma 3N!
+In [4]:
+from transformers import TextStreamer
+# Helper function for inference
+def do_gemma_3n_inference(messages, max_new_tokens = 128):
+    _ = model.generate(
+        **processor.apply_chat_template(
+            messages,
+            add_generation_prompt = True, # Must add for generation
+            tokenize = True,
+            return_dict = True,
+            return_tensors = "pt",
+        ).to("cuda"),
+        max_new_tokens = max_new_tokens,
+        do_sample = False,
+        streamer = TextStreamer(processor, skip_prompt = True),
+    )
+Let's Evaluate Gemma 3N Baseline Performance on German Transcription</h2>
+In [5]:
+from datasets import load_dataset,Audio,concatenate_datasets
+
+dataset = load_dataset("unsloth/Emilia-DE-B000000", split="train")
+
+# Select a single audio sample to reserve for testing.
+# This index is chosen from the full dataset before we create the smaller training split.
+test_audio = dataset[7546]
+
+dataset = dataset.select(range(3000))
+
+dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
+README.md: 100%
+604/604 [00:00<00:00, 71.2kB/s]
+data/train-00000-of-00002.parquet: 100%
+495M/495M [00:03<00:00, 233MB/s]
+data/train-00001-of-00002.parquet: 100%
+503M/503M [00:06<00:00, 85.8MB/s]
+Generating train split: 100%
+12038/12038 [00:02<00:00, 6063.17 examples/s]
+In [6]:
+from IPython.display import Audio, display
+print(test_audio['text'])
+Audio(test_audio['audio']['array'],rate=test_audio['audio']['sampling_rate'])
+ Ich, ich rechne direkt mich an. Das ist natürlich klar, nur, dass, äh, es politische Interessen gibt im Handel, im Austausch mit Waren, dass es politische Einflüsse gibt. Die Frage ist, die Alternative soll es nicht sein.
+Out[6]:
+Your browser does not support the audio element.
+In [7]:
+messages = [
+    {
+        "role": "system",
+        "content": [
+            {
+                "type": "text",
+                "text": "You are an assistant that transcribes speech accurately.",
+            }
+        ],
+    },
+    {
+        "role": "user",
+        "content": [
+            {"type": "audio", "audio": test_audio['audio']['array']},
+            {"type": "text", "text": "Please transcribe this audio."}
+        ]
+    }
+]
+
+do_gemma_3n_inference(messages, max_new_tokens = 256)
+Sie direkt mich an. Das finde ich klar, nur dass es politisch Interessen gibt im Handel, im Austausch mit Waren, dass es politische Einflüsse gibt. Die Frage ist, die Alternative soll es nicht sein.<end_of_turn>
+The baseline mdel performance: 24.32% Word Error Rate (WER) for this sample !
+Let's finetune Gemma 3N!
+You can finetune the vision and text and audio parts
+In [8]:
+model = FastModel.get_peft_model(
+    model,
+    finetune_vision_layers     = False, # False if not finetuning vision layers
+    finetune_language_layers   = True, # False if not finetuning language layers
+    finetune_attention_modules = True, # False if not finetuning attention layers
+    finetune_mlp_modules       = True, # False if not finetuning MLP layers
+
+    r = 8,                           # The larger, the higher the accuracy, but might overfit
+    lora_alpha = 16,                 # Recommended alpha == r at least
+    lora_dropout = 0,
+    bias = "none",
+    random_state = 3407,
+    use_rslora = False,              # We support rank stabilized LoRA
+    loftq_config = None,             # And LoftQ
+    target_modules = [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj",
+
+        # Audio layers
+        "post", "linear_start", "linear_end",
+        "embedding_projection",
+    ],
+    modules_to_save=[
+        "lm_head",
+        "embed_tokens",
+        "embed_audio",
+    ],
+)
+Unsloth: Making `model.base_model.model.model.language_model` require gradients
+Data Prep
+We adapt the kadirnar/Emilia-DE-B000000 dataset for our German ASR task using Gemma 3N multi-modal chat format. Each audio-text pair is structured into a conversation with system, user, and assistant roles. The processor then converts this into the final training format:
+<bos><start_of_turn>system
+You are an assistant that transcribes speech accurately.<end_of_turn>
+<start_of_turn>user
+<audio>Please transcribe this audio.<end_of_turn>
+<start_of_turn>model
+Ich, ich rechne direkt mich an.<end_of_turn>
+In [9]:
+def format_intersection_data(samples: dict) -> dict[str, list]:
+    """Format intersection dataset to match expected message format"""
+    formatted_samples = {"messages": []}
+    for idx in range(len(samples["audio"])):
+        audio = samples["audio"][idx]["array"]
+        label = str(samples["text"][idx])
+
+        message = [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "You are an assistant that transcribes speech accurately.",
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "audio", "audio": audio},
+                    {"type": "text", "text": "Please transcribe this audio."}
+                ]
+            },
+            {
+                "role": "assistant",
+                "content":[{"type": "text", "text": label}]
+            }
+        ]
+        formatted_samples["messages"].append(message)
+    return formatted_samples
+In [10]:
+dataset = dataset.map(format_intersection_data, batched=True, batch_size=4, num_proc=4)
+Map (num_proc=4): 100%
+3000/3000 [04:11<00:00,  5.07 examples/s]
+In [11]:
+def collate_fn(examples):
+    texts = []
+    audios = []
+    
+    for example in examples:
+        # Apply chat template to get text
+        text = processor.apply_chat_template(
+            example["messages"], tokenize=False, add_generation_prompt=False
+        ).strip()
+        texts.append(text)
+    
+        # Extract audios
+        audios.append(example["audio"]["array"])
+    
+    # Tokenize the texts and process the images
+    batch = processor(
+        text=texts, audio=audios, return_tensors="pt", padding=True
+    )
+    
+    # The labels are the input_ids, and we mask the padding tokens in the loss computation
+    labels = batch["input_ids"].clone()
+    
+    # Use Gemma3n specific token masking
+    labels[labels == processor.tokenizer.pad_token_id] = -100
+    if hasattr(processor.tokenizer, 'image_token_id'):
+        labels[labels == processor.tokenizer.image_token_id] = -100
+    if hasattr(processor.tokenizer, 'audio_token_id'):
+        labels[labels == processor.tokenizer.audio_token_id] = -100
+    if hasattr(processor.tokenizer, 'boi_token_id'):
+        labels[labels == processor.tokenizer.boi_token_id] = -100
+    if hasattr(processor.tokenizer, 'eoi_token_id'):
+        labels[labels == processor.tokenizer.eoi_token_id] = -100
+    
+    
+    batch["labels"] = labels
+    return batch
+Train the model
+Now let's use Huggingface TRL's SFTTrainer! More docs here: TRL SFT docs. We train for one full epoch (num_train_epochs=1) to get a meaningful result.
+In [12]:
+from trl import SFTTrainer, SFTConfig
+
+
+trainer = SFTTrainer(
+    model=model,
+    train_dataset=dataset,
+    processing_class=processor.tokenizer,
+    data_collator=collate_fn,
+    args = SFTConfig(
+        per_device_train_batch_size = 2,
+        gradient_accumulation_steps = 1,
+        warmup_ratio = 0.1,
+        #max_steps = 60,
+        num_train_epochs = 1,          # Set this instead of max_steps for full training runs
+        learning_rate = 5e-5,
+        logging_steps = 10,
+        save_strategy="steps",
+        optim = "adamw_8bit",
+        weight_decay = 0.01,
+        lr_scheduler_type = "cosine",
+        seed = 3407,
+        output_dir = "outputs",
+        report_to = "none",            # For Weights and Biases
+
+        # You MUST put the below items for audio finetuning:
+        remove_unused_columns = False,
+        dataset_text_field = "",
+        dataset_kwargs = {"skip_prepare_dataset": True},
+        dataset_num_proc = 2,
+        max_length = 2048,
+    )
+)
+In [13]:
+# @title Show current memory stats
+gpu_stats = torch.cuda.get_device_properties(0)
+start_gpu_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
+max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
+print(f"GPU = {gpu_stats.name}. Max memory = {max_memory} GB.")
+print(f"{start_gpu_memory} GB of memory reserved.")
+GPU = Tesla T4. Max memory = 14.741 GB.
+12.592 GB of memory reserved.
+Let's train the model!
+To resume a training run, set trainer.train(resume_from_checkpoint = True)
+In [14]:
+trainer_stats = trainer.train()
+==((====))==  Unsloth - 2x faster free finetuning | Num GPUs used = 1
+   \\   /|    Num examples = 3,000 | Num Epochs = 1 | Total steps = 750
+O^O/ \_/ \    Batch size per device = 4 | Gradient accumulation steps = 1
+\        /    Data Parallel GPUs = 1 | Total batch size (4 x 1 x 1) = 4
+ "-____-"     Trainable parameters = 21,188,608 of 7,871,166,800 (0.27% trained)
+`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`.
+[750/750 45:20, Epoch 1/1]
+Step Training Loss
+10 8.714500
+20 8.117600
+30 1.971600
+40 1.059800
+50 0.981000
+60 0.833200
+70 0.797800
+80 0.747000
+90 0.568100
+100 0.615500
+110 0.636800
+120 0.577700
+130 0.542000
+140 0.585500
+150 0.541300
+160 0.524800
+170 0.576000
+180 0.481800
+190 0.511000
+200 0.445800
+210 0.462700
+220 0.488800
+230 0.583600
+240 0.522700
+250 0.489400
+260 0.462700
+270 0.496800
+280 0.494900
+290 0.509200
+300 0.478900
+310 0.509500
+320 0.545900
+330 0.504100
+340 0.434900
+350 0.556400
+360 0.540100
+370 0.482300
+380 0.472000
+390 0.410200
+400 0.539400
+410 0.453500
+420 0.470300
+430 0.458300
+440 0.525200
+450 0.450100
+460 0.516000
+470 0.438700
+480 0.485800
+490 0.483800
+500 0.436200
+510 0.449600
+520 0.453100
+530 0.458600
+540 0.459600
+550 0.462800
+560 0.461100
+570 0.454200
+580 0.485000
+590 0.506100
+600 0.441800
+610 0.464100
+620 0.397400
+630 0.412800
+640 0.462400
+650 0.410400
+660 0.504900
+670 0.394800
+680 0.446300
+690 0.514200
+700 0.422600
+710 0.438500
+720 0.482700
+730 0.439600
+740 0.424600
+750 0.471700
+Unsloth: Will smartly offload gradients to save VRAM!
+In [15]:
+# @title Show final memory and time stats
+used_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
+used_memory_for_lora = round(used_memory - start_gpu_memory, 3)
+used_percentage = round(used_memory / max_memory * 100, 3)
+lora_percentage = round(used_memory_for_lora / max_memory * 100, 3)
+print(f"{trainer_stats.metrics['train_runtime']} seconds used for training.")
+print(
+    f"{round(trainer_stats.metrics['train_runtime']/60, 2)} minutes used for training."
+)
+print(f"Peak reserved memory = {used_memory} GB.")
+print(f"Peak reserved memory for training = {used_memory_for_lora} GB.")
+print(f"Peak reserved memory % of max memory = {used_percentage} %.")
+print(f"Peak reserved memory for training % of max memory = {lora_percentage} %.")
+2869.2106 seconds used for training.
+47.82 minutes used for training.
+Peak reserved memory = 14.221 GB.
+Peak reserved memory for training = 1.629 GB.
+Peak reserved memory % of max memory = 96.472 %.
+Peak reserved memory for training % of max memory = 11.051 %.
+Inference
+Let's run the model via Unsloth native inference! According to the Gemma-3 team, the recommended settings for inference are temperature = 1.0, top_p = 0.95, top_k = 64 but for this example we use do_sample=False for ASR.
+In [16]:
+messages = [
+    {
+        "role": "system",
+        "content": [
+            {
+                "type": "text",
+                "text": "You are an assistant that transcribes speech accurately.",
+            }
+        ],
+    },
+    {
+        "role": "user",
+        "content": [
+            {"type": "audio", "audio": test_audio['audio']['array']},
+            {"type": "text", "text": "Please transcribe this audio."}
+        ]
+    }
+]
+
+do_gemma_3n_inference(messages, max_new_tokens = 256)
+Sie sprechen direkt mich an. Das finde ich klar, nur, dass es politische Interessen gibt im Handel, im Austausch mit Waren, dass es politische Einflüsse gibt. Die Frage ist, die Alternative soll es nicht sein.<end_of_turn>
+With only 3,000 German speech samples, we reduced the Word Error Rate (WER) from 24.32% to 16.22%. This represents a significant 33.31% relative error rate reduction ! </h4>
+Saving, loading finetuned models
+To save the final model as LoRA adapters, either use Huggingface's push_to_hub for an online save or save_pretrained for a local save.
+[NOTE] This ONLY saves the LoRA adapters, and not the full model. To save to 16bit or GGUF, scroll down!
+In [17]:
+model.save_pretrained("gemma-3n")  # Local saving
+processor.save_pretrained("gemma-3n")
+# model.push_to_hub("HF_ACCOUNT/gemma-3n", token = "...") # Online saving
+# processor.push_to_hub("HF_ACCOUNT/gemma-3n", token = "...") # Online saving
+Out[17]:
+['gemma-3n/processor_config.json']
+Now if you want to load the LoRA adapters we just saved for inference, set False to True:
+In [18]:
+if False:
+    from unsloth import FastModel
+    model, processor = FastModel.from_pretrained(
+        model_name = "gemma-3n", # YOUR MODEL YOU USED FOR TRAINING
+        max_seq_length = 2048,
+        load_in_4bit = True,
+    )
+
+messages = [{
+    "role": "user",
+    "content": [{"type" : "text", "text" : "What is Gemma-3N?",}]
+}]
+inputs = processor.apply_chat_template(
+    messages,
+    add_generation_prompt = True, # Must add for generation
+    return_tensors = "pt",
+    tokenize = True,
+    return_dict = True,
+).to("cuda")
+
+from transformers import TextStreamer
+_ = model.generate(
+    **inputs,
+    max_new_tokens = 128, # Increase for longer outputs!
+    # Recommended Gemma-3 settings!
+    temperature = 1.0, top_p = 0.95, top_k = 64,
+    streamer = TextStreamer(processor, skip_prompt = True),
+)
+Gemma-3N is a family of open-weights large language models (LLMs) created by the Gemma team at Google DeepMind. Here's a breakdown of what that means:
+
+*   **Open-weights:** This is a key aspect. "Open-weights" means the model's parameters (the numerical values that define the model's knowledge) are publicly available. This allows researchers, developers, and enthusiasts to download, use, and fine-tune the model for their own purposes. This fosters innovation and transparency in AI research.
+*   **Large Language Model (LLM):** Gemma-3
+Saving to float16 for VLLM
+We also support saving to float16 directly for deployment! We save it in the folder gemma-3N-finetune. Set if False to if True to let it run!
+In [19]:
+if True: # Change to True to save finetune!
+    model.save_pretrained_merged("gemma-3n", processor)
+Found HuggingFace hub cache directory: /root/.cache/huggingface/hub
+Checking cache directory for required files...
+Cache check failed: model-00001-of-00004.safetensors not found in local cache.
+Not all required files found in cache. Will proceed with downloading.
+Downloading safetensors index for unsloth/gemma-3n-e4b-it...
+model.safetensors.index.json:
+171k/? [00:00<00:00, 17.1MB/s]
+Unsloth: Merging weights into 16bit:   0%|          | 0/4 [00:00<?, ?it/s]
+model-00001-of-00004.safetensors: 100%
+3.08G/3.08G [00:14<00:00, 113MB/s]
+Unsloth: Merging weights into 16bit:  25%|██▌       | 1/4 [00:27<01:22, 27.34s/it]
+model-00002-of-00004.safetensors: 100%
+4.97G/4.97G [00:18<00:00, 440MB/s]
+Unsloth: Merging weights into 16bit:  50%|█████     | 2/4 [01:06<01:08, 34.17s/it]
+model-00003-of-00004.safetensors: 100%
+4.99G/4.99G [00:17<00:00, 595MB/s]
+Unsloth: Merging weights into 16bit:  75%|███████▌  | 3/4 [01:52<00:39, 39.49s/it]
+model-00004-of-00004.safetensors: 100%
+2.66G/2.66G [00:10<00:00, 837MB/s]
+Unsloth: Merging weights into 16bit: 100%|██████████| 4/4 [02:17<00:00, 34.25s/it]
+If you want to upload / push to your Hugging Face account, set if False to if True and add your Hugging Face token and upload location!
+In [20]:
+if False: # Change to True to upload finetune
+    model.push_to_hub_merged(
+        "HF_ACCOUNT/gemma-3N-finetune", processor,
+        token = "hf_..."
+    )
+GGUF / llama.cpp Conversion
+To save to GGUF / llama.cpp, we support it natively now for all models! For now, you can convert easily to Q8_0, F16 or BF16 precision. Q4_K_M for 4bit will come later!
+In [21]:
+if False: # Change to True to save to GGUF
+    model.save_pretrained_gguf(
+        "gemma-3N-finetune",
+        quantization_type = "Q8_0", # For now only Q8_0, BF16, F16 supported
+    )
+Likewise, if you want to instead push to GGUF to your Hugging Face account, set if False to if True and add your Hugging Face token and upload location!
+In [22]:
+if False: # Change to True to upload GGUF
+    model.push_to_hub_gguf(
+        "gemma-3N-finetune",
+        quantization_type = "Q8_0", # Only Q8_0, BF16, F16 supported
+        repo_id = "HF_ACCOUNT/gemma-3N-finetune-gguf",
+        token = "hf_...",
+    )
+Now, use the gemma-3N-finetune.gguf file or gemma-3N-finetune-Q4_K_M.gguf file in llama.cpp or a UI based system like Jan or Open WebUI. You can install Jan here and Open WebUI here
+And we're done! If you have any questions on Unsloth, we have a Discord channel! If you find any bugs or want to keep updated with the latest LLM stuff, or need help, join projects etc, feel free to join our Discord!
+Some other links:
+Train your own reasoning model - Llama GRPO notebook Free Colab-GRPO.ipynb)
+Saving finetunes to Ollama. Free notebook-Ollama.ipynb)
+Llama 3.2 Vision finetuning - Radiography use case. Free Colab-Vision.ipynb)
+See notebooks for DPO, ORPO, Continued pretraining, conversational finetuning and more on our documentation!
+Gemma 3N Notebook collection:
+Gemma 3N Multimodal inference + conversational finetuning Kaggle Notebook
+Gemma 3N Vision finetuning Kaggle Notebook
+Gemma 3N Audio finetuning Kaggle Notebook ⬅️ Your are here
+Join Discord if you need help + ⭐️ Star us on Github ⭐️

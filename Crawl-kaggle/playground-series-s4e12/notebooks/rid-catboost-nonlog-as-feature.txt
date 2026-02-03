@@ -1,0 +1,203 @@
+single catboost model get the first place
+if you like my work, please consider upvote
+In [3]:
+import pandas as pd
+import numpy as np
+from catboost import CatBoostRegressor
+from sklearn.model_selection import KFold
+from sklearn.metrics import mean_squared_log_error
+from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
+from sklearn.preprocessing import OneHotEncoder
+import joblib
+
+
+
+import warnings
+warnings.filterwarnings("ignore")
+In [4]:
+train = pd.read_csv("/kaggle/input/playground-series-s4e12/train.csv")
+test = pd.read_csv("/kaggle/input/playground-series-s4e12/test.csv")
+
+sample = pd.read_csv('/kaggle/input/playground-series-s4e12/sample_submission.csv')
+
+train.drop('id', axis=1, inplace=True)
+test.drop('id', axis=1, inplace=True) 
+
+nonlog_fe , nonlog = joblib.load("/kaggle/input/rid-catboost-nonlog/cat_non_loged.pkl")
+
+train['nonlog'] = nonlog_fe
+test['nonlog'] = nonlog
+In [5]:
+def date(Df):
+
+    Df['Policy Start Date'] = pd.to_datetime(Df['Policy Start Date'])
+    Df['Year'] = Df['Policy Start Date'].dt.year
+    Df['Day'] = Df['Policy Start Date'].dt.day
+    Df['Month'] = Df['Policy Start Date'].dt.month
+    Df['Month_name'] = Df['Policy Start Date'].dt.month_name()
+    Df['Day_of_week'] = Df['Policy Start Date'].dt.day_name()
+    Df['Week'] = Df['Policy Start Date'].dt.isocalendar().week
+    Df['Year_sin'] = np.sin(2 * np.pi * Df['Year'])
+    Df['Year_cos'] = np.cos(2 * np.pi * Df['Year'])
+    Df['Month_sin'] = np.sin(2 * np.pi * Df['Month'] / 12) 
+    Df['Month_cos'] = np.cos(2 * np.pi * Df['Month'] / 12)
+    Df['Day_sin'] = np.sin(2 * np.pi * Df['Day'] / 31)  
+    Df['Day_cos'] = np.cos(2 * np.pi * Df['Day'] / 31)
+    Df['Group']=(Df['Year']-2020)*48+Df['Month']*4+Df['Day']//7
+    
+    Df.drop('Policy Start Date', axis=1, inplace=True)
+
+    return Df
+In [6]:
+def fe(df):
+    
+    df['contract length'] = pd.cut(
+        df["Insurance Duration"].fillna(99),  
+        bins=[-float('inf'), 1, 3, float('inf')],  
+        labels=[0, 1, 2]  
+    ).astype(int)
+    return df
+    
+In [7]:
+train = date(train)
+test = date(test)
+
+train = fe(train)
+test = fe(test)
+
+cat_cols = [col for col in train.columns if train[col].dtype == 'object']
+feature_cols = list(test.columns)
+In [8]:
+class CategoricalEncoder:
+    def __init__(self, train, test):
+        self.train = train
+        self.test = test
+
+    def frequency_encode(self, cat_cols, feature_cols, drop_org=False):
+        combined = pd.concat([self.train, self.test], axis=0, ignore_index=True)
+
+        new_cat_cols = [] 
+        for col in cat_cols:
+            freq_encoding = combined[col].value_counts().to_dict()
+            
+            self.train[f"{col}_freq"] = self.train[col].map(freq_encoding).astype('float')
+            self.test[f"{col}_freq"] = self.test[col].map(freq_encoding).astype('float')
+
+            new_col_name = f"{col}_freq"
+            new_cat_cols.append(new_col_name)
+            feature_cols.append(new_col_name)
+            if drop_org:
+                feature_cols.remove(col)
+
+        return self.train, self.test, new_cat_cols, feature_cols
+In [9]:
+encoder = CategoricalEncoder(train, test)
+train, test, cat_cols, feature_cols = encoder.frequency_encode(cat_cols, feature_cols, drop_org=True)
+
+train = train[feature_cols + ['Premium Amount']]
+test = test[feature_cols]
+
+# train = train.fillna(-111)
+# test = test.fillna(-111)
+In [10]:
+train.head()
+Out[10]:
+Age Annual Income Number of Dependents Health Score Previous Claims Vehicle Age Credit Score Insurance Duration nonlog Year ... Occupation_freq Location_freq Policy Type_freq Customer Feedback_freq Smoking Status_freq Exercise Frequency_freq Property Type_freq Month_name_freq Day_of_week_freq Premium Amount
+0 19.0 10049.0 1.0 22.598761 2.0 17.0 372.0 5.0 1198.816057 2023 ... 470636.0 663201.0 669475.0 625952.0 996268.0 510693.0 667500.0 162307.0 284861.0 2869.0
+1 39.0 31678.0 3.0 15.569731 1.0 12.0 694.0 2.0 953.272016 2023 ... NaN 668067.0 665822.0 629122.0 1003732.0 498230.0 667500.0 164442.0 287191.0 1483.0
+2 23.0 25602.0 3.0 47.177549 1.0 14.0 NaN 3.0 1104.083469 2023 ... 470636.0 668732.0 669475.0 614826.0 1003732.0 510693.0 667500.0 165556.0 284861.0 567.0
+3 21.0 141855.0 2.0 10.938144 1.0 0.0 367.0 1.0 1276.605480 2024 ... NaN 668067.0 664703.0 625952.0 1003732.0 491143.0 666022.0 164442.0 287424.0 765.0
+4 21.0 39651.0 1.0 20.376094 0.0 8.0 598.0 4.0 1273.640800 2021 ... 470636.0 668067.0 669475.0 625952.0 1003732.0 510693.0 667500.0 162307.0 287424.0 2022.0
+5 rows × 34 columns
+In [11]:
+X = train.drop('Premium Amount', axis=1)  
+y = train['Premium Amount']
+
+y_log = np.log1p(y)
+In [12]:
+def rmsle(y_true, y_pred):
+    return np.sqrt(mean_squared_log_error(y_true, y_pred))
+In [13]:
+def train_model():
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    oof = np.zeros(len(X))
+    models = []
+
+    for fold, (train_idx, valid_idx) in enumerate(kf.split(X)):
+        print(f"Fold {fold + 1}")
+        X_train, X_valid = X.iloc[train_idx], X.iloc[valid_idx]
+        y_train, y_valid = y_log.iloc[train_idx], y_log.iloc[valid_idx]
+
+        model = CatBoostRegressor(
+            iterations=3000,
+            learning_rate=0.05,
+            depth=6,
+            eval_metric="RMSE",
+            random_seed=42,
+            verbose=200,
+            task_type='GPU',
+            l2_leaf_reg =  0.7,
+        )
+        
+        model.fit(X_train,
+                  y_train,
+                  eval_set=(X_valid, y_valid), 
+                  early_stopping_rounds=300,
+                  # cat_features=cat_cols,
+                 )
+        models.append(model)
+        oof[valid_idx] = np.maximum(0, model.predict(X_valid))
+        fold_rmsle = rmsle(np.expm1(y_valid), np.expm1(oof[valid_idx]))
+        print(f"Fold {fold + 1} RMSLE: {fold_rmsle}")
+        
+    return models, oof
+In [ ]:
+models,oof = train_model()
+Fold 1
+0: learn: 1.0912325 test: 1.0919267 best: 1.0919267 (0) total: 18s remaining: 15h 1m 22s
+200: learn: 1.0351975 test: 1.0362237 best: 1.0362237 (200) total: 19.5s remaining: 4m 31s
+400: learn: 1.0331535 test: 1.0350327 best: 1.0350327 (400) total: 21s remaining: 2m 16s
+600: learn: 1.0318007 test: 1.0346419 best: 1.0346410 (598) total: 22.6s remaining: 1m 30s
+800: learn: 1.0306583 test: 1.0344925 best: 1.0344917 (797) total: 24.1s remaining: 1m 6s
+1000: learn: 1.0296144 test: 1.0344013 best: 1.0343997 (999) total: 25.5s remaining: 51s
+1200: learn: 1.0286215 test: 1.0343550 best: 1.0343501 (1183) total: 27s remaining: 40.5s
+1400: learn: 1.0276523 test: 1.0343219 best: 1.0343059 (1317) total: 28.5s remaining: 32.5s
+1600: learn: 1.0267344 test: 1.0343649 best: 1.0343059 (1317) total: 30s remaining: 26.2s
+bestTest = 1.034305857
+bestIteration = 1317
+Shrink model to first 1318 iterations.
+Fold 1 RMSLE: 1.0343059015093328
+Fold 2
+0: learn: 1.0915035 test: 1.0907053 best: 1.0907053 (0) total: 8.14ms remaining: 24.4s
+200: learn: 1.0353697 test: 1.0353207 best: 1.0353197 (199) total: 1.48s remaining: 20.7s
+400: learn: 1.0333047 test: 1.0341971 best: 1.0341969 (398) total: 2.96s remaining: 19.2s
+600: learn: 1.0319505 test: 1.0339063 best: 1.0339063 (600) total: 4.51s remaining: 18s
+800: learn: 1.0307872 test: 1.0337318 best: 1.0337318 (800) total: 5.97s remaining: 16.4s
+1000: learn: 1.0297449 test: 1.0337105 best: 1.0337019 (974) total: 7.46s remaining: 14.9s
+1200: learn: 1.0287409 test: 1.0336806 best: 1.0336748 (1191) total: 8.93s remaining: 13.4s
+1400: learn: 1.0277675 test: 1.0336688 best: 1.0336608 (1362) total: 10.4s remaining: 11.9s
+1600: learn: 1.0268443 test: 1.0336547 best: 1.0336401 (1544) total: 11.9s remaining: 10.4s
+1800: learn: 1.0259478 test: 1.0336603 best: 1.0336356 (1754) total: 13.4s remaining: 8.9s
+2000: learn: 1.0250976 test: 1.0336896 best: 1.0336356 (1754) total: 14.9s remaining: 7.42s
+bestTest = 1.033635593
+bestIteration = 1754
+Shrink model to first 1755 iterations.
+Fold 2 RMSLE: 1.0336355271895659
+Fold 3
+0: learn: 1.0914900 test: 1.0906925 best: 1.0906925 (0) total: 7.92ms remaining: 23.8s
+200: learn: 1.0349285 test: 1.0369885 best: 1.0369885 (200) total: 1.48s remaining: 20.6s
+400: learn: 1.0327988 test: 1.0359455 best: 1.0359455 (400) total: 2.94s remaining: 19.1s
+600: learn: 1.0314191 test: 1.0355868 best: 1.0355843 (599) total: 4.41s remaining: 17.6s
+800: learn: 1.0302673 test: 1.0354528 best: 1.0354485 (790) total: 5.94s remaining: 16.3s
+In [ ]:
+print(rmsle(y, np.expm1(oof)))
+In [ ]:
+test_predictions = np.zeros(len(test))
+
+for model in models:
+    test_predictions += np.maximum(0, np.expm1(model.predict(test))) / len(models)
+
+
+sample['Premium Amount'] = test_predictions
+sample.to_csv('submission.csv', index = False)
+sample.head()

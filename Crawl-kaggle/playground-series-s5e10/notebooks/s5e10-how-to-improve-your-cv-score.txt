@@ -1,0 +1,332 @@
+In [1]:
+import warnings
+warnings.simplefilter('ignore')
+1. Load Data
+Here we load the required libraries (pandas, numpy) and datasets.
+Competition Data: train.csv and test.csv.
+External Data: The original dataset from which the competition data was generated. We combine its multiple files into a single orig DataFrame to augment our training data, a common strategy for improving model performance in Playground Series competitions.
+Finally, we'll do a quick sanity check with .shape and .head() to ensure everything is loaded correctly.
+In [2]:
+import pandas as pd, numpy as np
+
+train = pd.read_csv('/kaggle/input/playground-series-s5e10/train.csv')
+test = pd.read_csv('/kaggle/input/playground-series-s5e10/test.csv')
+orig = pd.read_csv('/kaggle/input/simulated-roads-accident-data/synthetic_road_accidents_100k.csv')
+orig_2 = pd.read_csv('/kaggle/input/simulated-roads-accident-data/synthetic_road_accidents_10k.csv')
+orig_3 = pd.read_csv('/kaggle/input/simulated-roads-accident-data/synthetic_road_accidents_2k.csv')
+orig = pd.concat([orig, orig_2, orig_3])
+
+print('Train Shape:', train.shape)
+print('Test Shape:', test.shape)
+print('Orig Shape:', orig.shape)
+
+train.head(3)
+Train Shape: (517754, 14)
+Test Shape: (172585, 13)
+Orig Shape: (112000, 13)
+Out[2]:
+id road_type num_lanes curvature speed_limit lighting weather road_signs_present public_road time_of_day holiday school_season num_reported_accidents accident_risk
+0 0 urban 2 0.06 35 daylight rainy False True afternoon False True 1 0.13
+1 1 urban 4 0.99 35 daylight clear True False evening True True 0 0.35
+2 2 rural 4 0.63 70 dim clear False True morning True False 2 0.30
+In [3]:
+TARGET = 'accident_risk'
+BASE = [col for col in train.columns if col not in ['id', TARGET]]
+CATS = ['road_type', 'lighting', 'weather', 'road_signs_present', 'public_road', 'time_of_day', 'holiday', 'school_season']
+print(f'{len(BASE)} Base Features:{BASE}')
+12 Base Features:['road_type', 'num_lanes', 'curvature', 'speed_limit', 'lighting', 'weather', 'road_signs_present', 'public_road', 'time_of_day', 'holiday', 'school_season', 'num_reported_accidents']
+2. Baseline Model
+Before diving into complex feature engineering or parameter tuning, it's crucial to establish a baseline score. This score, calculated using only the initial features and a standard set of model parameters, will serve as a benchmark to measure all future improvements.
+We will use a 5-fold cross-validation (KFold) strategy to train our XGBRegressor model. This provides a robust estimate of the model's performance.
+Key points of the implementation:
+We use Out-of-Fold (OOF) predictions to calculate a single, reliable CV score across the entire training set.
+We employ early stopping to automatically find the optimal number of boosting rounds and prevent overfitting, which is a very effective practice.
+We leverage XGBoost's native support for categorical features by setting enable_categorical=True.
+In [4]:
+FEATURES = BASE
+In [5]:
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import KFold
+from xgboost import XGBRegressor
+In [6]:
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+oof_preds = np.zeros(len(train))
+
+for fold, (train_idx, val_idx) in enumerate(kf.split(train)):
+    print(f'---Fold {fold+1}/5---')
+    
+    X_train, X_val = train.iloc[train_idx][FEATURES], train.iloc[val_idx][FEATURES]
+    y_train, y_val = train.iloc[train_idx][TARGET], train.iloc[val_idx][TARGET]
+
+    X_train[CATS] = X_train[CATS].astype('category')    
+    X_val[CATS] = X_val[CATS].astype('category')    
+    
+    model = XGBRegressor(
+        n_estimators=100000,
+        learning_rate=0.01,
+        max_depth=6,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        enable_categorical=True,
+        device='cuda',
+        early_stopping_rounds=200,
+    )
+    
+    model.fit(X_train, y_train,
+              eval_set=[(X_val, y_val)],
+              verbose=1000, 
+             )
+    
+    oof_preds[val_idx] +=  model.predict(X_val)
+    
+    print(f"Fold {fold+1} RMSE: {mean_squared_error(y_val, oof_preds[val_idx], squared=False)}")
+print(f"Overall OOF RMSE: {mean_squared_error(train[TARGET], oof_preds, squared=False):.5f}")
+---Fold 1/5---
+[0] validation_0-rmse:0.16472
+[1000] validation_0-rmse:0.05626
+[2000] validation_0-rmse:0.05622
+[2656] validation_0-rmse:0.05622
+Fold 1 RMSE: 0.05621591880912533
+---Fold 2/5---
+[0] validation_0-rmse:0.16500
+[1000] validation_0-rmse:0.05612
+[2000] validation_0-rmse:0.05608
+[2346] validation_0-rmse:0.05608
+Fold 2 RMSE: 0.05608078455283933
+---Fold 3/5---
+[0] validation_0-rmse:0.16543
+[1000] validation_0-rmse:0.05616
+[2000] validation_0-rmse:0.05612
+[2287] validation_0-rmse:0.05612
+Fold 3 RMSE: 0.0561236413767553
+---Fold 4/5---
+[0] validation_0-rmse:0.16455
+[1000] validation_0-rmse:0.05601
+[2000] validation_0-rmse:0.05598
+[2067] validation_0-rmse:0.05598
+Fold 4 RMSE: 0.05597775248093453
+---Fold 5/5---
+[0] validation_0-rmse:0.16509
+[1000] validation_0-rmse:0.05595
+[2000] validation_0-rmse:0.05591
+[2730] validation_0-rmse:0.05590
+Fold 5 RMSE: 0.05590353177908703
+Overall OOF RMSE: 0.05606
+3. Feature Engineering
+With a baseline established, we now create new features to improve our model's performance. A well-designed feature can often provide more signal than a complex model. We'll create two distinct types.
+1. "Orig" Target Encoded Features
+This is a powerful form of target encoding.
+For each base categorical column, we calculate the average target value using the large, external orig dataset. We then merge this aggregated information back into our train and test sets. This technique safely encodes the predictive power of each category without causing data leakage from our training data.
+2. "Meta" Risk Feature
+This is a hand-crafted feature that combines several columns using a weighted formula.
+The formula is designed to approximate the logic used to generate the original synthetic dataset. By attempting to reverse-engineer this logic, we aim to create a single, powerful feature that captures the core underlying "risk" signal present in the data.
+In [7]:
+ORIG = []
+
+for col in BASE:
+    tmp = orig.groupby(col)[TARGET].mean()
+    new_col_name = f"orig_{col}"
+    tmp.name = new_col_name
+    train = train.merge(tmp, on=col, how='left')
+    test = test.merge(tmp, on=col, how='left')
+    ORIG.append(new_col_name)
+
+print(len(ORIG), 'Orig Features Created!!')
+12 Orig Features Created!!
+In [8]:
+META = []
+
+for df in [train, test, orig]:
+    base_risk = (
+        0.3 * df["curvature"] + 
+        0.2 * (df["lighting"] == "night").astype(int) + 
+        0.1 * (df["weather"] != "clear").astype(int) + 
+        0.2 * (df["speed_limit"] >= 60).astype(int) + 
+        0.1 * (np.array(df["num_reported_accidents"]) > 2).astype(int)
+    )
+    df['Meta'] = base_risk
+
+META.append('Meta')
+In [9]:
+FEATURES = BASE + ORIG + META
+print(len(FEATURES), 'Features.')
+25 Features.
+In [10]:
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+oof_preds = np.zeros(len(train))
+
+for fold, (train_idx, val_idx) in enumerate(kf.split(train)):
+    print(f'---Fold {fold+1}/5---')
+    
+    X_train, X_val = train.iloc[train_idx][FEATURES], train.iloc[val_idx][FEATURES]
+    y_train, y_val = train.iloc[train_idx][TARGET], train.iloc[val_idx][TARGET]
+
+    X_train[CATS] = X_train[CATS].astype('category')    
+    X_val[CATS] = X_val[CATS].astype('category')    
+    
+    model = XGBRegressor(
+        n_estimators=100000,
+        learning_rate=0.01,
+        max_depth=6,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        enable_categorical=True,
+        device='cuda',
+        early_stopping_rounds=200,
+    )
+    
+    model.fit(X_train, y_train,
+              eval_set=[(X_val, y_val)],
+              verbose=500, 
+             )
+    
+    oof_preds[val_idx] +=  model.predict(X_val)
+    
+    print(f"Fold {fold+1} RMSE: {mean_squared_error(y_val, oof_preds[val_idx], squared=False)}")
+print(f"Overall OOF RMSE: {mean_squared_error(train[TARGET], oof_preds, squared=False):.5f}")
+---Fold 1/5---
+[0] validation_0-rmse:0.16471
+[500] validation_0-rmse:0.05642
+[1000] validation_0-rmse:0.05623
+[1500] validation_0-rmse:0.05617
+[2000] validation_0-rmse:0.05614
+[2500] validation_0-rmse:0.05613
+[2977] validation_0-rmse:0.05613
+Fold 1 RMSE: 0.0561273247126912
+---Fold 2/5---
+[0] validation_0-rmse:0.16499
+[500] validation_0-rmse:0.05624
+[1000] validation_0-rmse:0.05608
+[1500] validation_0-rmse:0.05603
+[2000] validation_0-rmse:0.05600
+[2500] validation_0-rmse:0.05599
+[3000] validation_0-rmse:0.05599
+[3103] validation_0-rmse:0.05599
+Fold 2 RMSE: 0.0559876133656847
+---Fold 3/5---
+[0] validation_0-rmse:0.16542
+[500] validation_0-rmse:0.05626
+[1000] validation_0-rmse:0.05610
+[1500] validation_0-rmse:0.05606
+[2000] validation_0-rmse:0.05605
+[2434] validation_0-rmse:0.05605
+Fold 3 RMSE: 0.0560437284369684
+---Fold 4/5---
+[0] validation_0-rmse:0.16455
+[500] validation_0-rmse:0.05613
+[1000] validation_0-rmse:0.05597
+[1500] validation_0-rmse:0.05591
+[2000] validation_0-rmse:0.05589
+[2500] validation_0-rmse:0.05589
+[2836] validation_0-rmse:0.05589
+Fold 4 RMSE: 0.055885096098149796
+---Fold 5/5---
+[0] validation_0-rmse:0.16509
+[500] validation_0-rmse:0.05608
+[1000] validation_0-rmse:0.05591
+[1500] validation_0-rmse:0.05585
+[2000] validation_0-rmse:0.05582
+[2500] validation_0-rmse:0.05581
+[2732] validation_0-rmse:0.05581
+Fold 5 RMSE: 0.05580646844584081
+Overall OOF RMSE: 0.05597
+4. Parameter Tuning with Optuna
+With our new features in place, we'll now fine-tune the model's hyperparameters to further boost our CV score. For this, we'll use Optuna, a modern optimization framework that automates the search process.
+Our Approach
+We define an objective function where for each trial, Optuna suggests a new combination of hyperparameters. Inside this function, we run a full 5-fold cross-validation and return the final OOF RMSE. Optuna's goal is to find the parameter set that minimizes this score.
+For this notebook, we'll focus on tuning three of the most impactful hyperparameters for XGBoost:
+max_depth
+subsample
+colsample_bytree
+There are many other parameters worth exploring. I encourage you to check the official documentation and other public notebooks to deepen your understanding.
+⚠️ Important Note on Execution
+Please note that the Optuna optimization cell is commented out in this notebook to save execution time. The process is computationally expensive and can take a while to complete.
+If you wish to run it yourself, I highly recommend enabling a GPU accelerator (like a P100 or T4 x2) in your notebook settings for a much faster experience.
+While tuning can provide a solid improvement, the gains are often more modest compared to the impact of strong feature engineering. However, every bit of accuracy counts in a competition!
+In [11]:
+# import optuna
+
+# def objective(trial):
+#     params = {
+#         'max_depth': trial.suggest_int('max_depth', 3, 10),
+#         'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+#         'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+#     }
+
+#     params['n_estimators'] = 100000
+#     params['learning_rate'] = 0.01
+#     params['device'] = 'cuda'
+#     params['early_stopping_rounds'] = 100
+#     params['enable_categorical'] = True
+    
+#     oof_preds = np.zeros(len(train))
+#     scores = []
+
+#     for fold, (train_idx, val_idx) in enumerate(kf.split(train)):
+#         X_train, X_val = train.iloc[train_idx][FEATURES], train.iloc[val_idx][FEATURES]
+#         y_train, y_val = train.iloc[train_idx][TARGET], train.iloc[val_idx][TARGET]
+        
+#         X_train[CATS] = X_train[CATS].astype('category')
+#         X_val[CATS] = X_val[CATS].astype('category')
+
+#         model = XGBRegressor(**params)
+        
+#         model.fit(X_train, y_train,
+#                   eval_set=[(X_val, y_val)],
+#                   verbose=0)
+
+#         val_preds = model.predict(X_val)
+#         oof_preds[val_idx] += val_preds
+        
+#         score = mean_squared_error(y_val, val_preds, squared=False)
+#         scores.append(score)
+
+#     overall_oof_score = mean_squared_error(train[TARGET], oof_preds, squared=False)
+    
+#     return overall_oof_score
+
+# N_TRIALS = 50
+# study = optuna.create_study(direction='minimize')
+
+# print(f"--- Starting Optuna Optimization for {N_TRIALS} trials ---")
+# study.optimize(objective, n_trials=N_TRIALS, show_progress_bar=True)
+
+# print("\n" + "="*50)
+# print("OPTUNA OPTIMIZATION COMPLETED")
+# print("="*50)
+
+# print(f"Number of finished trials: {len(study.trials)}")
+# print("Best trial:")
+# best_trial = study.best_trial
+
+# print(f"  Value (OOF RMSE): {best_trial.value:.5f}")
+# print("  Params: ")
+# for key, value in best_trial.params.items():
+#     print(f"    {key}: {value}")
+
+# print("\n--- Top 5 Best Trials (based on OOF RMSE) ---")
+# trials_df = study.trials_dataframe().sort_values(by='value', ascending=True)
+
+# for i in range(min(5, len(trials_df))):
+#     res = trials_df.iloc[i]
+#     print(f"\nRank {i+1}:")
+#     print(f"  OOF RMSE: {res['value']:.5f}")
+#     params_dict = res.filter(regex='^params_').to_dict()
+#     params_dict = {k.replace('params_', ''): v for k, v in params_dict.items()}
+#     print(f"  Params: {params_dict}")
+
+# best_params_from_study = study.best_params
+# print("\n--- Best Parameters Found ---")
+# print(best_params_from_study)
+5. Conclusion
+Let's recap our journey of improving the model's performance. We saw a clear, step-by-step improvement in our CV score:
+Baseline Score: 0.05606
+After Feature Engineering: 0.05597
+After Parameter Tuning: ??? (Run the Optuna cell to get the final score!)
+This demonstrates the tangible benefits of a systematic approach that combines thoughtful feature engineering with precise parameter tuning.
+The Importance of CV-LB Correlation
+In this competition, there appears to be a good CV-LB (Cross-Validation to Leaderboard) correlation. This means that improvements to our local, reliable CV score are likely to translate into better scores on the public leaderboard. More importantly, this relationship is often even stronger for the final private leaderboard, which uses a much larger portion of the test data. This reinforces the core Kaggle philosophy: Trust Your CV.
+In [ ]:
+ 

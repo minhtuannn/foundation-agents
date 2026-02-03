@@ -1,0 +1,185 @@
+Imports
+In [1]:
+%%time
+
+import pandas as pd 
+import numpy as np
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+
+!git clone https://github.com/muhammadabdullah0303/AbdML
+
+import sys
+sys.path.append('/kaggle/working/repository')
+
+from AbdML.main import AbdBase
+SEED = 42
+Cloning into 'AbdML'...
+remote: Enumerating objects: 306, done.
+remote: Counting objects: 100% (12/12), done.
+remote: Compressing objects: 100% (11/11), done.
+remote: Total 306 (delta 3), reused 1 (delta 1), pack-reused 294 (from 2)
+Receiving objects: 100% (306/306), 123.65 KiB | 4.58 MiB/s, done.
+Resolving deltas: 100% (96/96), done.
+CPU times: user 4.78 s, sys: 857 ms, total: 5.64 s
+Wall time: 8.32 s
+Load Data
+In [2]:
+%%time
+
+train = pd.read_csv('/kaggle/input/playground-series-s5e8/train.csv')
+sample = pd.read_csv("/kaggle/input/playground-series-s5e8/sample_submission.csv")
+test = pd.read_csv("/kaggle/input/playground-series-s5e8/test.csv")
+original = pd.read_csv("/kaggle/input/bank-marketing-dataset-full/bank-full.csv", sep=';')
+
+train = train.drop('id', axis=1)
+test = test.drop('id', axis=1)
+
+original['y'] = original['y'].map({'no': 0, 'yes': 1})
+
+COLS = ['age', 'job', 'marital', 'education', 'default', 'balance', 'housing',
+       'loan', 'contact', 'day', 'month', 'duration', 'campaign', 'pdays',
+       'previous', 'poutcome',]
+
+def TARGET_MEAN_FEATURES_ORIGINAL(train_df, test_df, col, target='y'):
+    
+    new_col = f"{c}_mean_target_orig"
+    target_map = original.groupby(col)[target].mean()
+    mean = train['y'].mean()
+    mapping_count = original[col].value_counts()
+    
+    train_df[f"{col}_count"] = train_df[col].map(mapping_count).fillna(0)
+    test_df[f"{col}_count"] = test_df[col].map(mapping_count).fillna(0)
+    
+    train_df[new_col] = train_df[col].map(target_map).fillna(mean)
+    test_df[new_col] = test_df[col].map(target_map).fillna(mean)
+    
+    return train_df, test_df
+
+for c in COLS:
+    train, test = TARGET_MEAN_FEATURES_ORIGINAL(train,test,c)
+
+%time
+
+def NEW_FE(df):
+    
+    df['balance_log'] = np.log1p(df['balance'].clip(lower=0))
+    df['job_edu'] = df['job'].astype(str) + "_" + df['education'].astype(str)
+    df['contacted_before'] = (df['pdays'] != -1).astype(int)
+    df['age_squared'] = df['age'] ** 2
+
+    df['duration_sin'] = np.sin(2*np.pi * df['duration'] / 400)
+    df['duration_cos'] = np.cos(2*np.pi * df['duration'] / 400)
+
+    month_map = {
+    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4,
+    'may': 5, 'jun': 6, 'jul': 7, 'aug': 8,
+    'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+    }
+    df['month_num'] = df['month'].map(month_map).astype('int')
+
+    df['month_sin'] = np.sin(2 * np.pi * df['month_num'] / 12)
+    df['month_cos'] = np.cos(2 * np.pi * df['month_num'] / 12)
+
+    df.drop('month_num',axis=1,inplace=True)
+    
+    return df
+
+train = NEW_FE(train)
+test = NEW_FE(test)
+
+train.head()
+CPU times: user 3 µs, sys: 1e+03 ns, total: 4 µs
+Wall time: 8.34 µs
+CPU times: user 3.22 s, sys: 754 ms, total: 3.97 s
+Wall time: 4.6 s
+Out[2]:
+age job marital education default balance housing loan contact day ... poutcome_count poutcome_mean_target_orig balance_log job_edu contacted_before age_squared duration_sin duration_cos month_sin month_cos
+0 42 technician married secondary no 7 no no cellular 25 ... 36959 0.091615 2.079442 technician_secondary 0 1764 0.964557 -0.263873 -8.660254e-01 -0.500000
+1 38 blue-collar married secondary no 514 no no unknown 18 ... 36959 0.091615 6.244167 blue-collar_secondary 0 1444 0.233445 -0.972370 1.224647e-16 -1.000000
+2 36 blue-collar married secondary no 602 yes no unknown 14 ... 36959 0.091615 6.401917 blue-collar_secondary 0 1296 0.985109 -0.171929 5.000000e-01 -0.866025
+3 27 student single secondary no 34 yes no unknown 28 ... 36959 0.091615 3.555348 student_secondary 0 729 0.156434 0.987688 5.000000e-01 -0.866025
+4 26 technician married secondary no 889 yes no cellular 3 ... 36959 0.091615 6.791221 technician_secondary 0 676 0.999507 -0.031411 8.660254e-01 0.500000
+5 rows × 57 columns
+Train Basic Model AbdBase
+In [3]:
+%%time
+
+from sklearn.metrics import roc_auc_score
+
+def ROC_AUC(y_true, y_pred_proba):
+    return roc_auc_score(y_true, y_pred_proba)
+
+
+cat_cols = ['job','marital', "education", 'contact', 'poutcome','month','default','housing','loan','job_edu']
+
+encode_c = {'cat_c': cat_cols}
+
+base = AbdBase(train_data=train, test_data=test, target_column='y',gpu=True, prob=True, test_prob=True,
+                 problem_type="classification", metric="custom", seed=SEED,ohe_fe=False,ordinal_encoder=encode_c,
+                 n_splits=7,early_stop=True,num_classes=2,cat_features=False,custom_metric=ROC_AUC,
+                 fold_type='SKF')
+*** AbdBase ['V_1.3'] ***
+
+ *** Available Settings *** 
+
+Available Models: LGBM, CAT, XGB, Voting, TABNET, Ridge, LR
+Available Metrics: roc_auc, accuracy, f1, precision, recall, rmse, wmae, rmsle, mae, r2, mse, mape, custom
+Available Problem Types: classification, regression
+Available Fold Types: SKF, KF, GKF, GSKF, RKF
+
+ *** Configuration *** 
+
+Problem Type Selected: CLASSIFICATION
+Metric Selected: CUSTOM
+Fold Type Selected: SKF
+Calculate Train Probabilities: True
+Calculate Test Probabilities: True
+Early Stopping: True
+GPU: True
+Eval_Metric Selected is: None
+
+---> Applying Ordinal Encoder
+
+CPU times: user 1.96 s, sys: 39.9 ms, total: 2 s
+Wall time: 2 s
+Lgbm
+In [4]:
+%%time
+
+ParamsLgb = {'n_estimators': 40000, 'learning_rate': 0.0358306214515723, 'num_leaves': 228, 'max_depth': 6,
+             'min_child_samples': 83, 'subsample': 0.8700304020753131, 'colsample_bytree': 0.6169349166144594,
+             'reg_alpha': 3.700714656885025, 'reg_lambda': 4.709578317972932,"objective": "binary",
+             "metric": "binary_logloss"}
+
+results_Lgb_1 = base.Train_ML(ParamsLgb,'LGBM',e_stop=150)
+Training Folds: 100%|██████████| 7/7 [42:03<00:00, 360.52s/it]
+Overall Train ROC_AUC: 0.9848
+Overall OOF ROC_AUC: 0.9744 
+CPU times: user 1h 24min 7s, sys: 23.2 s, total: 1h 24min 30s
+Wall time: 42min 3s
+Submission
+In [9]:
+%%time
+
+def save_outputs(base_file_name, oof, pred):
+    oof_df = pd.DataFrame(oof)
+    pred_df = pd.DataFrame(pred)
+
+    oof_df.to_csv(f"{base_file_name}_OOF.csv", index=False)
+    pred_df.to_csv(f"{base_file_name}_PREDS.csv", index=False)
+
+save_outputs('LGBM_0.9744',results_Lgb_1[0], results_Lgb_1[1])
+
+sample['y'] = results_Lgb_1[1]
+sample.to_csv('submission.csv', index=False)
+sample.head() 
+CPU times: user 2.17 s, sys: 59 ms, total: 2.23 s
+Wall time: 2.24 s
+Out[9]:
+id y
+0 750000 0.003543
+1 750001 0.119923
+2 750002 0.000088
+3 750003 0.000053
+4 750004 0.008574

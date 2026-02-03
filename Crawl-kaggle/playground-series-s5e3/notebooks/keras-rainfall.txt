@@ -1,0 +1,127 @@
+In [1]:
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+from sklearn.preprocessing import StandardScaler, OrdinalEncoder, LabelEncoder
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import train_test_split, cross_val_score
+import optuna
+
+import warnings
+warnings.filterwarnings('ignore')
+
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+In [2]:
+df_train= pd.read_csv("/kaggle/input/playground-series-s5e3/train.csv").set_index('id')
+df_test= pd.read_csv("/kaggle/input/playground-series-s5e3/test.csv").set_index('id')
+df_subm= pd.read_csv("/kaggle/input/playground-series-s5e3/sample_submission.csv")
+In [3]:
+for col in df_train.columns[:-1]:
+    plt.figure(figsize=(15, 8))
+    plt.subplot(1, 2, 1)
+    sns.boxplot(data=df_train, y=col, x='rainfall')
+    plt.subplot(1, 2, 2)
+    sns.histplot(data=df_train, x=col, hue='rainfall', kde=True)
+    plt.show()
+In [4]:
+plt.figure(figsize=(12, 10))
+sns.heatmap(data=df_train.corr(), annot=True, linewidths=0.2);
+In [5]:
+df_test['winddirection'].fillna(df_test['winddirection'].median(), inplace=True)
+In [6]:
+X = df_train.drop(['rainfall'], axis=1)
+y = df_train['rainfall']
+In [7]:
+X_train = df_train.drop(columns=['day', 'rainfall'])
+y_train = df_train['rainfall']
+X_test = df_test.drop(columns=['day'])
+
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+In [8]:
+from tensorflow.keras.callbacks import EarlyStopping
+early_stopping = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
+In [9]:
+model = Sequential([
+    Dense(128, activation='relu', kernel_initializer='he_normal', input_shape=(X_train_scaled.shape[1],)),
+    Dropout(0.3),
+    Dense(64, activation='relu', kernel_initializer='he_normal', input_shape=(X_train_scaled.shape[1],)),
+    Dropout(0.3),
+    Dense(32, activation='relu', kernel_initializer='he_normal'),
+    Dropout(0.2),
+    Dense(16, activation='relu', kernel_initializer='he_normal'),
+    Dense(1, activation='sigmoid')  # Binary classification
+])
+In [10]:
+optimizer = Adam(learning_rate=0.001)
+model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['accuracy'])
+In [11]:
+history = model.fit(X_train_scaled, y_train, epochs=200, batch_size=32, validation_split=0.2, 
+                    callbacks=[early_stopping], verbose=1)
+Epoch 1/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 7s 63ms/step - accuracy: 0.6785 - loss: 0.6107 - val_accuracy: 0.8562 - val_loss: 0.3711
+Epoch 2/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8217 - loss: 0.4081 - val_accuracy: 0.8630 - val_loss: 0.3335
+Epoch 3/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8232 - loss: 0.4253 - val_accuracy: 0.8721 - val_loss: 0.3287
+Epoch 4/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8630 - loss: 0.3601 - val_accuracy: 0.8721 - val_loss: 0.3346
+Epoch 5/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8587 - loss: 0.3525 - val_accuracy: 0.8539 - val_loss: 0.3606
+Epoch 6/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8631 - loss: 0.3534 - val_accuracy: 0.8630 - val_loss: 0.3419
+Epoch 7/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8366 - loss: 0.3843 - val_accuracy: 0.8676 - val_loss: 0.3473
+Epoch 8/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8511 - loss: 0.3568 - val_accuracy: 0.8653 - val_loss: 0.3391
+Epoch 9/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8556 - loss: 0.3773 - val_accuracy: 0.8676 - val_loss: 0.3337
+Epoch 10/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8657 - loss: 0.3539 - val_accuracy: 0.8721 - val_loss: 0.3349
+Epoch 11/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8558 - loss: 0.3553 - val_accuracy: 0.8630 - val_loss: 0.3395
+Epoch 12/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8484 - loss: 0.3722 - val_accuracy: 0.8653 - val_loss: 0.3337
+Epoch 13/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8456 - loss: 0.3740 - val_accuracy: 0.8744 - val_loss: 0.3341
+Epoch 14/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8621 - loss: 0.3541 - val_accuracy: 0.8744 - val_loss: 0.3359
+Epoch 15/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8606 - loss: 0.3611 - val_accuracy: 0.8699 - val_loss: 0.3398
+Epoch 16/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8732 - loss: 0.3306 - val_accuracy: 0.8676 - val_loss: 0.3333
+Epoch 17/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8691 - loss: 0.3487 - val_accuracy: 0.8767 - val_loss: 0.3418
+Epoch 18/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8707 - loss: 0.3321 - val_accuracy: 0.8744 - val_loss: 0.3467
+Epoch 19/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8553 - loss: 0.3497 - val_accuracy: 0.8721 - val_loss: 0.3371
+Epoch 20/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8798 - loss: 0.3328 - val_accuracy: 0.8721 - val_loss: 0.3440
+Epoch 21/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8569 - loss: 0.3613 - val_accuracy: 0.8721 - val_loss: 0.3358
+Epoch 22/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8732 - loss: 0.3436 - val_accuracy: 0.8653 - val_loss: 0.3421
+Epoch 23/200
+55/55 ━━━━━━━━━━━━━━━━━━━━ 0s 2ms/step - accuracy: 0.8668 - loss: 0.3425 - val_accuracy: 0.8653 - val_loss: 0.3397
+In [12]:
+y_pred_keras = model.predict(X_test_scaled).flatten()
+
+# Save Submission
+df_subm['rainfall'] = y_pred_keras
+df_subm.to_csv('subm_keras.csv', index=False)
+df_subm.head()
+23/23 ━━━━━━━━━━━━━━━━━━━━ 0s 11ms/step
+Out[12]:
+id rainfall
+0 2190 0.993228
+1 2191 0.993983
+2 2192 0.965989
+3 2193 0.262412
+4 2194 0.162899

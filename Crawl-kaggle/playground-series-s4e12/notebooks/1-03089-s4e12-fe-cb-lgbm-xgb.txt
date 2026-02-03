@@ -1,0 +1,385 @@
+In [1]:
+import optuna
+import pandas as pd
+import numpy as np
+import joblib
+from sklearn.model_selection import KFold, train_test_split
+from sklearn.metrics import mean_squared_log_error
+from sklearn.ensemble import VotingRegressor
+from lightgbm import LGBMRegressor, early_stopping
+from catboost import CatBoostRegressor
+from xgboost import XGBRegressor
+from sklearn.impute import SimpleImputer
+
+import warnings
+warnings.filterwarnings("ignore")
+In [2]:
+train = pd.read_csv('/kaggle/input/playground-series-s4e12/train.csv', index_col='id')
+test = pd.read_csv('/kaggle/input/playground-series-s4e12/test.csv', index_col='id')
+
+sample = pd.read_csv('/kaggle/input/playground-series-s4e12/sample_submission.csv')
+
+nonlog_fe , nonlog = joblib.load("/kaggle/input/rid-catboost-nonlog/cat_non_loged.pkl")
+
+train['nonlog'] = nonlog_fe
+test['nonlog'] = nonlog
+In [3]:
+original = pd.read_csv('/kaggle/input/insurance-premium-prediction/Insurance Premium Prediction Dataset.csv')
+original = original.dropna(subset=['Premium Amount'])
+In [4]:
+train = pd.concat((train, original))
+In [5]:
+for col in train.select_dtypes(include=['object']).columns:
+    train[col].fillna('unknown', inplace=True)
+    test[col].fillna('unknown', inplace=True)
+In [6]:
+imputer = SimpleImputer(strategy='median')
+train_numeric_cols = train.select_dtypes(include=[np.number]).columns.drop('Premium Amount')
+test_numeric_cols = test.select_dtypes(include=[np.number]).columns
+
+train[train_numeric_cols] = imputer.fit_transform(train[train_numeric_cols])
+test[test_numeric_cols] = imputer.transform(test[test_numeric_cols])
+In [7]:
+def date(df):
+    df['Policy Start Date'] = pd.to_datetime(df['Policy Start Date'])
+    df['Year'] = df['Policy Start Date'].dt.year
+    df['Day'] = df['Policy Start Date'].dt.day
+    df['Month'] = df['Policy Start Date'].dt.month
+    df['Month_name'] = df['Policy Start Date'].dt.month_name()
+    df['Day_of_week'] = df['Policy Start Date'].dt.day_name()
+    df['Week'] = df['Policy Start Date'].dt.isocalendar().week
+    df['Year_sin'] = np.sin(2 * np.pi * df['Year'])
+    df['Year_cos'] = np.cos(2 * np.pi * df['Year'])
+    df['Month_sin'] = np.sin(2 * np.pi * df['Month'] / 12) 
+    df['Month_cos'] = np.cos(2 * np.pi * df['Month'] / 12)
+    df['Day_sin'] = np.sin(2 * np.pi * df['Day'] / 31)  
+    df['Day_cos'] = np.cos(2 * np.pi * df['Day'] / 31)
+    df['Group'] = (df['Year']-2020)*48 + df['Month']*4 + df['Day']//7
+    df.drop('Policy Start Date', axis=1, inplace=True)
+    return df
+
+train = date(train)
+test = date(test)
+In [8]:
+def fe(df):
+    df['contract length'] = pd.cut(
+        df["Insurance Duration"].fillna(99),  
+        bins=[-float('inf'), 1, 3, float('inf')],  
+        labels=[0, 1, 2]
+    ).astype(int)
+    return df
+
+train = fe(train)
+test = fe(test)
+In [9]:
+def add_new_features(df):
+    df['Income to Dependents Ratio'] = df['Annual Income'] / (df['Number of Dependents'].fillna(0) + 1)
+    df['Income_per_Dependent'] = df['Annual Income'] / (df['Number of Dependents'] + 1)
+    df['CreditScore_InsuranceDuration'] = df['Credit Score'] * df['Insurance Duration']
+    df['Health_Risk_Score'] = df['Smoking Status'].apply(lambda x: 1 if x == 'Smoker' else 0) + \
+                                df['Exercise Frequency'].apply(lambda x: 1 if x == 'Low' else (0.5 if x == 'Medium' else 0)) + \
+                                (100 - df['Health Score']) / 20
+    df['Credit_Health_Score'] = df['Credit Score'] * df['Health Score']
+    df['Health_Age_Interaction'] = df['Health Score'] * df['Age']
+    return df
+
+train = add_new_features(train)
+test = add_new_features(test)
+In [10]:
+cat_cols = [col for col in train.columns if train[col].dtype == 'object']
+feature_cols = list(test.columns)
+In [11]:
+class CategoricalEncoder:
+    def __init__(self, train, test):
+        self.train = train
+        self.test = test
+
+    def frequency_encode(self, cat_cols, feature_cols, drop_org=False):
+        combined = pd.concat([self.train, self.test], axis=0, ignore_index=True)
+        new_cat_cols = [] 
+        for col in cat_cols:
+            freq_encoding = combined[col].value_counts().to_dict()
+            self.train[f"{col}_freq"] = self.train[col].map(freq_encoding).astype('float')
+            self.test[f"{col}_freq"] = self.test[col].map(freq_encoding).astype('float')
+            new_col_name = f"{col}_freq"
+            new_cat_cols.append(new_col_name)
+            feature_cols.append(new_col_name)
+            if drop_org:
+                feature_cols.remove(col)
+        return self.train, self.test, new_cat_cols, feature_cols
+In [12]:
+encoder = CategoricalEncoder(train, test)
+train, test, cat_cols, feature_cols = encoder.frequency_encode(cat_cols, feature_cols, drop_org=True)
+
+train = train[feature_cols + ['Premium Amount']]
+test = test[feature_cols]
+
+# train = train.fillna(-111)
+# test = test.fillna(-111)
+In [13]:
+train.head()
+Out[13]:
+Age Annual Income Number of Dependents Health Score Previous Claims Vehicle Age Credit Score Insurance Duration nonlog Year ... Occupation_freq Location_freq Policy Type_freq Customer Feedback_freq Smoking Status_freq Exercise Frequency_freq Property Type_freq Month_name_freq Day_of_week_freq Premium Amount
+0 19.0 10049.0 1.0 22.598761 2.0 17.0 372.0 5.0 1198.816057 2023 ... 536115.0 755311.0 762156.0 712268.0 1134541.0 580442.0 760133.0 185613.0 324432.0 2869.0
+1 39.0 31678.0 3.0 15.569731 1.0 12.0 694.0 2.0 953.272016 2023 ... 677948.0 760103.0 757721.0 715413.0 1142478.0 567197.0 760133.0 187130.0 326796.0 1483.0
+2 23.0 25602.0 3.0 47.177549 1.0 14.0 591.0 3.0 1104.083469 2023 ... 536115.0 761605.0 762156.0 700980.0 1142478.0 580442.0 760133.0 188225.0 324432.0 567.0
+3 21.0 141855.0 2.0 10.938144 1.0 0.0 367.0 1.0 1276.605480 2024 ... 677948.0 760103.0 757142.0 712268.0 1142478.0 560098.0 758290.0 187130.0 327141.0 765.0
+4 21.0 39651.0 1.0 20.376094 0.0 8.0 598.0 4.0 1273.640800 2021 ... 536115.0 760103.0 762156.0 712268.0 1142478.0 580442.0 760133.0 185613.0 327141.0 2022.0
+5 rows × 40 columns
+In [14]:
+X = train.drop('Premium Amount', axis=1)  
+y = train['Premium Amount']
+
+y_log = np.log1p(y)
+In [15]:
+def rmsle(y_true, y_pred):
+    y_pred = np.maximum(0, y_pred)  # Clip predicted values to be non-negative
+    return np.sqrt(mean_squared_log_error(y_true, y_pred))
+In [16]:
+train_sample = train.sample(frac=0.5)
+X_sample = train_sample.drop('Premium Amount', axis=1)  
+y_sample = train_sample['Premium Amount']
+
+X_train, X_valid, y_train, y_valid = train_test_split(X_sample, y_sample, test_size=0.3, random_state=42)
+In [17]:
+def objective_lgbm(trial):
+    params = {
+        'boosting_type': 'gbdt',
+        'objective': 'regression',
+        'metric': 'rmse',
+        'n_estimators': trial.suggest_int('n_estimators', 300, 1500),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.2),
+        'num_leaves': trial.suggest_int('num_leaves', 20, 150),
+        'max_depth': trial.suggest_int('max_depth', 3, 12),
+        'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
+        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+        'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0),
+        'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0),
+        'device': 'gpu',
+        'gpu_platform_id': 0,
+        'gpu_device_id': 0,
+        'verbose': -1,
+    }
+
+    model = LGBMRegressor(**params)
+    model.fit(X_train, y_train, 
+              eval_set=[(X_valid, y_valid)], 
+              eval_metric='rmse', 
+              callbacks=[early_stopping(stopping_rounds=200)])
+    preds = model.predict(X_valid)
+    return rmsle(y_valid, preds)
+
+# study_lgbm = optuna.create_study(direction='minimize')
+# study_lgbm.optimize(objective_lgbm, n_trials=50)
+# print("Best parameters for LightGBM:", study_lgbm.best_params)
+In [18]:
+def objective_cat(trial):
+    params = {
+        'iterations': trial.suggest_int('iterations', 2000, 4000),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1),
+        'depth': trial.suggest_int('depth', 4, 10),
+        'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1e-8, 5.0),
+        'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),
+        'task_type': 'GPU',
+        'devices': '0',
+    }
+
+    model = CatBoostRegressor(**params, verbose=0)
+    model.fit(X_train, y_train, eval_set=(X_valid, y_valid), early_stopping_rounds=200)
+    preds = model.predict(X_valid)
+    return rmsle(y_valid, preds)
+
+# study_cat = optuna.create_study(direction='minimize')
+# study_cat.optimize(objective_cat, n_trials=50)
+# print("Best parameters for CatBoost:", study_cat.best_params)
+In [19]:
+def objective_xgb(trial):
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 100, 3000),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1),
+        'max_depth': trial.suggest_int('max_depth', 3, 12),
+        'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+        'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0),
+        'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0),
+        'tree_method': 'gpu_hist',
+        'predictor': 'gpu_predictor'
+    }
+
+    model = XGBRegressor(**params)
+    model.fit(X_train, y_train, eval_set=[(X_valid, y_valid)], early_stopping_rounds=200, verbose=False)
+    preds = model.predict(X_valid)
+    return rmsle(y_valid, preds)
+
+# study_xgb = optuna.create_study(direction='minimize')
+# study_xgb.optimize(objective_xgb, n_trials=50)
+# print("Best parameters for XGBoost:", study_xgb.best_params)
+In [20]:
+lgb_params = {
+    'n_estimators': 1175, 
+    'learning_rate': 0.02991020706767896, 
+    'num_leaves': 79, 
+    'max_depth': 13, 
+    'min_child_samples': 12, 
+    'subsample': 0.9633137940297378, 
+    'colsample_bytree': 0.9637121094733179, 
+    'reg_alpha': 8.846561105667421, 
+    'reg_lambda': 3.9007247999299173
+}
+
+cat_params = {
+    'iterations': 3000, 
+    'learning_rate': 0.038365175314273574, 
+    'depth': 11, 
+    'l2_leaf_reg': 3.596285147607088, 
+    'bagging_temperature': 0.2618728648567565
+}
+
+xgb_params = {
+    'n_estimators': 1078, 
+    'learning_rate': 0.016084079332671603, 
+    'max_depth': 10, 
+    'min_child_weight': 8, 
+    'subsample': 0.8732132237392727, 
+    'colsample_bytree': 0.9756972730817159, 
+    'reg_alpha': 3.386299962300141, 
+    'reg_lambda': 8.964009483088061
+}
+
+def train_model():
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    oof = np.zeros(len(X))
+    models = []
+
+    for fold, (train_idx, valid_idx) in enumerate(kf.split(X)):
+        print(f"Fold {fold + 1}")
+        X_train, X_valid = X.iloc[train_idx], X.iloc[valid_idx]
+        y_train, y_valid = y_log.iloc[train_idx], y_log.iloc[valid_idx]
+
+        # LightGBM model
+        lgbm_model = LGBMRegressor(**lgb_params, device='gpu', gpu_platform_id=0, gpu_device_id=0, verbose=-1)
+
+        # CatBoost model
+        cat_model = CatBoostRegressor(**cat_params, verbose=500, task_type= 'GPU')
+
+        # XGBoost model
+        xgb_model = XGBRegressor(**xgb_params, verbose=500, tree_method="gpu_hist", predictor= 'gpu_predictor')
+
+        # Voting Regressor
+        voting_model = VotingRegressor(
+            estimators=[
+                ('lgbm', lgbm_model),
+                ('cat', cat_model),
+                ('xgb', xgb_model)
+            ]
+        )
+
+        voting_model.fit(X_train, y_train)
+        oof[valid_idx] = np.maximum(0, voting_model.predict(X_valid))
+        fold_rmsle = rmsle(np.expm1(y_valid), np.expm1(oof[valid_idx]))
+        print(f"Fold {fold + 1} RMSLE: {fold_rmsle}")
+        models.append(voting_model)
+        
+    return models, oof
+In [21]:
+models,oof = train_model()
+Fold 1
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+0: learn: 1.1291533 total: 14.8s remaining: 12h 19m 26s
+500: learn: 1.0605736 total: 25.3s remaining: 2m 6s
+1000: learn: 1.0393709 total: 35.9s remaining: 1m 11s
+1500: learn: 1.0185692 total: 46.6s remaining: 46.5s
+2000: learn: 0.9985465 total: 57.3s remaining: 28.6s
+2500: learn: 0.9796617 total: 1m 8s remaining: 13.6s
+2999: learn: 0.9613437 total: 1m 18s remaining: 0us
+Fold 1 RMSLE: 1.0803254052507227
+Fold 2
+0: learn: 1.1303241 total: 20.3ms remaining: 1m
+500: learn: 1.0618622 total: 10.4s remaining: 51.9s
+1000: learn: 1.0408654 total: 21.1s remaining: 42.1s
+1500: learn: 1.0201570 total: 31.8s remaining: 31.7s
+2000: learn: 1.0006520 total: 42.4s remaining: 21.2s
+2500: learn: 0.9816113 total: 53.1s remaining: 10.6s
+2999: learn: 0.9631056 total: 1m 3s remaining: 0us
+Fold 2 RMSLE: 1.0757539759953088
+Fold 3
+0: learn: 1.1297012 total: 20.5ms remaining: 1m 1s
+500: learn: 1.0608135 total: 10.5s remaining: 52.3s
+1000: learn: 1.0393281 total: 21.2s remaining: 42.3s
+1500: learn: 1.0186150 total: 31.8s remaining: 31.8s
+2000: learn: 0.9990441 total: 42.5s remaining: 21.2s
+2500: learn: 0.9799807 total: 53.3s remaining: 10.6s
+2999: learn: 0.9615278 total: 1m 3s remaining: 0us
+Fold 3 RMSLE: 1.078800938245491
+Fold 4
+0: learn: 1.1298738 total: 20.4ms remaining: 1m 1s
+500: learn: 1.0621846 total: 10.4s remaining: 51.7s
+1000: learn: 1.0415761 total: 21s remaining: 42s
+1500: learn: 1.0211604 total: 31.7s remaining: 31.7s
+2000: learn: 1.0012095 total: 42.4s remaining: 21.2s
+2500: learn: 0.9820822 total: 53.1s remaining: 10.6s
+2999: learn: 0.9636598 total: 1m 3s remaining: 0us
+Fold 4 RMSLE: 1.0777246236143712
+Fold 5
+0: learn: 1.1286803 total: 21.3ms remaining: 1m 4s
+500: learn: 1.0597494 total: 10.5s remaining: 52.6s
+1000: learn: 1.0382291 total: 21.2s remaining: 42.3s
+1500: learn: 1.0177277 total: 31.8s remaining: 31.8s
+2000: learn: 0.9982786 total: 42.6s remaining: 21.2s
+2500: learn: 0.9793692 total: 53.3s remaining: 10.6s
+2999: learn: 0.9611355 total: 1m 3s remaining: 0us
+Fold 5 RMSLE: 1.0818409023324094
+In [22]:
+print(rmsle(y, np.expm1(oof)))
+1.0788912033368125
+In [23]:
+test_predictions = np.zeros(len(test))
+
+for model in models:
+    test_predictions += np.maximum(0, np.expm1(model.predict(test))) / len(models)
+
+
+sample['Premium Amount'] = test_predictions
+sample.to_csv('submission.csv', index = False)
+sample.head()
+Out[23]:
+id Premium Amount
+0 1200000 1018.921691
+1 1200001 980.830926
+2 1200002 789.347545
+3 1200003 781.361364
+4 1200004 758.736607

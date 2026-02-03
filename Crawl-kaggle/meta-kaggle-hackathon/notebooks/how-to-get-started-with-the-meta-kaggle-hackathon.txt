@@ -1,0 +1,226 @@
+How to get started with the Meta Kaggle Hackathon
+There are two primary datasets to consider:
+Meta Kaggle
+Meta Kaggle Code
+Meta Kaggle contains .CSV files that record site activity on Kaggle.
+Meta Kaggle for Code contains .ipynb and .py files full of code that was shared on Kaggle.
+In [1]:
+import kagglehub
+
+MK_PATH = kagglehub.dataset_download("kaggle/meta-kaggle")
+MKC_PATH = kagglehub.dataset_download("kaggle/meta-kaggle-code")
+
+print("Path to Meta-Kaggle dataset files:", MK_PATH)
+print("Path to Meta-Kaggle-Code dataset files:", MKC_PATH)
+Path to Meta-Kaggle dataset files: /kaggle/input/meta-kaggle
+Path to Meta-Kaggle-Code dataset files: /kaggle/input/meta-kaggle-code
+unfold_moreShow hidden code
+This is what the Meta Kaggle data looks like.
+In [3]:
+for dirname, _, filenames in os.walk(MK_PATH):
+    for filename in filenames:
+        print(filename)
+KernelTags.csv
+ModelVariations.csv
+KernelVersionCompetitionSources.csv
+Datasets.csv
+KernelVersionKernelSources.csv
+KernelVotes.csv
+Submissions.csv
+KernelLanguages.csv
+Users.csv
+ForumMessageVotes.csv
+Competitions.csv
+DatasetTaskSubmissions.csv
+UserAchievements.csv
+UserOrganizations.csv
+Teams.csv
+UserFollowers.csv
+CompetitionTags.csv
+Kernels.csv
+Organizations.csv
+Datasources.csv
+ModelVersions.csv
+ForumTopics.csv
+DatasetVersions.csv
+ModelVotes.csv
+DatasetVotes.csv
+TeamMemberships.csv
+Forums.csv
+KernelVersions.csv
+ModelVariationVersions.csv
+ForumMessages.csv
+KernelVersionDatasetSources.csv
+Episodes.csv
+EpisodeAgents.csv
+KernelAcceleratorTypes.csv
+KernelVersionModelSources.csv
+ForumMessageReactions.csv
+Tags.csv
+DatasetTasks.csv
+Models.csv
+DatasetTags.csv
+ModelTags.csv
+This is what the Kernels.csv table looks like
+Note: The term "Kernels" refers to "Kaggle Notebooks".
+In [4]:
+kernels_file_name = f"{MK_PATH}/Kernels.csv"
+kernels = pd.read_csv(kernels_file_name)
+kernels.set_index("Id", inplace = True)
+print("\nKernels Table:\n")
+kernels.head()
+Kernels Table:
+Out[4]:
+AuthorUserId CurrentKernelVersionId ForkParentKernelVersionId ForumTopicId FirstKernelVersionId CreationDate EvaluationDate MadePublicDate IsProjectLanguageTemplate CurrentUrlSlug Medal MedalAwardDate TotalViews TotalComments TotalVotes
+Id
+1 2505 205.0 NaN NaN 1.0 03/25/2015 18:25:32 03/23/2018 03/25/2015 False hello NaN NaN 432 0 0
+2 3716 1748.0 NaN 26670.0 2.0 03/25/2015 18:31:07 04/16/2015 03/25/2015 False rf-proximity 3.0 07/15/2016 9213 1 13
+4 3716 41.0 NaN NaN 9.0 03/25/2015 21:57:36 03/23/2018 03/25/2015 False r-version NaN NaN 184 0 0
+5 28963 19.0 NaN NaN 13.0 03/25/2015 22:01:04 03/23/2018 03/25/2015 False test1 NaN NaN 147 0 0
+6 3716 21.0 NaN NaN 15.0 03/25/2015 22:19:00 03/23/2018 03/25/2015 False are-icons-missing NaN NaN 171 0 0
+A given Kernel can have multiple Versions
+A single KernelId can map to multiple KernelVersionIds
+In [5]:
+versions_file_name = f"{MK_PATH}/KernelVersions.csv"
+versions = pd.read_csv(versions_file_name)
+versions.set_index("Id", inplace = True)
+print("KernelVersions Table:\n")
+versions.head()
+KernelVersions Table:
+Out[5]:
+ScriptId ParentScriptVersionId ScriptLanguageId AuthorUserId CreationDate VersionNumber Title EvaluationDate IsChange TotalLines ... LinesChangedFromPrevious LinesUnchangedFromPrevious LinesInsertedFromFork LinesDeletedFromFork LinesChangedFromFork LinesUnchangedFromFork TotalVotes IsInternetEnabled RunningTimeInMilliseconds AcceleratorTypeId
+Id
+1790 314 NaN 2 368 04/17/2015 23:38:09 8.0 Most common first names of passengers 04/17/2015 True 11.0 ... 1.0 10.0 NaN NaN NaN NaN 0 False 4027.0 0
+442050 88177 NaN 9 368 11/12/2016 23:51:58 66.0 Trueskill for kitefoil rankings by race 11/12/2016 True NaN ... 51.0 812.0 NaN NaN NaN NaN 0 False 682386.0 0
+333111 88177 NaN 9 368 08/17/2016 06:53:10 35.0 Trueskill for kitefoil rankings 08/17/2016 True 472.0 ... 0.0 473.0 NaN NaN NaN NaN 0 False 77842.0 0
+908 154 NaN 1 28963 04/09/2015 06:38:11 1.0 Button testing 03/23/2018 True 2.0 ... NaN NaN NaN NaN NaN NaN 0 False 244019.0 0
+80751 6785 NaN 1 28963 10/05/2015 22:36:46 53.0 Testarooni 10/05/2015 False 7.0 ... 0.0 7.0 NaN NaN NaN NaN 0 False 16083.0 0
+5 rows × 21 columns
+This is what the Meta Kaggle Code data looks like
+Each file is labeled according to its KernelVersionId
+In [6]:
+first_20_files = get_first_n_files(MKC_PATH, 20)
+
+print("First 20 files:\n")
+for filename in first_20_files:
+   print(filename)
+First 20 files:
+
+111437525.ipynb
+111437241.ipynb
+111437855.ipynb
+111437029.ipynb
+111437556.ipynb
+111437861.ipynb
+111437760.ipynb
+111437323.ipynb
+111437657.ipynb
+111437589.ipynb
+111437496.ipynb
+111437048.ipynb
+111437351.ipynb
+111437968.ipynb
+111437212.ipynb
+111437734.ipynb
+111437529.ipynb
+111437659.ipynb
+111515495.ipynb
+111515770.ipynb
+Let's look at KernelVersionId 1,000
+In [7]:
+id = 1000
+source = get_source_code_by_id(id)
+
+file_path_for_id = id_to_path(id)
+print(f"\nPath for ID {id}: {file_path_for_id}")
+print(f"ID from path: {path_to_id(file_path_for_id)}")
+print(f"File extension: {get_file_extension(file_path_for_id)}")
+Path for ID 1000: /kaggle/input/meta-kaggle-code/0000/001/1000.py
+ID from path: 1000
+File extension: .py
+Looks like a Python script!
+In [8]:
+print(f"\nSource code for ID {id} (first 10 lines of first cell/file):\n")
+if source:
+    if source and source[0]:
+        for line in source[0][:10]:
+            print(line)
+        if len(source[0]) > 10:
+            print("...")
+    else:
+        print("Source code is empty or malformed.")
+else:
+    print("Source code not found.")
+Source code for ID 1000 (first 10 lines of first cell/file):
+
+import sys
+import numpy as np
+from sklearn import cross_validation
+import pandas as pd
+import csv
+from sklearn.grid_search import GridSearchCV
+from sklearn.decomposition import RandomizedPCA
+from sklearn.svm import SVC
+
+def targetFeatureSplit( data ):
+...
+Yep, it's a Python script!
+Now let's see what we can find in the Meta Kaggle dataset about that same Python script
+In [9]:
+print(f"\nVersion by ID {id}:\n")
+try:
+    version_info = get_version_by_id(id)
+    print(version_info)
+    script_id = version_info['ScriptId']
+    print(f"\nKernel by ScriptId {script_id}:\n")
+    print(get_kernel_by_id(script_id))
+except KeyError:
+    print(f"Error: Version or Kernel with ID {id} not found.")
+Version by ID 1000:
+
+ScriptId                                      163
+ParentScriptVersionId                         NaN
+ScriptLanguageId                                2
+AuthorUserId                               256815
+CreationDate                  04/09/2015 11:50:37
+VersionNumber                                10.0
+Title                                SVM with PCA
+EvaluationDate                         03/23/2018
+IsChange                                     True
+TotalLines                                   45.0
+LinesInsertedFromPrevious                     0.0
+LinesChangedFromPrevious                      1.0
+LinesUnchangedFromPrevious                   45.0
+LinesInsertedFromFork                         NaN
+LinesDeletedFromFork                          NaN
+LinesChangedFromFork                          NaN
+LinesUnchangedFromFork                        NaN
+TotalVotes                                      0
+IsInternetEnabled                           False
+RunningTimeInMilliseconds                256060.0
+AcceleratorTypeId                               0
+Name: 1000, dtype: object
+
+Kernel by ScriptId 163:
+
+AuthorUserId                              256815
+CurrentKernelVersionId                    1043.0
+ForkParentKernelVersionId                    NaN
+ForumTopicId                                 NaN
+FirstKernelVersionId                       988.0
+CreationDate                 04/09/2015 10:48:04
+EvaluationDate                        04/09/2015
+MadePublicDate                        04/09/2015
+IsProjectLanguageTemplate                  False
+CurrentUrlSlug                      svm-with-pca
+Medal                                        NaN
+MedalAwardDate                               NaN
+TotalViews                                  1300
+TotalComments                                  0
+TotalVotes                                     0
+Name: 163, dtype: object
+Now click on the "copy and edit" button in the top-right corner of this page, and try to come up with some insights about the Kaggle community and their code! For more detail about how the challenge will be evaluated, see https://www.kaggle.com/competitions/meta-kaggle-hackathon/overview/evaluation.
+Credit
+The method for joining the Meta-Kaggle data with the Meta-Kaggle-Code data was adapted from https://www.kaggle.com/code/herbison/meta-kaggle-code-joined-to-meta-kaggle
+In [ ]:
+ 

@@ -1,0 +1,118 @@
+Original Dataset
+According to discussion post here and code here, the original dataset has randomly assigned targets. It is natural to think that there is no signal and we cannot use features to predict the target. However this is not the case.
+This notebook demonstrates that we can use KNN regressor to predict rows in the original dataset. The author duplicated 5% of rows. Therefore 10% of the dataset has a pair and we can use a row's pair to predict a row's price.
+Discussion about this notebook is here
+Load Data
+In [1]:
+import pandas as pd, numpy as np
+df = pd.read_csv("/kaggle/input/student-bag-price-prediction-dataset/Noisy_Student_Bag_Price_Prediction_Dataset.csv")
+print("Original Data shape",df.shape)
+df.head()
+Original Data shape (52500, 10)
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1458: RuntimeWarning: invalid value encountered in greater
+  has_large_values = (abs_vals > 1e6).any()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1459: RuntimeWarning: invalid value encountered in less
+  has_small_values = ((abs_vals < 10 ** (-self.digits)) & (abs_vals > 0)).any()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1459: RuntimeWarning: invalid value encountered in greater
+  has_small_values = ((abs_vals < 10 ** (-self.digits)) & (abs_vals > 0)).any()
+Out[1]:
+Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 Jansport Nylon Small 2.0 No Yes Backpack Green 13.340058 143.445135
+1 Under Armour Nylon Large 4.0 Yes Yes Tote Pink 5.918030 72.086319
+2 Nike Nylon Large NaN No Yes Messenger Red 24.088386 29.699631
+3 Nike Nylon Small 1.0 Yes No Messenger Pink 5.000000 27.181990
+4 Under Armour Leather Small 8.0 Yes No NaN Black 11.258172 71.953236
+Split into Train and Test
+We will split the original dataset into train and valid. And we will label encode the categorical features. And we will reduce memory to float32.
+In [2]:
+# LABEL ENCODE AND PRESERVE NANS
+COLS = ['Brand', 'Material', 'Size', 'Laptop Compartment', 'Waterproof', 'Style', 'Color']
+for c in COLS:
+    nans = df[c].isna()
+    df[c],_ = pd.factorize(df[c])
+    df[c] = df[c].astype("float32")
+    df.loc[nans,c] = np.nan
+COLS2 = ['Compartments', 'Weight Capacity (kg)', 'Price']
+for c in COLS2:
+    df[c] = df[c].astype("float32")
+print("Data after label encoding...")
+df.head()
+Data after label encoding...
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1458: RuntimeWarning: invalid value encountered in greater
+  has_large_values = (abs_vals > 1e6).any()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1459: RuntimeWarning: invalid value encountered in less
+  has_small_values = ((abs_vals < 10 ** (-self.digits)) & (abs_vals > 0)).any()
+/usr/local/lib/python3.10/dist-packages/pandas/io/formats/format.py:1459: RuntimeWarning: invalid value encountered in greater
+  has_small_values = ((abs_vals < 10 ** (-self.digits)) & (abs_vals > 0)).any()
+Out[2]:
+Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 0.0 0.0 0.0 2.0 0.0 0.0 0.0 0.0 13.340058 143.445129
+1 1.0 0.0 1.0 4.0 1.0 0.0 1.0 1.0 5.918030 72.086319
+2 2.0 0.0 1.0 NaN 0.0 0.0 2.0 2.0 24.088387 29.699631
+3 2.0 0.0 0.0 1.0 1.0 1.0 2.0 1.0 5.000000 27.181990
+4 1.0 1.0 0.0 8.0 1.0 1.0 NaN 3.0 11.258172 71.953239
+In [3]:
+# SPLIT INTO TRAIN AND VALID FOR EXPERIMENTS BELOW
+train = df.iloc[:50_000]
+valid = df.iloc[50_000:]
+print("Original subset train shape",train.shape)
+print("Original subset valid shape",valid.shape)
+Original subset train shape (50000, 10)
+Original subset valid shape (2500, 10)
+Predict Valid with Constant Train Mean
+We will predict the validation data using the constant value of train mean. And compute validation score
+In [4]:
+# MAKE PREDICTIONS
+train_mean = train.Price.mean()
+true = valid.Price.values
+pred = np.ones(len(valid))*train_mean
+print("First 10 predictions:", pred[:10] )
+First 10 predictions: [81.92584229 81.92584229 81.92584229 81.92584229 81.92584229 81.92584229
+ 81.92584229 81.92584229 81.92584229 81.92584229]
+In [5]:
+# COMPUTE METRIC
+m = np.sqrt(np.nanmean( (true-pred)**2 ))
+print("Using Constant Prediction - Validation score =",m)
+Using Constant Prediction - Validation score = 38.99256477970516
+Predict Valid with KNN Regressor
+We will now predict validation data using KNN regressor to demonstrate that KNN regressor performs better than predicting constant mean. This supports the idea that there is signal in the original dataset. We divide Compartments and Weight Capacity (kg) by 2 because the original dataset author added uniform noise of magnitude 2 to these columns. Therefore when train and valid have distance less than 2 for these columns they can still be a match.
+In [6]:
+# CONVERT TRAIN ANDS VALID TO NUMPY ARRAYS
+X_train = train[COLS+['Compartments', 'Weight Capacity (kg)']].values
+X_train[:,-2] /= 2.0
+X_train[:,-1] /= 2.0
+y_train = train['Price'].values
+
+X_valid = valid[COLS+['Compartments', 'Weight Capacity (kg)']].values
+X_valid[:,-2] /= 2.0
+X_valid[:,-1] /= 2.0
+y_valid = valid['Price'].values
+
+print(X_train.shape, X_valid.shape)
+(50000, 9) (2500, 9)
+In [7]:
+# SUBTRACT EVERY (2500) VALIDATION VECTOR FROM EVERY (50000) TRAIN VECTOR
+diff = X_train[:, :, np.newaxis] - X_valid.T[np.newaxis, :, :]
+nan_count = np.isnan(diff).sum(axis=1)
+
+# NOW SQUARE DIFFERENCES AND SUM TO GET DISTANCE SQUARED OF EVERY VAL TO EVERY TRAIN
+result = np.nansum(diff**2, axis=1) + nan_count * 1.0
+
+# FOR EACH VALID, WE HAVE THE INDEX OF TRAIN OF THE SHORTEST DISTANCE
+distances = np.min(result,axis=0)
+pred_index = np.argmin(result,axis=0)
+distances.shape
+Out[7]:
+(2500,)
+In [8]:
+# MAKE PREDICTIONS
+pred = y_train[pred_index].copy()
+pred[distances>=1] = np.nanmean(y_train)
+print("First 10 predictions:", pred[:10] )
+First 10 predictions: [37.510292 40.4493   81.92584  81.92584  81.92584  81.92584  87.75109
+ 81.92584  88.74465  86.55765 ]
+In [9]:
+# COMPUTE METRIC
+m = np.sqrt(np.nanmean( (true-pred)**2 ))
+print("Using KNN Regressor - Validation score =",m)
+Using KNN Regressor - Validation score = 37.760357

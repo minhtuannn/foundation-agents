@@ -1,0 +1,672 @@
+Keras DNN | Backpack Prediction Challenge
+Import Libraries
+In [1]:
+import numpy as np
+import pandas as pd 
+import matplotlib.pyplot as plt
+import seaborn as sns
+import missingno as msno
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from cuml.preprocessing import TargetEncoder
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Input, BatchNormalization, Activation, Dropout
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.metrics import RootMeanSquaredError
+from tensorflow.keras.callbacks import EarlyStopping, Callback
+from tensorflow.keras.utils import plot_model
+
+import warnings
+warnings.filterwarnings("ignore")
+Loading Dataset
+In [2]:
+#Importing Train, Test, and Training Extra Datasets
+
+train = pd.read_csv('/kaggle/input/playground-series-s5e2/train.csv',index_col='id')
+test = pd.read_csv('/kaggle/input/playground-series-s5e2/test.csv',index_col='id')
+train_ex = pd.read_csv("/kaggle/input/playground-series-s5e2/training_extra.csv",index_col='id')
+DataSet Summary
+unfold_moreShow hidden code
+Train DataSet Summary (First Rows,  Shape,  Data Types)
+Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+id
+0 Jansport Leather Medium 7.0 Yes No Tote Black 11.611723 112.15875
+1 Jansport Canvas Small 10.0 Yes Yes Messenger Green 27.078537 68.88056
+2 Under Armour Leather Small 2.0 Yes No Messenger Red 16.643760 39.17320
+3 Nike Nylon Small 8.0 Yes No Messenger Green 12.937220 80.60793
+4 Adidas Canvas Medium 1.0 Yes Yes Messenger Green 17.749338 86.02312
+(300000, 10)
+Brand                    object
+Material                 object
+Size                     object
+Compartments            float64
+Laptop Compartment       object
+Waterproof               object
+Style                    object
+Color                    object
+Weight Capacity (kg)    float64
+Price                   float64
+dtype: object
+unfold_moreShow hidden code
+Test DataSet Summary (First Rows,  Shape,  Data Types)
+Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg)
+id
+300000 Puma Leather Small 2.0 No No Tote Green 20.671147
+300001 Nike Canvas Medium 7.0 No Yes Backpack Green 13.564105
+300002 Adidas Canvas Large 9.0 No Yes Messenger Blue 11.809799
+300003 Adidas Nylon Large 1.0 Yes No Messenger Green 18.477036
+300004 NaN Nylon Large 2.0 Yes Yes Tote Black 9.907953
+(200000, 9)
+Brand                    object
+Material                 object
+Size                     object
+Compartments            float64
+Laptop Compartment       object
+Waterproof               object
+Style                    object
+Color                    object
+Weight Capacity (kg)    float64
+dtype: object
+unfold_moreShow hidden code
+Train_ex DataSet Summary (First Rows,  Shape,  Data Types)
+Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+id
+500000 Under Armour Canvas Small 10.0 Yes Yes Tote Blue 23.882052 114.11068
+500001 Puma Polyester Small 4.0 No Yes Backpack Green 11.869095 129.74972
+500002 Jansport Polyester Small 8.0 Yes Yes Tote Red 8.092302 21.37370
+500003 Nike Nylon Large 7.0 No No Messenger Pink 7.719581 48.09209
+500004 Nike Leather Large 9.0 No Yes Tote Green 22.741826 77.32461
+(3694318, 10)
+Brand                    object
+Material                 object
+Size                     object
+Compartments            float64
+Laptop Compartment       object
+Waterproof               object
+Style                    object
+Color                    object
+Weight Capacity (kg)    float64
+Price                   float64
+dtype: object
+EDA (Exploratory Data Analysis)
+Target Data Distribution
+unfold_moreShow hidden code
+Price Distributions in Train and Train_ex Datasets
+Numeric Data Distribution
+unfold_moreShow hidden code
+Numeric Data Distribution Across Train, Test, and Train_ex Datasets
+Categorical Data Distribution
+unfold_moreShow hidden code
+Donut Chart Comparison of Categorical Variables in Train, Test, and Train_ex Datasets
+Missing Values Count
+unfold_moreShow hidden code
+Missing Values Count for Train Dataset
+Out[9]:
+Brand                   9705
+Material                8347
+Size                    6595
+Compartments               0
+Laptop Compartment      7444
+Waterproof              7050
+Style                   7970
+Color                   9950
+Weight Capacity (kg)     138
+Price                      0
+dtype: int64
+unfold_moreShow hidden code
+Missing Values Count for Test Dataset
+Out[10]:
+Brand                   6227
+Material                5613
+Size                    4381
+Compartments               0
+Laptop Compartment      4962
+Waterproof              4811
+Style                   5153
+Color                   6785
+Weight Capacity (kg)      77
+dtype: int64
+unfold_moreShow hidden code
+Missing Values Count for Train_ex Dataset
+Out[11]:
+Brand                   117053
+Material                102615
+Size                     81190
+Compartments                 0
+Laptop Compartment       91089
+Waterproof               87274
+Style                    96210
+Color                   123667
+Weight Capacity (kg)      1670
+Price                        0
+dtype: int64
+Missing Data Comparison
+unfold_moreShow hidden code
+Comparative Charts of Missing Data in Train, Test, and Train_ex Datasets
+Visualization of Missing Data Locations
+unfold_moreShow hidden code
+Visualization of Missing Data Locations in Train, Test, and Train_ex Datasets
+Visualizing Missing Values
+unfold_moreShow hidden code
+Visualizing Missing Values in Train, Test, and Train_ex Datasets
+
+Missing Values in Train Dataset
+  Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+id                    
+5 Nike Canvas Medium 10.000000 No Yes nan Black 7.241812 20.015530
+6 Nike nan Large 3.000000 No No Backpack Green 6.828123 84.805000
+10 Nike Polyester Large 1.000000 Yes No Backpack nan 27.806951 68.310470
+11 Nike Polyester nan 10.000000 No No nan Gray 13.697554 23.259630
+22 Puma Nylon Large 7.000000 Yes nan Backpack Gray 17.181182 132.685020
+30 nan Leather Large 3.000000 No Yes Tote Blue 21.304434 138.326990
+54 Adidas Polyester Small 1.000000 nan Yes Messenger Green 24.560936 52.896120
+3168 nan Polyester Large 1.000000 No No Messenger nan nan 96.841900
+Missing Values in Test Dataset
+  Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg)
+id                  
+300004 nan Nylon Large 2.000000 Yes Yes Tote Black 9.907953
+300030 Puma Polyester Medium 3.000000 No No Messenger nan 26.865981
+300032 Nike nan Small 3.000000 Yes No Tote Blue 13.828847
+300038 Jansport Nylon Small 3.000000 nan No Backpack Green 6.557517
+300043 Under Armour Nylon nan 4.000000 Yes No Messenger Blue 14.190987
+300044 Nike Polyester Small 8.000000 No No nan Blue 29.058049
+300047 Nike Polyester Small 3.000000 Yes nan Tote Pink 25.964159
+301350 Under Armour Nylon Large 1.000000 No nan Backpack Green nan
+Missing Values in Train_ex Dataset
+  Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+id                    
+500005 Adidas Polyester Medium 5.000000 No No Tote nan 18.834692 35.995990
+500012 Under Armour Nylon Medium 1.000000 nan No Messenger Pink 18.462269 130.223090
+500022 nan Nylon Large 5.000000 No No Tote Pink 23.626700 42.406870
+500037 Puma Polyester Small 7.000000 No nan Tote Black 19.647031 32.604320
+500065 Puma nan Medium 9.000000 Yes Yes Messenger Green 14.279998 36.363890
+500093 Jansport Polyester Large 8.000000 Yes No nan Red 21.547166 114.976560
+500117 Jansport Polyester nan 8.000000 Yes Yes Messenger Pink 18.998437 41.185010
+501419 Under Armour nan Large 4.000000 Yes nan Tote Blue nan 28.867590
+Data Preprocessing
+Merging Training Datasets
+In [15]:
+# Merging Train and Train_ex Data
+
+train = pd.concat([train, train_ex], axis=0, ignore_index=True)
+unfold_moreShow hidden code
+Updated Train Dataset
+Out[16]:
+Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg) Price
+0 Jansport Leather Medium 7.0 Yes No Tote Black 11.611723 112.15875
+1 Jansport Canvas Small 10.0 Yes Yes Messenger Green 27.078537 68.88056
+2 Under Armour Leather Small 2.0 Yes No Messenger Red 16.643760 39.17320
+3 Nike Nylon Small 8.0 Yes No Messenger Green 12.937220 80.60793
+4 Adidas Canvas Medium 1.0 Yes Yes Messenger Green 17.749338 86.02312
+... ... ... ... ... ... ... ... ... ... ...
+3994313 Nike Canvas NaN 3.0 Yes Yes Messenger Blue 28.098120 104.74460
+3994314 Puma Leather Small 10.0 Yes Yes Tote Blue 17.379531 122.39043
+3994315 Jansport Canvas Large 10.0 No No Backpack Red 17.037708 148.18470
+3994316 Puma Canvas NaN 2.0 No No Backpack Gray 28.783339 22.32269
+3994317 Under Armour Polyester Medium 2.0 Yes No Backpack Blue 23.076169 107.61199
+3994318 rows × 10 columns
+unfold_moreShow hidden code
+Updated Train Dataset Types
+Out[17]:
+Brand                    object
+Material                 object
+Size                     object
+Compartments            float64
+Laptop Compartment       object
+Waterproof               object
+Style                    object
+Color                    object
+Weight Capacity (kg)    float64
+Price                   float64
+dtype: object
+unfold_moreShow hidden code
+Missing Values Count for Updated Train Dataset
+Out[18]:
+Brand                   126758
+Material                110962
+Size                     87785
+Compartments                 0
+Laptop Compartment       98533
+Waterproof               94324
+Style                   104180
+Color                   133617
+Weight Capacity (kg)      1808
+Price                        0
+dtype: int64
+Handling Missing Values - Numerical Columns
+In [19]:
+# Impute missing numerical data with the median values from the TRAIN dataset
+
+num_cols = test.select_dtypes(include=['number']).columns
+
+imputation_value = train[num_cols].median()
+
+train[num_cols] = train[num_cols].fillna(imputation_value)
+test[num_cols] = test[num_cols].fillna(imputation_value)
+unfold_moreShow hidden code
+Missing Values and Data Types for Train Dataset
+Brand                    object
+Material                 object
+Size                     object
+Compartments            float64
+Laptop Compartment       object
+Waterproof               object
+Style                    object
+Color                    object
+Weight Capacity (kg)    float64
+Price                   float64
+dtype: object
+Brand                   126758
+Material                110962
+Size                     87785
+Compartments                 0
+Laptop Compartment       98533
+Waterproof               94324
+Style                   104180
+Color                   133617
+Weight Capacity (kg)         0
+Price                        0
+dtype: int64
+unfold_moreShow hidden code
+Missing Values and Data Types for Test Dataset
+Brand                    object
+Material                 object
+Size                     object
+Compartments            float64
+Laptop Compartment       object
+Waterproof               object
+Style                    object
+Color                    object
+Weight Capacity (kg)    float64
+dtype: object
+Brand                   6227
+Material                5613
+Size                    4381
+Compartments               0
+Laptop Compartment      4962
+Waterproof              4811
+Style                   5153
+Color                   6785
+Weight Capacity (kg)       0
+dtype: int64
+Handling Missing Values - Categorical Columns
+In [22]:
+# Impute Missing Values in Object Columns with 'None'
+
+obj_cols = train.select_dtypes(include=['object']).columns
+
+train[obj_cols] = train[obj_cols].fillna('None')
+test[obj_cols] = test[obj_cols].fillna('None')
+unfold_moreShow hidden code
+Missing Values and Data Types for Train Dataset
+Brand                    object
+Material                 object
+Size                     object
+Compartments            float64
+Laptop Compartment       object
+Waterproof               object
+Style                    object
+Color                    object
+Weight Capacity (kg)    float64
+Price                   float64
+dtype: object
+Brand                   0
+Material                0
+Size                    0
+Compartments            0
+Laptop Compartment      0
+Waterproof              0
+Style                   0
+Color                   0
+Weight Capacity (kg)    0
+Price                   0
+dtype: int64
+unfold_moreShow hidden code
+Missing Values and Data Types for Test Dataset
+Brand                    object
+Material                 object
+Size                     object
+Compartments            float64
+Laptop Compartment       object
+Waterproof               object
+Style                    object
+Color                    object
+Weight Capacity (kg)    float64
+dtype: object
+Brand                   0
+Material                0
+Size                    0
+Compartments            0
+Laptop Compartment      0
+Waterproof              0
+Style                   0
+Color                   0
+Weight Capacity (kg)    0
+dtype: int64
+Feature Transformation Using TargetEncoder
+In [25]:
+TE = TargetEncoder(n_folds=25, smooth=20, split_method='random', stat='mean')
+
+features = test.columns.tolist()
+
+for col in features:
+    TE.fit(train[col], train['Price'])
+    train[col] = TE.transform(train[col])
+    test[col] = TE.transform(test[col])
+unfold_moreShow hidden code
+Train DataSet Summary (First Rows,  Shape,  Data Types)
+0 1 2 3 4 5 6 7
+Brand 81.772869 81.780718 82.079035 81.290746 80.534376 81.270492 81.295487 81.228513
+Material 80.493705 81.829363 80.496205 81.066592 81.828947 81.809852 81.305868 81.831973
+Size 81.199831 81.467312 81.478402 81.466540 81.203896 81.201738 81.608734 81.459890
+Compartments 81.618870 81.592441 81.637459 81.720310 81.037067 81.540556 81.160465 81.027372
+Laptop Compartment 81.413628 81.421134 81.432393 81.418340 81.430019 81.344335 81.351283 81.423876
+Waterproof 81.443211 81.409085 81.445734 81.436281 81.414882 81.409850 81.434027 81.403772
+Style 81.504309 81.185370 81.185122 81.188170 81.197596 81.962156 81.365597 81.349353
+Color 80.323226 82.246231 81.001902 82.262451 82.243816 80.312150 82.245303 82.014855
+Weight Capacity (kg) 82.719096 81.362175 81.362175 81.362175 81.362175 78.006301 81.362175 85.610965
+Price 112.158750 68.880560 39.173200 80.607930 86.023120 20.015530 84.805000 27.158150
+(3994318, 10)
+Brand                   float64
+Material                float64
+Size                    float64
+Compartments            float64
+Laptop Compartment      float64
+Waterproof              float64
+Style                   float64
+Color                   float64
+Weight Capacity (kg)    float64
+Price                   float64
+dtype: object
+unfold_moreShow hidden code
+Test DataSet Summary (First Rows,  Shape,  Data Types)
+id 300000 300001 300002 300003 300004 300005 300006 300007
+Brand 81.225581 81.284807 80.527704 80.527704 80.991908 82.065190 81.284807 81.777538
+Material 80.488767 81.831012 81.831012 81.071800 81.071800 81.071800 81.071800 82.029411
+Size 81.467619 81.201380 81.611743 81.611743 81.611743 81.201380 81.611743 81.201380
+Compartments 81.616343 81.601272 80.280580 81.032032 81.616343 81.730617 81.730617 81.641985
+Laptop Compartment 81.350487 81.350487 81.350487 81.420190 81.420190 81.350487 81.350487 81.420190
+Waterproof 81.438524 81.411425 81.411425 81.438524 81.411425 81.438524 81.411425 81.438524
+Style 81.500005 81.357717 81.185534 81.185534 81.500005 81.357717 81.500005 81.357717
+Color 82.252331 82.252331 82.013370 82.252331 80.326122 80.326122 82.013370 82.013370
+Weight Capacity (kg) 82.752365 80.938726 90.901021 78.336685 81.362175 82.206737 91.936141 74.124884
+(200000, 9)
+Brand                   float64
+Material                float64
+Size                    float64
+Compartments            float64
+Laptop Compartment      float64
+Waterproof              float64
+Style                   float64
+Color                   float64
+Weight Capacity (kg)    float64
+dtype: object
+Dataset Normalization
+In [28]:
+# Data Normalization Using StandardScaler
+
+columns=test.columns
+scaler = StandardScaler()
+train[columns] = scaler.fit_transform(train[columns])
+test[columns] = scaler.transform(test[columns])
+unfold_moreShow hidden code
+Train DataSet Summary (First Rows,  Shape,  Data Types)
+0 1 2 3 4 5 6 7
+Brand 0.776798 0.791644 1.355884 -0.135097 -1.565704 -0.173404 -0.126128 -0.252805
+Material -1.419285 0.763503 -1.415200 -0.483049 0.762824 0.731617 -0.092015 0.767769
+Size -0.365304 0.236521 0.261474 0.234784 -0.356158 -0.361014 0.554718 0.219822
+Compartments 0.615028 0.551708 0.659566 0.858064 -0.778890 0.427400 -0.483246 -0.802116
+Laptop Compartment 0.337250 0.386453 0.460249 0.368135 0.444688 -0.116942 -0.071405 0.404426
+Waterproof 0.200984 0.116335 0.207243 0.183795 0.130713 0.118232 0.178204 0.103156
+Style 0.885519 -1.101502 -1.103046 -1.084058 -1.025332 3.737953 0.021334 -0.079870
+Color -1.600335 1.361751 -0.554941 1.386735 1.358030 -1.617396 1.360321 1.005353
+Weight Capacity (kg) 0.331466 0.025718 0.025718 0.025718 0.025718 -0.730443 0.025718 0.983076
+Price 112.158750 68.880560 39.173200 80.607930 86.023120 20.015530 84.805000 27.158150
+(3994318, 10)
+Brand                   float64
+Material                float64
+Size                    float64
+Compartments            float64
+Laptop Compartment      float64
+Waterproof              float64
+Style                   float64
+Color                   float64
+Weight Capacity (kg)    float64
+Price                   float64
+dtype: object
+unfold_moreShow hidden code
+Test DataSet Summary (First Rows,  Shape,  Data Types)
+id 300000 300001 300002 300003 300004 300005 300006 300007
+Brand -0.258350 -0.146330 -1.578323 -1.578323 -0.700323 1.329697 -0.146330 0.785629
+Material -1.427355 0.766198 0.766198 -0.474538 -0.474538 -0.474538 -0.474538 1.090430
+Size 0.237212 -0.361820 0.561489 0.561489 0.561489 -0.361820 0.561489 -0.361820
+Compartments 0.608974 0.572867 -2.591325 -0.790953 0.608974 0.882759 0.882759 0.670410
+Laptop Compartment -0.076623 -0.076623 -0.076623 0.380262 0.380262 -0.076623 -0.076623 0.380262
+Waterproof 0.189357 0.122139 0.122139 0.189357 0.122139 0.189357 0.122139 0.189357
+Style 0.858705 -0.027764 -1.100478 -1.100478 0.858705 -0.027764 0.858705 -0.027764
+Color 1.371146 1.371146 1.003065 1.371146 -1.595875 -1.595875 1.003065 1.003065
+Weight Capacity (kg) 0.338962 -0.069695 2.175056 -0.656000 0.025718 0.216019 2.408294 -1.605023
+(200000, 9)
+Brand                   float64
+Material                float64
+Size                    float64
+Compartments            float64
+Laptop Compartment      float64
+Waterproof              float64
+Style                   float64
+Color                   float64
+Weight Capacity (kg)    float64
+dtype: object
+Boxplots of Normalized Features
+unfold_moreShow hidden code
+Boxplot Analysis of Normalized Train and Test Data
+Correlation Heatmap
+unfold_moreShow hidden code
+Model Building & Evaluation
+Set Training Data
+In [33]:
+# Set the target variable 'Price' as y and features as X for training data
+
+X = train.drop(['Price'], axis=1)
+y = train['Price']
+unfold_moreShow hidden code
+Features X Summary (First Rows,  Shape,  Data Types)
+Brand Material Size Compartments Laptop Compartment Waterproof Style Color Weight Capacity (kg)
+0 0.776798 -1.419285 -0.365304 0.615028 0.337250 0.200984 0.885519 -1.600335 0.331466
+1 0.791644 0.763503 0.236521 0.551708 0.386453 0.116335 -1.101502 1.361751 0.025718
+2 1.355884 -1.415200 0.261474 0.659566 0.460249 0.207243 -1.103046 -0.554941 0.025718
+3 -0.135097 -0.483049 0.234784 0.858064 0.368135 0.183795 -1.084058 1.386735 0.025718
+4 -1.565704 0.762824 -0.356158 -0.778890 0.444688 0.130713 -1.025332 1.358030 0.025718
+(3994318, 9)
+Brand                   float64
+Material                float64
+Size                    float64
+Compartments            float64
+Laptop Compartment      float64
+Waterproof              float64
+Style                   float64
+Color                   float64
+Weight Capacity (kg)    float64
+dtype: object
+unfold_moreShow hidden code
+Target y Summary (First Rows,  Shape,  Data Type)
+0    112.15875
+1     68.88056
+2     39.17320
+3     80.60793
+4     86.02312
+Name: Price, dtype: float64
+(3994318,)
+dtype('float64')
+Evaluation metric
+DNN Model
+In [36]:
+# Split train and validation data
+train_id, val_id = train_test_split(X.index, test_size=0.2, random_state=42)
+X_train, X_val = X.iloc[train_id], X.iloc[val_id]
+y_train, y_val = y.iloc[train_id], y.iloc[val_id]
+
+# DNN model
+model = Sequential([
+    Input(shape=(X_train.shape[1],)),  
+    Dense(128, kernel_regularizer=l2(0.0001)),
+    BatchNormalization(),
+    Activation('relu'),
+    Dropout(0.1),
+    
+    Dense(128, kernel_regularizer=l2(0.0001)),
+    BatchNormalization(),
+    Activation('relu'),
+    Dropout(0.1),
+    
+    Dense(64, kernel_regularizer=l2(0.0001)),
+    BatchNormalization(),
+    Activation('relu'),
+    Dropout(0.1),
+    Dense(1)
+])
+
+# Compile the model
+model.compile(optimizer='adam', loss='mean_squared_error', metrics=[RootMeanSquaredError()])
+
+# Show the model summary
+model.summary()
+plot_model(model, to_file='model_structure.png', show_shapes=True, show_layer_names=True, dpi=63)
+Model: "sequential"
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃ Layer (type)                         ┃ Output Shape                ┃         Param # ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│ dense (Dense)                        │ (None, 128)                 │           1,280 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ batch_normalization                  │ (None, 128)                 │             512 │
+│ (BatchNormalization)                 │                             │                 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ activation (Activation)              │ (None, 128)                 │               0 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dropout (Dropout)                    │ (None, 128)                 │               0 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dense_1 (Dense)                      │ (None, 128)                 │          16,512 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ batch_normalization_1                │ (None, 128)                 │             512 │
+│ (BatchNormalization)                 │                             │                 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ activation_1 (Activation)            │ (None, 128)                 │               0 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dropout_1 (Dropout)                  │ (None, 128)                 │               0 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dense_2 (Dense)                      │ (None, 64)                  │           8,256 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ batch_normalization_2                │ (None, 64)                  │             256 │
+│ (BatchNormalization)                 │                             │                 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ activation_2 (Activation)            │ (None, 64)                  │               0 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dropout_2 (Dropout)                  │ (None, 64)                  │               0 │
+├──────────────────────────────────────┼─────────────────────────────┼─────────────────┤
+│ dense_3 (Dense)                      │ (None, 1)                   │              65 │
+└──────────────────────────────────────┴─────────────────────────────┴─────────────────┘
+ Total params: 27,393 (107.00 KB)
+ Trainable params: 26,753 (104.50 KB)
+ Non-trainable params: 640 (2.50 KB)
+Out[36]:
+Model Training
+In [37]:
+# Early stopping callback
+early_stopping = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
+
+class CustomCallback(Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        print(f'Epoch {epoch+1}/{self.params["epochs"]} - Val RMSE: {logs["val_root_mean_squared_error"]}')
+
+# Model Training
+search = model.fit(
+    X_train, 
+    y_train, 
+    epochs=50,
+    batch_size=2048,
+    callbacks=[early_stopping, CustomCallback()],
+    validation_data=(X_val, y_val),
+    verbose=0
+)
+
+# Best Val RMSE
+best_rmse = min(search.history['val_root_mean_squared_error'])  
+print("\nBest Val RMSE : ", best_rmse)
+Epoch 1/50 - Val RMSE: 38.72139358520508
+Epoch 2/50 - Val RMSE: 38.67264175415039
+Epoch 3/50 - Val RMSE: 38.67521286010742
+Epoch 4/50 - Val RMSE: 38.67116928100586
+Epoch 5/50 - Val RMSE: 38.66617965698242
+Epoch 6/50 - Val RMSE: 38.66281509399414
+Epoch 7/50 - Val RMSE: 38.665977478027344
+Epoch 8/50 - Val RMSE: 38.666297912597656
+Epoch 9/50 - Val RMSE: 38.66946029663086
+Epoch 10/50 - Val RMSE: 38.66716003417969
+Epoch 11/50 - Val RMSE: 38.666114807128906
+Epoch 12/50 - Val RMSE: 38.66393280029297
+Epoch 13/50 - Val RMSE: 38.66624069213867
+Epoch 14/50 - Val RMSE: 38.662567138671875
+Epoch 15/50 - Val RMSE: 38.66534423828125
+Epoch 16/50 - Val RMSE: 38.66399002075195
+Epoch 17/50 - Val RMSE: 38.66320037841797
+Epoch 18/50 - Val RMSE: 38.66499710083008
+Epoch 19/50 - Val RMSE: 38.6639404296875
+Epoch 20/50 - Val RMSE: 38.66708755493164
+Epoch 21/50 - Val RMSE: 38.664634704589844
+Epoch 22/50 - Val RMSE: 38.66402816772461
+Epoch 23/50 - Val RMSE: 38.6640625
+Epoch 24/50 - Val RMSE: 38.66279602050781
+Epoch 25/50 - Val RMSE: 38.66108322143555
+Epoch 26/50 - Val RMSE: 38.66278076171875
+Epoch 27/50 - Val RMSE: 38.668888092041016
+Epoch 28/50 - Val RMSE: 38.662353515625
+Epoch 29/50 - Val RMSE: 38.66188049316406
+Epoch 30/50 - Val RMSE: 38.663658142089844
+Epoch 31/50 - Val RMSE: 38.66088104248047
+Epoch 32/50 - Val RMSE: 38.662635803222656
+Epoch 33/50 - Val RMSE: 38.663631439208984
+Epoch 34/50 - Val RMSE: 38.665435791015625
+Epoch 35/50 - Val RMSE: 38.665977478027344
+Epoch 36/50 - Val RMSE: 38.664119720458984
+Epoch 37/50 - Val RMSE: 38.66676712036133
+Epoch 38/50 - Val RMSE: 38.662681579589844
+Epoch 39/50 - Val RMSE: 38.66227722167969
+Epoch 40/50 - Val RMSE: 38.661041259765625
+Epoch 41/50 - Val RMSE: 38.66389465332031
+Epoch 42/50 - Val RMSE: 38.664981842041016
+Epoch 43/50 - Val RMSE: 38.662235260009766
+Epoch 44/50 - Val RMSE: 38.66288757324219
+Epoch 45/50 - Val RMSE: 38.662139892578125
+
+Best Val RMSE :  38.66088104248047
+unfold_moreShow hidden code
+Plot the evolution of RMSE during training
+Validation Predicted Results
+unfold_moreShow hidden code
+Comparison of Validation True and Predicted Values
+
+24965/24965 ━━━━━━━━━━━━━━━━━━━━ 29s 1ms/step
+Submission
+Test Data Prediction
+unfold_moreShow hidden code
+6250/6250 ━━━━━━━━━━━━━━━━━━━━ 7s 1ms/step
+Submission File Creation
+In [41]:
+y_test_pred = np.array(y_test_pred).flatten() 
+submission = pd.DataFrame({'id': test.index, 'Price': y_test_pred})
+submission.to_csv('submission.csv', index=False)
+display(submission)
+id Price
+0 300000 82.609833
+1 300001 82.259285
+2 300002 88.433685
+3 300003 77.536560
+4 300004 80.812996
+... ... ...
+199995 499995 83.071121
+199996 499996 81.467239
+199997 499997 81.794693
+199998 499998 81.381760
+199999 499999 81.959236
+200000 rows × 2 columns

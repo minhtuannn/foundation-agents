@@ -1,0 +1,133 @@
+Libraries
+In [1]:
+import pandas as pd
+import polars as pl
+import numpy as np
+import gc
+from matplotlib import pyplot as plt
+import matplotlib.cm as cm
+from sklearn.model_selection import StratifiedGroupKFold
+Configurations
+In [2]:
+class CONFIG:
+    target_col = "responder_6"
+    lag_cols_original = ["date_id", "symbol_id"] + [f"responder_{idx}" for idx in range(9)]
+    lag_cols_rename = { f"responder_{idx}" : f"responder_{idx}_lag_1" for idx in range(9)}
+    valid_ratio = 0.05
+    start_dt = 1100
+Load training data
+In [3]:
+# Use last 2 parquets
+train = pl.scan_parquet(
+    f"/kaggle/input/jane-street-real-time-market-data-forecasting/train.parquet"
+).select(
+    pl.int_range(pl.len(), dtype=pl.UInt32).alias("id"),
+    pl.all(),
+).with_columns(
+    (pl.col(CONFIG.target_col)*2).cast(pl.Int32).alias("label"),
+).filter(
+    pl.col("date_id").gt(CONFIG.start_dt)
+)
+Create Lags data from training data
+In [4]:
+lags = train.select(pl.col(CONFIG.lag_cols_original))
+lags = lags.rename(CONFIG.lag_cols_rename)
+lags = lags.with_columns(
+    date_id = pl.col('date_id') + 1,  # lagged by 1 day
+    )
+lags = lags.group_by(["date_id", "symbol_id"], maintain_order=True).last()  # pick up last record of previous date
+lags
+Out[4]:
+NAIVE QUERY PLAN
+run LazyFrame.show_graph() to see the optimized version
+AGG [col("responder_0_lag_1").last(), col("responder_1_lag_1").last(), col("responder_2_lag_1").last(), col("responder_3_lag_1").last(), col("responder_4_lag_1").last(), col("responder_5_lag_1").last(), col("responder_6_lag_1").last(), col("responder_7_lag_1").last(), col("responder_8_lag_1").last()]
+BY
+[col("date_id"), col("symbol_id")]
+WITH COLUMNS [[(col("date_id")) + (1)].alias("date_id")]
+RENAME
+π 11/11
+FILTER BY [(col("date_id")) > (1100)]
+WITH COLUMNS [[(col("responder_6")) * (2.0)].strict_cast(Int32).alias("label")]
+π 94/94
+Parquet SCAN [/kaggle/input/jane-street-real-time-market-data-forecasting/train.parquet/partition_id=0/part-0.parquet, ... 9 other sources]
+π */93;
+Merge training data and lags data
+In [5]:
+train = train.join(lags, on=["date_id", "symbol_id"],  how="left")
+train
+Out[5]:
+NAIVE QUERY PLAN
+run LazyFrame.show_graph() to see the optimized version
+JOIN LEFT
+left: [col("date_id"), col("symbol_id")];
+right: [col("date_id"), col("symbol_id")]
+FILTER BY [(col("date_id")) > (1100)]
+AGG [col("responder_0_lag_1").last(), col("responder_1_lag_1").last(), col("responder_2_lag_1").last(), col("responder_3_lag_1").last(), col("responder_4_lag_1").last(), col("responder_5_lag_1").last(), col("responder_6_lag_1").last(), col("responder_7_lag_1").last(), col("responder_8_lag_1").last()]
+BY
+[col("date_id"), col("symbol_id")]
+WITH COLUMNS [[(col("responder_6")) * (2.0)].strict_cast(Int32).alias("label")]
+π 94/94
+Parquet SCAN [/kaggle/input/jane-street-real-time-market-data-forecasting/train.parquet/partition_id=0/part-0.parquet, ... 9 other sources]
+π */93;
+WITH COLUMNS [[(col("date_id")) + (1)].alias("date_id")]
+RENAME
+π 11/11
+FILTER BY [(col("date_id")) > (1100)]
+WITH COLUMNS [[(col("responder_6")) * (2.0)].strict_cast(Int32).alias("label")]
+π 94/94
+Parquet SCAN [/kaggle/input/jane-street-real-time-market-data-forecasting/train.parquet/partition_id=0/part-0.parquet, ... 9 other sources]
+π */93;
+Split training data and validation data
+In [6]:
+len_train   = train.select(pl.col("date_id")).collect().shape[0]
+valid_records = int(len_train * CONFIG.valid_ratio)
+len_ofl_mdl = len_train - valid_records
+last_tr_dt  = train.select(pl.col("date_id")).collect().row(len_ofl_mdl)[0]
+
+print(f"\n len_train = {len_train}")
+print(f"\n len_ofl_mdl = {len_ofl_mdl}")
+print(f"\n---> Last offline train date = {last_tr_dt}\n")
+
+training_data = train.filter(pl.col("date_id").le(last_tr_dt))
+validation_data   = train.filter(pl.col("date_id").gt(last_tr_dt))
+ len_train = 22104280
+
+ len_ofl_mdl = 20999066
+
+---> Last offline train date = 1669
+In [7]:
+validation_data
+Out[7]:
+NAIVE QUERY PLAN
+run LazyFrame.show_graph() to see the optimized version
+FILTER BY [(col("date_id")) > (1669)]
+JOIN LEFT
+left: [col("date_id"), col("symbol_id")];
+right: [col("date_id"), col("symbol_id")]
+FILTER BY [(col("date_id")) > (1100)]
+AGG [col("responder_0_lag_1").last(), col("responder_1_lag_1").last(), col("responder_2_lag_1").last(), col("responder_3_lag_1").last(), col("responder_4_lag_1").last(), col("responder_5_lag_1").last(), col("responder_6_lag_1").last(), col("responder_7_lag_1").last(), col("responder_8_lag_1").last()]
+BY
+[col("date_id"), col("symbol_id")]
+WITH COLUMNS [[(col("responder_6")) * (2.0)].strict_cast(Int32).alias("label")]
+π 94/94
+Parquet SCAN [/kaggle/input/jane-street-real-time-market-data-forecasting/train.parquet/partition_id=0/part-0.parquet, ... 9 other sources]
+π */93;
+WITH COLUMNS [[(col("date_id")) + (1)].alias("date_id")]
+RENAME
+π 11/11
+FILTER BY [(col("date_id")) > (1100)]
+WITH COLUMNS [[(col("responder_6")) * (2.0)].strict_cast(Int32).alias("label")]
+π 94/94
+Parquet SCAN [/kaggle/input/jane-street-real-time-market-data-forecasting/train.parquet/partition_id=0/part-0.parquet, ... 9 other sources]
+π */93;
+Save data as parquets
+In [8]:
+training_data.collect().\
+write_parquet(
+    f"training.parquet", partition_by = "date_id",
+)
+In [9]:
+validation_data.collect().\
+write_parquet(
+    "validation.parquet", partition_by = "date_id",
+)

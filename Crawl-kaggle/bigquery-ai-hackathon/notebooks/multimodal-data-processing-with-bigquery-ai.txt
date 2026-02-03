@@ -1,0 +1,124 @@
+Multimodal Data Processing with BigQuery AI
+Creating Embeddings for Text and Images.
+In [1]:
+import openai
+from google.cloud import bigquery
+import pandas as pd
+
+
+openai.api_key = 'ваш_openai_api_key'
+
+# Инициализация клиента BigQuery
+client = bigquery.Client()
+
+# Предположим, у вас есть список текстов
+texts = ['пример текста 1', 'пример текста 2', 'пример текста 3']
+
+embeddings = []
+for text in texts:
+    response = openai.Embedding.create(
+        input=text,
+        model='text-embedding-ada-002'
+    )
+    embeddings.append(response['data'][0]['embedding'])
+
+# Создаем DataFrame для загрузки в BigQuery
+df = pd.DataFrame({
+    'text': texts,
+    'embedding': embeddings
+})
+
+# Загружаем в BigQuery
+table_id = 'your_project.your_dataset.embeddings'
+
+job = client.load_table_from_dataframe(df, table_id)
+job.result()  # дождаться завершения
+
+print("Данные загружены успешно.")
+Using Kaggle's public dataset BigQuery integration.
+---------------------------------------------------------------------------
+APIRemovedInV1                            Traceback (most recent call last)
+/tmp/ipykernel_13/4019409186.py in <cell line: 0>()
+     14 embeddings = []
+     15 for text in texts:
+---> 16     response = openai.Embedding.create(
+     17         input=text,
+     18         model='text-embedding-ada-002'
+
+/usr/local/lib/python3.11/dist-packages/openai/lib/_old_api.py in __call__(self, *_args, **_kwargs)
+     37 
+     38     def __call__(self, *_args: Any, **_kwargs: Any) -> Any:
+---> 39         raise APIRemovedInV1(symbol=self._symbol)
+     40 
+     41 
+
+APIRemovedInV1: 
+
+You tried to access openai.Embedding, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+၊၊||၊ Creating Vector Indexes for Fast Searching |
+In [ ]:
+-- Создаем индекс для текстовых эмбеддингов
+CREATE OR REPLACE MODEL my_dataset.text_vector_index
+OPTIONS(
+  model_type='vector',
+  input_label_cols=['text_embedding']
+) AS
+SELECT
+  id,
+  text_embedding
+FROM
+  my_dataset.text_embeddings;
+
+-- Аналогично для изображений (если поддерживается)
+-- В зависимости от версии BigQuery, создание индекс может иметь свои особенности
+၊၊||၊ Search for similar documents by request |
+In [ ]:
+-- Предположим, у вас есть текстовый запрос
+DECLARE query_text STRING DEFAULT 'пример запроса';
+
+-- Генерируем эмбеддинг для запроса
+WITH query_embedding AS (
+  SELECT
+    ML.GENERATE_EMBEDDING(
+      query_text,
+      MODEL 'embedder/text'
+    ) AS embedding
+)
+
+-- Находим наиболее похожие документы
+SELECT
+  d.id,
+  d.text,
+  ML.SIMILARITY(d.text_embedding, q.embedding) AS similarity_score
+FROM
+  my_dataset.text_embeddings AS d,
+  query_embedding AS q
+ORDER BY
+  similarity_score DESC
+LIMIT 10;
+၊၊||၊ Generate a short description for the selected document |
+In [ ]:
+-- Предположим, что есть выбранный id
+DECLARE selected_id STRING DEFAULT 'id_пример';
+
+-- Получаем текст
+WITH selected_text AS (
+  SELECT text FROM my_dataset.multimodal_data WHERE id = selected_id
+)
+
+-- Генерируем резюме или описание
+SELECT
+  AI.GENERATE_TEXT(
+    prompt => CONCAT('Создайте краткое описание для следующего текста:\n', (SELECT text FROM selected_text)),
+    temperature => 0.7,
+    max_tokens => 100
+  ) AS summary;
+Summary:
+You can combine these queries to search for similar multimodal data and automatically generate their description.
+A full prototype would require automation of these steps using Python or Workflow scripts, as well as data preparation.

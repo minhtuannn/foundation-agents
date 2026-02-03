@@ -1,0 +1,24 @@
+In [1]:
+"""
+Direct submission of proven result
+No modifications - exact reproduction
+"""
+
+import pandas as pd
+
+print("Loading saved submission...")
+
+# Load saved file
+df = pd.read_csv('/kaggle/input/my-cafa6-submission/submission.tsv',
+                 sep='\t', header=None,
+                 names=['protein', 'go_term', 'score'])
+
+print(f"Loaded: {len(df):,} predictions")
+
+# Save as submission (no changes)
+df.to_csv('submission.tsv', sep='\t', index=False, header=False)
+
+print("✓ Submission ready")
+Loading saved submission...
+Loaded: 40,796,150 predictions
+✓ Submission ready

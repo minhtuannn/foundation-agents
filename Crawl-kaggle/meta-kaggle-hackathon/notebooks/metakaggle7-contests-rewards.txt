@@ -1,0 +1,575 @@
+⚡MetaKaggle7|Contests & Rewards⚡
+Monitoring Kaggle| Analytical Intelligence | Generative Reasoning
+📘 Table of Contents
+1. 🌐 Overview
+2. 🧾 Environment Setup, Importing Libraries and Loading Dataset
+2.1 Importing Required Libraries
+2.2 Downloading and Loading Meta-Kaggle Datasets
+3. 🏢 Competition Hosts Analysis
+3.1 Unique Host Segments
+3.2 Yearly Competition Count by Host
+4. 💰 Reward Types in Competitions
+4.1 Unique Reward Types and Frequency
+4.2 Reward Types by Host Segment
+5. 📈 USD Reward Trends Over Years
+5.1 USD Competitions by Year and Host
+5.2 Total USD Reward Amounts Over Time
+6. 📬 Submission Behavior Analysis
+6.1 Monthly Submission Trends
+6.2 Pre- vs Post-Deadline Submission Analysis
+7. 👥 Team Formation Insights
+7.1 Team Member Registrations by Year
+7.2 Average Team Size Trends
+1. 🌐 Overview
+This analysis delves into Kaggle competition dynamics—examining host segments, reward types, USD trends, team behavior, and submission patterns. Using Meta-Kaggle data, it uncovers how competitions are structured, funded, and participated in over time, providing insights into organizational preferences, participant engagement, and evolving collaboration patterns in competitive data science.
+2. 🧰 Environment Setup, Importing Libraries and Loading Dataset
+2.1 Importing Required Libraries
+In [1]:
+import os
+import glob
+import json
+from pathlib import Path
+from datetime import datetime
+import warnings
+import numpy as np
+import pandas as pd
+import polars as pl
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.express as px
+import plotly.graph_objs as go
+from plotly.subplots import make_subplots
+import plotly.io as pio
+from IPython.display import IFrame
+import kagglehub
+warnings.filterwarnings('ignore')
+plt.style.use('seaborn-v0_8')
+sns.set_palette("husl")
+2.2 Downloading and Loading Meta-Kaggle Datasets
+In [2]:
+MK_PATH = kagglehub.dataset_download("kaggle/meta-kaggle")
+MKC_PATH = kagglehub.dataset_download("kaggle/meta-kaggle-code")
+print("✅ Downloaded Meta-Kaggle data.")
+print("📂 MK_PATH =", MK_PATH)
+print("📂 MKC_PATH =", MKC_PATH)
+✅ Downloaded Meta-Kaggle data.
+📂 MK_PATH = /kaggle/input/meta-kaggle
+📂 MKC_PATH = /kaggle/input/meta-kaggle-code
+3. 🏢 Competition Hosts Analysis
+In [3]:
+competitions = pl.read_csv(f"{MK_PATH}/Competitions.csv")
+print("Competitions.csv Columns:", competitions.columns)
+print(competitions.shape)
+competitions.head()
+Competitions.csv Columns: ['Id', 'Slug', 'Title', 'Subtitle', 'HostSegmentTitle', 'ForumId', 'OrganizationId', 'EnabledDate', 'DeadlineDate', 'ProhibitNewEntrantsDeadlineDate', 'TeamMergerDeadlineDate', 'TeamModelDeadlineDate', 'ModelSubmissionDeadlineDate', 'FinalLeaderboardHasBeenVerified', 'HasKernels', 'OnlyAllowKernelSubmissions', 'HasLeaderboard', 'LeaderboardPercentage', 'ScoreTruncationNumDecimals', 'EvaluationAlgorithmAbbreviation', 'EvaluationAlgorithmName', 'EvaluationAlgorithmDescription', 'EvaluationAlgorithmIsMax', 'MaxDailySubmissions', 'NumScoredSubmissions', 'MaxTeamSize', 'BanTeamMergers', 'EnableTeamModels', 'RewardType', 'RewardQuantity', 'NumPrizes', 'UserRankMultiplier', 'CanQualifyTiers', 'TotalTeams', 'TotalCompetitors', 'TotalSubmissions', 'LicenseName', 'Overview', 'Rules', 'DatasetDescription', 'TotalCompressedBytes', 'TotalUncompressedBytes', 'ValidationSetName', 'ValidationSetValue', 'EnableSubmissionModelHashes', 'EnableSubmissionModelAttachments', 'HostName', 'CompetitionTypeId']
+(9817, 48)
+Out[3]:
+shape: (5, 48)
+Id Slug Title Subtitle HostSegmentTitle ForumId OrganizationId EnabledDate DeadlineDate ProhibitNewEntrantsDeadlineDate TeamMergerDeadlineDate TeamModelDeadlineDate ModelSubmissionDeadlineDate FinalLeaderboardHasBeenVerified HasKernels OnlyAllowKernelSubmissions HasLeaderboard LeaderboardPercentage ScoreTruncationNumDecimals EvaluationAlgorithmAbbreviation EvaluationAlgorithmName EvaluationAlgorithmDescription EvaluationAlgorithmIsMax MaxDailySubmissions NumScoredSubmissions MaxTeamSize BanTeamMergers EnableTeamModels RewardType RewardQuantity NumPrizes UserRankMultiplier CanQualifyTiers TotalTeams TotalCompetitors TotalSubmissions LicenseName Overview Rules DatasetDescription TotalCompressedBytes TotalUncompressedBytes ValidationSetName ValidationSetValue EnableSubmissionModelHashes EnableSubmissionModelAttachments HostName CompetitionTypeId
+i64 str str str str str str str str str str str str bool bool bool bool i64 i64 str str str bool i64 i64 i64 bool bool str str i64 f64 bool i64 i64 i64 str str str str str str str str bool bool str i64
+2408 "Eurovision2010" "Forecast Eurovision Voting" "This competition requires cont… "Featured" "2" "" "04/07/2010 07:57:43" "05/25/2010 18:00:00" "" "" "" "" true true false false 10 5 "AE" "Absolute Error" "Sum of absolute values of all … false 5 5 20 false false "USD" "1000.0000" 1 1.0 false 22 25 22 "Subject to Competition Rules" "# Background The Eurovision S… "# Competition Rules <!-- B… "# Dataset Description <p><b>D… "800614" "400307" "" "" false false "" 1
+2435 "hivprogression" "Predict HIV Progression" "This contest requires competit… "Featured" "1" "" "04/27/2010 21:29:09" "08/02/2010 12:32:00" "" "" "" "" true true false true 30 5 "MCE" "Mean Consequential Error" "Averages consequential error (… true 4 4 20 false false "USD" "500.0000" 1 1.0 true 107 116 855 "Subject to Competition Rules" "# Background <div><div>This c… "# Competition Rules <!-- B… "# Dataset Description <div><d… "2141503" "1095096" "" "" false false "" 1
+2438 "worldcup2010" "World Cup 2010 - Take on the Q… "Quants at Goldman Sachs and JP… "Featured" "3094129" "" "06/03/2010 08:08:08" "06/11/2010 13:29:00" "" "" "" "" true true false false 10 5 "Custom" "Custom Evaluation Metric" "A placeholder that indicates a… false 5 5 20 false false "USD" "100.0000" 1 0.5 false 0 0 0 "Subject to Competition Rules" "# Hints <p><br /><b>The inves… "# Competition Rules <!-- B… "# Dataset Description <p>We h… "10401" "10401" "" "" false false "" 1
+2439 "informs2010" "INFORMS Data Mining Contest 20… "The goal of this contest is to… "Featured" "4" "" "06/21/2010 21:53:25" "10/10/2010 02:28:00" "" "" "" "" true true false true 10 5 "AUC" "Area Under Receiver Operating … "Measures discrimination. Calcu… true 5 5 20 false false "USD" "0.0000" 1 1.0 true 145 153 1483 "Subject to Competition Rules" "# Background <p>     Traders… "# Competition Rules <!-- B… "# Dataset Description <div><s… "14718207" "14718207" "" "" false false "" 1
+2442 "worldcupconf" "World Cup 2010 - Confidence Ch… "The Confidence Challenge requi… "Featured" "3" "" "06/03/2010 08:08:08" "06/11/2010 13:28:00" "" "" "" "" true true false false 10 5 "Custom" "Custom Evaluation Metric" "A placeholder that indicates a… false 5 5 20 false false "USD" "100.0000" 1 0.5 false 63 64 63 "Subject to Competition Rules" "# Description <p><b></b>We ar… "# Competition Rules <!-- B… "# Dataset Description <p>We h… "" "" "" "" false false "" 1
+3.1 Unique Host Segments
+In [4]:
+hosts = (
+    competitions
+    .filter(pl.col("HostSegmentTitle").is_not_null() & (pl.col("HostSegmentTitle").str.strip_chars() != ""))
+    .select("HostSegmentTitle")
+    .unique()
+    .sort("HostSegmentTitle")
+)
+host_list = hosts["HostSegmentTitle"].to_list()
+print(f"🌍 Total Unique Hosts: {len(host_list)}\n")
+for host in host_list:
+    print(host)
+🌍 Total Unique Hosts: 7
+
+Analytics
+Community
+Featured
+Getting Started
+Playground
+Recruitment
+Research
+In [5]:
+host_counts = (
+    competitions
+    .filter(
+        pl.col("HostSegmentTitle").is_not_null() & 
+        (pl.col("HostSegmentTitle").str.strip_chars() != "")
+    )
+    .group_by("HostSegmentTitle")
+    .agg(pl.len().alias("count"))
+    .sort("count", descending=True)
+)
+print("📊 HostSegmentTitle Value Counts:\n")
+print(host_counts)
+📊 HostSegmentTitle Value Counts:
+
+shape: (7, 2)
+┌──────────────────┬───────┐
+│ HostSegmentTitle ┆ count │
+│ ---              ┆ ---   │
+│ str              ┆ u32   │
+╞══════════════════╪═══════╡
+│ Community        ┆ 9135  │
+│ Featured         ┆ 299   │
+│ Research         ┆ 178   │
+│ Playground       ┆ 145   │
+│ Analytics        ┆ 25    │
+│ Getting Started  ┆ 18    │
+│ Recruitment      ┆ 17    │
+└──────────────────┴───────┘
+In [6]:
+competitions = pl.read_csv("/kaggle/input/meta-kaggle/Competitions.csv", try_parse_dates=True)
+In [7]:
+competitions = competitions.with_columns([
+    pl.col("EnabledDate").str.strptime(pl.Datetime, "%m/%d/%Y %H:%M:%S").alias("EnabledDateParsed")
+])
+competitions = competitions.with_columns([
+    pl.col("EnabledDateParsed").dt.year().alias("EnabledYear")
+])
+In [8]:
+filtered = competitions.filter(
+    pl.col("HostSegmentTitle").is_not_null() &
+    (pl.col("HostSegmentTitle").str.strip_chars() != "")
+)
+In [9]:
+grouped = (
+    filtered
+    .group_by(["EnabledYear", "HostSegmentTitle"])
+    .agg(pl.len().alias("count"))
+    .sort(["EnabledYear", "HostSegmentTitle"])
+)
+grouped
+Out[9]:
+shape: (85, 3)
+EnabledYear HostSegmentTitle count
+i32 str u32
+2000 "Community" 1
+2001 "Community" 1
+2010 "Community" 1
+2010 "Featured" 12
+2011 "Community" 5
+… … …
+2024 "Research" 10
+2025 "Community" 882
+2025 "Featured" 11
+2025 "Playground" 7
+2025 "Research" 5
+In [10]:
+df_plot = grouped.to_pandas()
+3.2 Yearly Competition Count by Host
+In [11]:
+fig_comparison = go.Figure()
+for host in df_plot["HostSegmentTitle"].unique():
+    data = df_plot[df_plot["HostSegmentTitle"] == host]
+    fig_comparison.add_trace(go.Scatter(
+        x=data["EnabledYear"],
+        y=data["count"],
+        mode="lines+markers",
+        name=host
+    ))
+
+fig_comparison.update_layout(
+    title="Competitions per Host Segment per Year",
+    xaxis_title="Year",
+    yaxis_title="Count",
+    template="plotly_white"
+)
+fig_comparison.write_html("Competitions_year.html")
+IFrame("Competitions_year.html", width=1200, height=700)
+Out[11]:
+4. 💰 Reward Types in Competitions
+4.1 Unique Reward Types and Frequency
+In [12]:
+RewardType = (
+    competitions
+    .filter(pl.col("RewardType").is_not_null() & (pl.col("RewardType").str.strip_chars() != ""))
+    .select("RewardType")
+    .unique()
+    .sort("RewardType")
+)
+RewardType_list = RewardType["RewardType"].to_list()
+print(f"🌍 Total Unique RewardType: {len(RewardType_list)}\n")
+for res in RewardType_list:
+    print(res)
+🌍 Total Unique RewardType: 8
+
+EUR
+GBP
+Jobs
+Knowledge
+Kudos
+Prizes
+Swag
+USD
+In [13]:
+RewardType_counts = (
+    competitions
+    .filter(pl.col("RewardType").is_not_null() & (pl.col("RewardType").str.strip_chars() != ""))
+    .group_by("RewardType")
+    .len()
+    .sort("len", descending=True)
+)
+RewardType_counts_list = RewardType_counts.to_numpy().tolist()
+print(f"🌍 Total Unique RewardType: {len(RewardType_counts_list)}\n")
+for reward_type, count in RewardType_counts_list:
+    print(f"{reward_type}: {count}")
+🌍 Total Unique RewardType: 8
+
+USD: 518
+Knowledge: 415
+Swag: 101
+Jobs: 14
+Kudos: 13
+Prizes: 6
+GBP: 1
+EUR: 1
+4.2 Reward Types by Host Segment
+In [14]:
+filtered = competitions.filter(
+    pl.col("RewardType").is_not_null() & 
+    (pl.col("RewardType").str.strip_chars() != "")
+)
+host_reward_counts = (
+    filtered
+    .group_by(["HostSegmentTitle", "RewardType"])
+    .len()
+    .sort(["HostSegmentTitle", "len"], descending=[False, True])
+)
+print(host_reward_counts)
+shape: (24, 3)
+┌──────────────────┬────────────┬─────┐
+│ HostSegmentTitle ┆ RewardType ┆ len │
+│ ---              ┆ ---        ┆ --- │
+│ str              ┆ str        ┆ u32 │
+╞══════════════════╪════════════╪═════╡
+│ Analytics        ┆ USD        ┆ 23  │
+│ Analytics        ┆ Swag       ┆ 1   │
+│ Community        ┆ Knowledge  ┆ 330 │
+│ Community        ┆ USD        ┆ 60  │
+│ Community        ┆ Kudos      ┆ 5   │
+│ …                ┆ …          ┆ …   │
+│ Research         ┆ USD        ┆ 135 │
+│ Research         ┆ Knowledge  ┆ 27  │
+│ Research         ┆ Kudos      ┆ 6   │
+│ Research         ┆ Swag       ┆ 6   │
+│ Research         ┆ EUR        ┆ 1   │
+└──────────────────┴────────────┴─────┘
+5. 📈 USD Reward Trends Over Years
+5.1 USD Competitions by Year and Host
+In [15]:
+competitions = competitions.with_columns(
+    pl.col("EnabledDate").str.strptime(pl.Datetime, "%m/%d/%Y %H:%M:%S").alias("EnabledDate_parsed")
+).with_columns(
+    pl.col("EnabledDate_parsed").dt.year().alias("Year")
+)
+In [16]:
+usd_competitions = competitions.filter(
+    (pl.col("RewardType") == "USD") &
+    pl.col("Year").is_not_null() &
+    pl.col("HostSegmentTitle").is_not_null()
+)
+In [17]:
+usd_yearly_counts = (
+    usd_competitions
+    .group_by(["Year", "HostSegmentTitle"])
+    .len()
+    .sort(["Year", "HostSegmentTitle"])
+)
+In [18]:
+pivoted = (
+    usd_yearly_counts
+    .pivot(values="len", index="Year", on="HostSegmentTitle")
+    .fill_null(0)
+    .sort("Year")
+)
+In [19]:
+pdf = pivoted.to_pandas()
+df_melted = pdf.melt(id_vars="Year", var_name="HostSegmentTitle", value_name="Count")
+fig_comparison = px.line(
+    df_melted,
+    x="Year",
+    y="Count",
+    color="HostSegmentTitle",
+    markers=True,
+    title="📈 USD Competitions Over Years by HostSegmentTitle",
+    labels={"Count": "Number of Competitions", "Year": "Year"},
+    width=1100,
+    height=600
+)
+fig_comparison.write_html("all_compi_comparison.html")
+IFrame("all_compi_comparison.html", width=1200, height=700)
+Out[19]:
+5.2 Total USD Reward Amounts Over Time
+In [20]:
+competitions = competitions.with_columns(
+    pl.col("EnabledDate")
+    .str.strptime(pl.Datetime, "%m/%d/%Y %H:%M:%S", strict=False)
+    .alias("EnabledDate_parsed")
+).with_columns(
+    pl.col("EnabledDate_parsed").dt.year().alias("Year")
+)
+In [21]:
+usd_rewards = competitions.filter(
+    (pl.col("RewardType") == "USD") &
+    (pl.col("RewardQuantity").str.strip_chars().is_not_null()) &
+    (pl.col("RewardQuantity").str.strip_chars() != "") &
+    pl.col("Year").is_not_null()
+).with_columns(
+    pl.col("RewardQuantity").str.strip_chars().cast(pl.Float64)
+)
+In [22]:
+usd_by_year = (
+    usd_rewards
+    .group_by("Year")
+    .agg(pl.sum("RewardQuantity").alias("TotalUSDReward"))
+    .sort("Year")
+)
+In [23]:
+df_usd = usd_by_year.to_pandas()
+
+fig_usd = px.line(
+    df_usd,
+    x="Year",
+    y="TotalUSDReward",
+    title="💰 Total USD Rewards on Kaggle Per Year",
+    labels={"Year": "Year", "TotalUSDReward": "Total USD Reward"},
+    markers=True,
+    width=1000,
+    height=500
+)
+fig_usd.write_html("usd_reward_by_year.html")
+IFrame("usd_reward_by_year.html", width=1200, height=600)
+Out[23]:
+6. 📬 Submission Behavior Analysis
+In [24]:
+Submissions = pl.read_csv("/kaggle/input/meta-kaggle/Submissions.csv")
+print(Submissions.columns)
+print(Submissions.shape)
+Submissions.head()
+['Id', 'SubmittedUserId', 'TeamId', 'SourceKernelVersionId', 'SubmissionDate', 'ScoreDate', 'IsAfterDeadline', 'IsSelected', 'PublicScoreLeaderboardDisplay', 'PublicScoreFullPrecision', 'PrivateScoreLeaderboardDisplay', 'PrivateScoreFullPrecision']
+(16085384, 12)
+Out[24]:
+shape: (5, 12)
+Id SubmittedUserId TeamId SourceKernelVersionId SubmissionDate ScoreDate IsAfterDeadline IsSelected PublicScoreLeaderboardDisplay PublicScoreFullPrecision PrivateScoreLeaderboardDisplay PrivateScoreFullPrecision
+i64 i64 i64 str str str bool bool f64 f64 f64 f64
+2180 647 496 "" "04/29/2010" "" false false 55.76919 55.769199 56.2139 56.213902
+2192 647 496 "" "05/04/2010" "" false false 57.21149 57.211498 56.35839 56.358398
+2193 652 502 "" "05/04/2010" "" false false 56.25 56.25 56.7919 56.791901
+2195 652 502 "" "05/04/2010" "" false false 53.84619 53.846199 56.64739 56.6474
+2196 652 502 "" "05/04/2010" "" false false 52.4038 52.403801 55.7803 55.7803
+6.1 Monthly Submission Trends
+In [25]:
+Submissions = Submissions.with_columns(
+    pl.col("SubmissionDate").str.to_datetime("%m/%d/%Y").alias("SubmissionDateDT")
+)
+submission_trend = Submissions.group_by(pl.col("SubmissionDateDT").dt.truncate("1mo").alias("Month")).agg(
+    SubmissionCount=pl.col("Id").count()
+).sort("Month")
+plt.figure(figsize=(10, 6))
+plt.plot(submission_trend["Month"], submission_trend["SubmissionCount"], label="Submission Count", color="blue")
+plt.title("Submission Frequency Over Time")
+plt.xlabel("Month")
+plt.ylabel("Number of Submissions")
+plt.xticks(rotation=45)
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+6.2 Pre- vs Post-Deadline Submission Analysis
+In [26]:
+Submissions = pl.read_csv("/kaggle/input/meta-kaggle/Submissions.csv")
+Submissions = Submissions.with_columns(pl.col("SubmissionDate").str.to_date("%m/%d/%Y"))
+deadline_trends = Submissions.group_by([
+    pl.col("SubmissionDate").dt.truncate("1w").alias("Week"),
+    "IsAfterDeadline"
+]).agg(
+    pl.col("Id").count().alias("SubmissionCount")
+).sort("Week")
+deadline_pivot = deadline_trends.pivot(
+    values="SubmissionCount",
+    index="Week",
+    on="IsAfterDeadline",
+    aggregate_function="sum"
+).fill_null(0)
+deadline_pivot = deadline_pivot.rename({
+    "true": "PostDeadline",
+    "false": "PreDeadline"
+})
+fig = make_subplots()
+fig.add_trace(
+    go.Scatter(
+        x=deadline_pivot["Week"],
+        y=deadline_pivot["PreDeadline"],
+        name="Pre-Deadline Submissions",
+        line=dict(color="blue")
+    )
+)
+fig.add_trace(
+    go.Scatter(
+        x=deadline_pivot["Week"],
+        y=deadline_pivot["PostDeadline"],
+        name="Post-Deadline Submissions",
+        line=dict(color="red")
+    )
+)
+fig.update_layout(
+    title="Submission Trends: Pre- vs. Post-Deadline",
+    xaxis_title="Week",
+    yaxis_title="Number of Submissions",
+    template="plotly",
+    showlegend=True
+)
+pio.write_html(fig, file="deadline_behavior_plot.html", auto_open=False, include_plotlyjs="cdn")
+display(IFrame("deadline_behavior_plot.html", width=1200, height=700))
+In [27]:
+import gc
+gc.collect()
+Out[27]:
+4111
+In [28]:
+import sys
+for name, size in sorted(((name, sys.getsizeof(obj)) for name, obj in globals().items()), key=lambda x: -x[1])[:10]:
+    print(f"{name}: {size/1e6:.2f} MB")
+df_melted: 0.01 MB
+df_plot: 0.01 MB
+_i19: 0.00 MB
+_i13: 0.00 MB
+IFrame: 0.00 MB
+_i23: 0.00 MB
+_i12: 0.00 MB
+_i4: 0.00 MB
+_ii: 0.00 MB
+_i26: 0.00 MB
+In [29]:
+for name in dir():
+    if not name.startswith('_'):
+        del globals()[name]
+import gc
+gc.collect()
+Out[29]:
+1761
+7. 👥 Team Formation Insights
+In [30]:
+import polars as pl
+from IPython.display import IFrame
+import kagglehub
+import os
+import plotly.express as px
+import polars as pl
+from pathlib import Path
+import json
+import glob
+import os
+import plotly.graph_objs as go
+import matplotlib.pyplot as plt
+from plotly.subplots import make_subplots
+import plotly.io as pio
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
+plt.style.use('seaborn-v0_8')
+sns.set_palette("husl")
+In [31]:
+Teams = pl.read_csv("/kaggle/input/meta-kaggle/Teams.csv")
+print(Teams.columns)
+print(Teams.shape)
+Teams.head()
+['Id', 'CompetitionId', 'TeamLeaderId', 'TeamName', 'ScoreFirstSubmittedDate', 'LastSubmissionDate', 'PublicLeaderboardSubmissionId', 'PrivateLeaderboardSubmissionId', 'IsBenchmark', 'Medal', 'MedalAwardDate', 'PublicLeaderboardRank', 'PrivateLeaderboardRank', 'WriteUpForumTopicId']
+(8229773, 14)
+Out[31]:
+shape: (5, 14)
+Id CompetitionId TeamLeaderId TeamName ScoreFirstSubmittedDate LastSubmissionDate PublicLeaderboardSubmissionId PrivateLeaderboardSubmissionId IsBenchmark Medal MedalAwardDate PublicLeaderboardRank PrivateLeaderboardRank WriteUpForumTopicId
+i64 i64 i64 str str str i64 i64 bool str str i64 i64 str
+882 2447 747 "the_kasparov_of_stats" "" "08/18/2010" 4721 4721 false "" "09/06/2018" 223 212 ""
+885 2447 926 "Dirk Nachbar" "" "10/12/2010" 8958 5613 false "3" "07/15/2016" 100 99 ""
+886 2447 1282 "hcj" "" "11/16/2010" 10404 10315 false "" "09/06/2018" 187 189 ""
+887 2447 1912 "Tom" "" "08/05/2010" 4727 4731 false "" "09/06/2018" 195 178 ""
+888 2447 2018 "ulvund" "" "11/03/2010" 9371 8020 false "1" "07/15/2016" 9 8 ""
+In [32]:
+TeamMemberships = pl.read_csv("/kaggle/input/meta-kaggle/TeamMemberships.csv")
+print(TeamMemberships.columns)
+print(TeamMemberships.shape)
+TeamMemberships.head()
+['Id', 'TeamId', 'UserId', 'RequestDate']
+(8416232, 4)
+Out[32]:
+shape: (5, 4)
+Id TeamId UserId RequestDate
+i64 i64 i64 str
+16458 518 635 ""
+16464 526 839 ""
+16465 527 816 ""
+16466 528 778 ""
+16467 529 747 ""
+In [33]:
+Teams = pd.read_csv("/kaggle/input/meta-kaggle/Teams.csv")
+TeamMemberships = pd.read_csv("/kaggle/input/meta-kaggle/TeamMemberships.csv")
+In [34]:
+def clean_dates(df, date_cols):
+    for col in date_cols:
+        df[col] = df[col].replace('', pd.NaT)
+        df[col] = pd.to_datetime(df[col], errors='coerce')
+    return df
+In [35]:
+TeamMemberships = clean_dates(TeamMemberships, ['RequestDate'])
+TeamMemberships['RequestYear'] = TeamMemberships['RequestDate'].dt.year
+7.1 Team Member Registrations by Year
+In [36]:
+plt.figure(figsize=(12, 8))
+team_formation = TeamMemberships.groupby('RequestYear').size().reset_index()
+team_formation.columns = ['Year', 'Members']
+team_formation = team_formation.dropna()
+
+plt.plot(team_formation['Year'], team_formation['Members'], marker='s', linewidth=3, markersize=8, color='orange')
+plt.title('Team Member Registrations by Year', fontsize=16, fontweight='bold')
+plt.xlabel('Year', fontsize=12)
+plt.ylabel('New Team Members', fontsize=12)
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+7.2 Average Team Size Trends
+In [37]:
+plt.figure(figsize=(12, 8))
+team_sizes = TeamMemberships.groupby(['TeamId', 'RequestYear']).size().reset_index()
+team_sizes.columns = ['TeamId', 'Year', 'Size']
+team_size_yearly = team_sizes.groupby('Year')['Size'].mean().reset_index()
+
+plt.plot(team_size_yearly['Year'], team_size_yearly['Size'], marker='^', linewidth=3, markersize=8, color='purple')
+plt.title('Average Team Size Over Time', fontsize=16, fontweight='bold')
+plt.xlabel('Year', fontsize=12)
+plt.ylabel('Average Team Size', fontsize=12)
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.show()
+My MetaKaggle's Notebook Series
+Explore a series of notebooks by dnkumars that dive deep into the MetaKaggle and MetaKaggle Code datasets. Each notebook uncovers different facets of the Kaggle ecosystem, from user demographics to code patterns.
+User Demographics Forecast 📊
+Delve into trends and forecasts related to the Kaggle user base.
+Decrypting Datasets 📁
+Analyze the landscape and metadata of datasets available on Kaggle.
+Kernels' Crux 🧠
+Examine kernel (notebook) best practices, popularity, and patterns.
+Enigmatic Episodes 📅
+Explore significant events which have episodes in competitions that have shaped Kaggle (reinforcement learning usage) .
+Labels of Recognition 🏷️
+Investigate Tags mechanisms and mechanics within Kaggle.
+Demystifying Code 🧑‍💻
+Understand trends, favorite libraries, and patterns in Kaggle code notebooks.
+Contests & Rewards 🏆
+Break down reward structures, competition formats, and highlights from Kaggle contests.
+Citation
+[@meta-kaggle-hackathon] www.kaggle.com/competitions/meta-kaggle-hackathon/overview/citation
+Citation: Paul Mooney, Meg Risdal, Maria Cruz, and Addison Howard. Meta Kaggle Hackathon. Kaggle. Kaggle
+Thank You 🙇‍♂️ for Visiting My Notebook!
+
+Your feedback is greatly appreciated and motivates me to continue developing more valuable and informative notebooks

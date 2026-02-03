@@ -1,0 +1,201 @@
+Hull - Leak Safe Baseline
+The training data also contain the public test set. It is the last 180 days, see data description. Let's remove this part overall to get a meaningful score on the current public leaderboard.
+We are supposed to predict the strategy by day, which is something that depends on the forward_return and risk_free_rate (and some overall effect). This makes me wonder if we need to estimate both of them at the same time, and then deriving a certain stratgey. However, in this discussion answer, this optimization is done analytically (withouth considering penalty effects). Thus let's take these targets as the true targets to be predicted.
+Otherwise we are modelling as simple as in the Hull Starter Notebook: No time effect, same features and same model.
+Note, the training dataset will be updated throughout the competition.
+All comments welcome!
+Import & Settings
+In [1]:
+import os
+import pathlib
+import numpy as np
+import pandas as pd
+import polars as pl 
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.offline import init_notebook_mode, iplot
+import plotly as py
+init_notebook_mode(connected=True) 
+from sklearn.linear_model import ElasticNet, ElasticNetCV
+from sklearn.preprocessing import StandardScaler
+import kaggle_evaluation.default_inference_server
+from metric import score as hull_score
+In [2]:
+BASE_DIR = pathlib.Path("/kaggle/input/hull-tactical-market-prediction")
+SEED = 888
+TEST_SKIP = 180
+# same features as in hull starter nb
+FEATURES = [
+    "S2",
+    "E2", "E3",
+    "P8", "P9", "P10", "P12", "P13",
+    "S1", "S5", 
+    "I2",
+    "U1",
+    "U2",
+]
+INFO_COLS = ["date_id", "forward_returns", "risk_free_rate"]
+# model as in hull starter
+CV = 10
+L1_RATIO = 0.5
+ALPHAS = np.logspace(-4, 2, 100)
+MAX_ITER = 1000000
+Load data
+In [3]:
+data = pd.read_csv(BASE_DIR / "train.csv")
+data["U1"] = data["I2"] - data["I1"]
+data["U2"] = data["M11"] / ((data["I2"] + data["I9"] + data["I7"]) / 3)
+data = data[FEATURES + INFO_COLS].dropna()
+data
+Out[3]:
+S2 E2 E3 P8 P9 P10 P12 P13 S1 S5 I2 U1 U2 date_id forward_returns risk_free_rate
+1511 -0.285790 2.029588 2.752356 1.734923 0.986772 1.983036 -0.162462 0.592262 0.412392 -0.112613 -1.555331 -2.318559 -0.731815 1511 0.003586 0.000195
+1512 -0.399753 2.045731 2.770683 1.755699 0.987434 1.991912 -0.578615 0.591931 0.402441 -0.011856 -1.542244 -2.305802 -0.220781 1512 0.004851 0.000194
+1513 0.059127 2.075762 2.806208 1.761389 0.988095 2.004394 -0.781019 0.591601 0.402389 -0.002560 -1.593017 -2.370795 -0.300937 1513 -0.000507 0.000193
+1514 0.861838 2.071714 2.798832 1.757052 0.988757 1.996753 -0.576658 0.591270 0.385881 -0.433164 -1.611729 -2.384546 -0.474423 1514 -0.001017 0.000194
+1515 0.633058 2.057450 2.778705 1.754278 0.989418 1.989469 -0.575774 0.590939 0.359528 -0.124108 -1.640988 -2.410829 -0.295663 1515 0.001272 0.000192
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+8985 -0.446682 1.209250 1.655174 1.784929 0.039683 2.087888 0.648069 0.625331 0.249933 0.055282 0.984115 0.709975 -0.418763 8985 0.002457 0.000155
+8986 -0.118050 1.225459 1.672262 1.791596 0.037037 2.092041 0.916799 0.739418 0.298533 0.107330 0.904453 0.634612 -0.364351 8986 0.002312 0.000156
+8987 -0.316882 1.247273 1.695469 1.792816 0.041005 2.092283 -0.702456 0.809193 0.371362 -0.029770 0.842295 0.569147 -0.252353 8987 0.002891 0.000156
+8988 -0.317961 1.271926 1.721692 1.792934 0.046958 2.094798 1.456942 0.923611 0.411610 -0.001594 0.858582 0.585764 -0.201990 8988 0.008310 0.000156
+8989 0.011109 1.312626 1.765317 1.796492 0.047619 2.112168 0.376967 0.886243 0.410794 -0.105022 0.822594 0.516708 -0.169443 8989 0.000099 0.000156
+7479 rows × 16 columns
+In [4]:
+max_train_date = data["date_id"].max() - TEST_SKIP
+print("max train date_id:", max_train_date)
+max train date_id: 8809
+In [5]:
+train = data.loc[data["date_id"] <= max_train_date].copy()
+test = data.loc[data["date_id"] > max_train_date].copy()
+print("train shape:", train.shape)
+print("test shape:", test.shape)
+train shape: (7299, 16)
+test shape: (180, 16)
+Build target
+Set target as best strategy on training dataset.
+In [6]:
+solution = train.copy()
+market_excess_returns = solution['forward_returns'] - solution['risk_free_rate']
+market_excess_cumulative = (1 + market_excess_returns).prod()
+market_mean_excess_return = (market_excess_cumulative) ** (1 / len(solution)) - 1
+c = (1 + market_mean_excess_return) ** (1 / (market_excess_returns > 0).mean()) - 1
+submission = pd.DataFrame({'prediction': (c / market_excess_returns).clip(0, 2)})
+print("best score train:", hull_score(solution, submission, ''))
+best score train: 16.430245810381283
+In [7]:
+train["target"] = submission
+In [8]:
+fig = go.Figure(data=[go.Scatter3d(
+    x=train['forward_returns'],
+    y=train['risk_free_rate'],
+    z=train['target'],
+    mode='markers',
+    marker=dict(size=3)
+)])
+fig.update_layout(
+    scene=dict(
+        xaxis_title='forward_returns',
+        yaxis_title='risk_free_rate',
+        zaxis_title='target'
+    )
+)
+iplot(fig)
+In [9]:
+market_excess_returns = np.linspace(-0.01, 0.04, 402)
+fig = go.Figure(data=[go.Scatter(
+    x=market_excess_returns,
+    y=(c / market_excess_returns).clip(0, 2),
+    mode='markers',
+    marker=dict(size=3)
+)])
+fig.update_layout(
+    xaxis_title="market_excess_returns",
+    yaxis_title="target",
+)
+iplot(fig)
+−0.01
+0
+0.01
+0.02
+0.03
+0.04
+0
+0.5
+1
+1.5
+2
+market_excess_returns
+target
+Model
+In [10]:
+X_train = train[FEATURES].values
+y_train = train["target"].values
+In [11]:
+sc = StandardScaler()
+X_train_scaled = sc.fit_transform(X_train)
+model_cv = ElasticNetCV(l1_ratio=L1_RATIO, cv=CV, alphas=ALPHAS, max_iter=MAX_ITER)
+model_cv.fit(X_train_scaled, y_train)
+model = ElasticNet(alpha=model_cv.alpha_, l1_ratio=L1_RATIO)
+model.fit(X_train_scaled, y_train)
+Out[11]:
+
+ElasticNet
+ElasticNet(alpha=0.008697490026177835)
+In [12]:
+model.score(X_train_scaled, y_train)
+Out[12]:
+0.009126575857239083
+Invoke on test set
+In [13]:
+X_test = test[FEATURES].values
+X_test_scaled = sc.transform(X_test)
+y_test_pred = model.predict(X_test_scaled)
+y_test_pred = np.clip(y_test_pred, 0.0, 2.0)
+pd.Series(y_test_pred).describe()
+Out[13]:
+count    180.000000
+mean       0.121555
+std        0.015802
+min        0.072011
+25%        0.117464
+50%        0.127432
+75%        0.131588
+max        0.143887
+dtype: float64
+In [14]:
+solution = test.copy()
+submission = pd.DataFrame({'prediction': y_test_pred}, index=solution.index)
+print("score public test:", hull_score(solution, submission, ''))
+score public test: 0.5203882363437791
+Submit
+In [15]:
+def predict(test: pl.DataFrame) -> float:
+    data = test.to_pandas()
+    data["U1"] = data["I2"] - data["I1"]
+    data["U2"] = data["M11"] / ((data["I2"] + data["I9"] + data["I7"]) / 3)    
+    X = data[FEATURES].values
+    X_scaled = sc.transform(X)
+    y = model.predict(X_scaled)
+    pred = np.clip(y, 0.0, 2.0)[0]
+    print(f"date_id: {data['date_id'][0]} -> prediction: {pred:>.4f}")
+    return pred
+In [16]:
+inference_server = kaggle_evaluation.default_inference_server.DefaultInferenceServer(predict)
+
+if os.getenv('KAGGLE_IS_COMPETITION_RERUN'):
+    inference_server.serve()
+else:
+    inference_server.run_local_gateway((BASE_DIR.as_posix(),))
+date_id: 8980 -> prediction: 0.1281
+date_id: 8981 -> prediction: 0.1311
+date_id: 8982 -> prediction: 0.1315
+date_id: 8983 -> prediction: 0.1256
+date_id: 8984 -> prediction: 0.1245
+date_id: 8985 -> prediction: 0.1207
+date_id: 8986 -> prediction: 0.1260
+date_id: 8987 -> prediction: 0.1236
+date_id: 8988 -> prediction: 0.1237
+date_id: 8989 -> prediction: 0.1289
+In [ ]:
+ 

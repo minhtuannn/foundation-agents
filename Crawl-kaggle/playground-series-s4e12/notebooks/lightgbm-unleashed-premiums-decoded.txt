@@ -1,0 +1,1861 @@
+2️⃣⚡💡 LightGBM Duo: GBDT + GOSS+OOF 🔍
+📝 Updated Dataset Overview
+The dataset for this project stems from the Kaggle Playground Series - Season 4, Episode 12, focusing on the prediction of insurance premiums. It encompasses a diverse range of features, simulating real-world scenarios in insurance premium determination.
+Key Highlights:
+Features: A comprehensive set of 20 features (excluding the target variable), including numerical, categorical, and temporal data types.
+Target Variable: The Premium Amount, a continuous numerical value, serves as the target for prediction.
+Feature Breakdown:
+Numerical Features:
+Quantitative attributes such as:
+Age: Reflecting policyholder age.
+Annual Income: Indicating financial capability.
+Health Score: A measure of the individual's health condition.
+Credit Score: Evaluating financial reliability.
+Vehicle Age: Representing the insured vehicle's age.
+Categorical Features:
+Qualitative characteristics, including:
+Gender, Marital Status, Education Level, Occupation, and Policy Type, providing demographic and contextual insights.
+Temporal Feature:
+Policy Start Date: A date-based feature capturing the inception of the insurance policy.
+Dataset Challenges:
+Missing Values:
+Several features contain missing data points, requiring thoughtful imputation techniques to maintain data integrity and enable robust predictions.
+Skewed Distributions:
+Features like Annual Income and Premium Amount exhibit significant skewness, necessitating transformations such as logarithmic scaling to normalize the data.
+Diverse Feature Types:
+The dataset includes a mix of numerical, categorical, and temporal data types, requiring comprehensive preprocessing strategies for consistency and model compatibility.
+Multicollinearity:
+Potential correlations among features may affect model performance, necessitating correlation analysis and feature selection.
+🎯 Objective
+The primary objective of this project is to build a highly accurate and interpretable machine learning model to predict the Premium Amount for insurance policyholders. The model will aim to balance predictive accuracy and usability for actionable insights.
+Key Objectives:
+Data Preprocessing:
+Address missing values, normalize numerical distributions, and encode categorical variables for consistent and robust model training.
+Feature Engineering:
+Enhance predictive capability by:
+Deriving new features from existing ones.
+Selecting features with the highest predictive importance.
+Model Training and Optimization:
+Leverage cutting-edge models such as:
+LightGBM (GBDT and GOSS) for gradient boosting.
+Employ advanced tuning techniques like Optuna for hyperparameter optimization.
+Performance Evaluation:
+Measure model effectiveness using the Root Mean Squared Logarithmic Error (RMSLE) metric, ensuring alignment with real-world scenarios.
+Interpretability and Insights:
+Extract feature importance metrics to identify key drivers of premium costs.
+Analyze prediction trends to uncover actionable insights for stakeholders.
+Project Aspirations:
+This project aims to:
+Achieve a competitive RMSLE score, surpassing baseline performance benchmarks.
+Provide a scalable and adaptable framework for insurance premium prediction, applicable across various datasets and contexts.
+Offer meaningful insights into the primary determinants of insurance premiums, aiding strategic decision-making.
+By leveraging advanced data science techniques, rigorous preprocessing, and state-of-the-art models, this project seeks to establish itself as a reliable and innovative solution for predicting insurance premiums in the industry. 🚀
+Import Libraries
+Import Libraries
+In [1]:
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from matplotlib.cm import viridis
+import seaborn as sns
+import math
+from sklearn.preprocessing import LabelEncoder, OrdinalEncoder, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+
+from scipy.signal import find_peaks
+from scipy.stats import skew 
+
+import optuna
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_log_error
+from sklearn.preprocessing import StandardScaler
+import lightgbm as lgb
+import xgboost as xgb
+from catboost import CatBoostRegressor
+from lightgbm import early_stopping, log_evaluation
+from sklearn.model_selection import KFold
+
+# Ignore general warnings
+import warnings
+warnings.filterwarnings("ignore")
+
+# Suppress LightGBM logs
+import logging
+logging.getLogger("lightgbm").setLevel(logging.ERROR)
+Data Loading and Initial Exploration
+Data Loading and Initial Exploration
+In [2]:
+# Load the datasets
+train_data = pd.read_csv('/kaggle/input/playground-series-s4e12/train.csv',index_col=[0])
+test_data = pd.read_csv('/kaggle/input/playground-series-s4e12/test.csv',index_col=[0])
+sample_data = pd.read_csv('/kaggle/input/playground-series-s4e12/sample_submission.csv')
+
+# Verify shapes
+print("Train Data Shape:", train_data.shape)
+print("Test Data Shape:", test_data.shape)
+Train Data Shape: (1200000, 20)
+Test Data Shape: (800000, 19)
+In [3]:
+# Display sample data
+print("Training Dataset: \n")
+display(train_data.head())
+print('\n')
+print("Test Dataset: \n")
+display(test_data.head())
+Training Dataset: 
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type Premium Amount
+id
+0 19.0 Female 10049.0 Married 1.0 Bachelor's Self-Employed 22.598761 Urban Premium 2.0 17.0 372.0 5.0 2023-12-23 15:21:39.134960 Poor No Weekly House 2869.0
+1 39.0 Female 31678.0 Divorced 3.0 Master's NaN 15.569731 Rural Comprehensive 1.0 12.0 694.0 2.0 2023-06-12 15:21:39.111551 Average Yes Monthly House 1483.0
+2 23.0 Male 25602.0 Divorced 3.0 High School Self-Employed 47.177549 Suburban Premium 1.0 14.0 NaN 3.0 2023-09-30 15:21:39.221386 Good Yes Weekly House 567.0
+3 21.0 Male 141855.0 Married 2.0 Bachelor's NaN 10.938144 Rural Basic 1.0 0.0 367.0 1.0 2024-06-12 15:21:39.226954 Poor Yes Daily Apartment 765.0
+4 21.0 Male 39651.0 Single 1.0 Bachelor's Self-Employed 20.376094 Rural Premium 0.0 8.0 598.0 4.0 2021-12-01 15:21:39.252145 Poor Yes Weekly House 2022.0
+Test Dataset: 
+Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type
+id
+1200000 28.0 Female 2310.0 NaN 4.0 Bachelor's Self-Employed 7.657981 Rural Basic NaN 19.0 NaN 1.0 2023-06-04 15:21:39.245086 Poor Yes Weekly House
+1200001 31.0 Female 126031.0 Married 2.0 Master's Self-Employed 13.381379 Suburban Premium NaN 14.0 372.0 8.0 2024-04-22 15:21:39.224915 Good Yes Rarely Apartment
+1200002 47.0 Female 17092.0 Divorced 0.0 PhD Unemployed 24.354527 Urban Comprehensive NaN 16.0 819.0 9.0 2023-04-05 15:21:39.134960 Average Yes Monthly Condo
+1200003 28.0 Female 30424.0 Divorced 3.0 PhD Self-Employed 5.136225 Suburban Comprehensive 1.0 3.0 770.0 5.0 2023-10-25 15:21:39.134960 Poor Yes Daily House
+1200004 24.0 Male 10863.0 Divorced 2.0 High School Unemployed 11.844155 Suburban Premium NaN 14.0 755.0 7.0 2021-11-26 15:21:39.259788 Average No Weekly House
+Data Inspection and Understanding
+Data Inspection and Understanding
+In [4]:
+# Display information for the training dataset
+print("Training Dataset Information: \n")
+train_info = train_data.info()
+display(train_info)
+print('\n')
+# Display information for the test dataset
+print("Test Dataset Information: \n")
+test_info = test_data.info()
+display(test_info)
+Training Dataset Information: 
+
+<class 'pandas.core.frame.DataFrame'>
+Index: 1200000 entries, 0 to 1199999
+Data columns (total 20 columns):
+ #   Column                Non-Null Count    Dtype  
+---  ------                --------------    -----  
+ 0   Age                   1181295 non-null  float64
+ 1   Gender                1200000 non-null  object 
+ 2   Annual Income         1155051 non-null  float64
+ 3   Marital Status        1181471 non-null  object 
+ 4   Number of Dependents  1090328 non-null  float64
+ 5   Education Level       1200000 non-null  object 
+ 6   Occupation            841925 non-null   object 
+ 7   Health Score          1125924 non-null  float64
+ 8   Location              1200000 non-null  object 
+ 9   Policy Type           1200000 non-null  object 
+ 10  Previous Claims       835971 non-null   float64
+ 11  Vehicle Age           1199994 non-null  float64
+ 12  Credit Score          1062118 non-null  float64
+ 13  Insurance Duration    1199999 non-null  float64
+ 14  Policy Start Date     1200000 non-null  object 
+ 15  Customer Feedback     1122176 non-null  object 
+ 16  Smoking Status        1200000 non-null  object 
+ 17  Exercise Frequency    1200000 non-null  object 
+ 18  Property Type         1200000 non-null  object 
+ 19  Premium Amount        1200000 non-null  float64
+dtypes: float64(9), object(11)
+memory usage: 192.3+ MB
+None
+Test Dataset Information: 
+
+<class 'pandas.core.frame.DataFrame'>
+Index: 800000 entries, 1200000 to 1999999
+Data columns (total 19 columns):
+ #   Column                Non-Null Count   Dtype  
+---  ------                --------------   -----  
+ 0   Age                   787511 non-null  float64
+ 1   Gender                800000 non-null  object 
+ 2   Annual Income         770140 non-null  float64
+ 3   Marital Status        787664 non-null  object 
+ 4   Number of Dependents  726870 non-null  float64
+ 5   Education Level       800000 non-null  object 
+ 6   Occupation            560875 non-null  object 
+ 7   Health Score          750551 non-null  float64
+ 8   Location              800000 non-null  object 
+ 9   Policy Type           800000 non-null  object 
+ 10  Previous Claims       557198 non-null  float64
+ 11  Vehicle Age           799997 non-null  float64
+ 12  Credit Score          708549 non-null  float64
+ 13  Insurance Duration    799998 non-null  float64
+ 14  Policy Start Date     800000 non-null  object 
+ 15  Customer Feedback     747724 non-null  object 
+ 16  Smoking Status        800000 non-null  object 
+ 17  Exercise Frequency    800000 non-null  object 
+ 18  Property Type         800000 non-null  object 
+dtypes: float64(8), object(11)
+memory usage: 122.1+ MB
+None
+Dataset Shapes:
+Train Dataset: Contains 1,200,000 rows and 20 columns.
+Test Dataset: Contains 800,000 rows and 19 columns.
+The Premium Amount column, which is the target variable, is missing in the test dataset (as expected).
+Data Types:
+Train Dataset:
+9 numerical columns (float64) and 11 categorical/text columns (object).
+Test Dataset:
+8 numerical columns (float64) and 11 categorical/text columns (object).
+Handling Missing Data
+Handling Missing Data
+Missing Values Overview and Heatmaps
+In [5]:
+# Check for missing values in the datasets
+missing_train = train_data.isnull()
+missing_test = test_data.isnull()
+
+# Create a single figure with subplots for both datasets
+fig, axes = plt.subplots(1, 2, figsize=(18, 6))
+
+# Heatmap for missing values in the training dataset
+sns.heatmap(missing_train, cmap='viridis', cbar=True, yticklabels=False, ax=axes[0])
+axes[0].set_title('Missing Values Heatmap - Training Dataset', fontsize=14)
+axes[0].set_xlabel('Features', fontsize=12)
+axes[0].set_ylabel('Entries', fontsize=12)
+
+# Heatmap for missing values in the test dataset
+sns.heatmap(missing_test, cmap='viridis', cbar=True, yticklabels=False, ax=axes[1])
+axes[1].set_title('Missing Values Heatmap - Test Dataset', fontsize=14)
+axes[1].set_xlabel('Features', fontsize=12)
+axes[1].set_ylabel('Entries', fontsize=12)
+
+plt.tight_layout()
+plt.show()
+Insights from Missing Values Heatmaps:
+Training Dataset:
+Several features in the training dataset have missing values, as indicated by the yellow streaks in the heatmap.
+Features such as Number of Dependents, Occupation, Previous Claims, and Credit Score have a relatively high number of missing values.
+Some columns, such as Policy Start Date and Gender, seem to have no missing values as indicated by their continuous dark bands.
+Test Dataset:
+The test dataset also has missing values, with patterns similar to the training dataset.
+Features like Previous Claims, Occupation, and Number of Dependents show significant missing values, aligning with the training dataset's pattern.
+No additional features have missing values compared to the training dataset, which ensures consistency between the datasets.
+Dataset Comparison:
+The distribution of missing values appears consistent across both the training and test datasets, implying similar data collection or preprocessing methods were used.
+The percentage of missing values for features like Credit Score and Previous Claims might influence their impact on predictive models.
+In [6]:
+# Function to calculate missing values, percentages, and data types
+def missing_values_table(df):
+    missing_count = df.isnull().sum()
+    missing_percentage = 100 * missing_count / len(df)
+    data_types = df.dtypes
+    return pd.DataFrame({
+        'Missing Values': missing_count,
+        'Percentage (%)': missing_percentage,
+        'Data Type': data_types
+    })
+
+# Create tables for train and test datasets
+train_missing_table = missing_values_table(train_data)
+test_missing_table = missing_values_table(test_data)
+
+# Display the tables
+print("Missing Values Table - Training Dataset:\n")
+display(train_missing_table[train_missing_table['Missing Values'] > 0])  # Display only features with missing values
+print("\n")
+
+print("Missing Values Table - Test Dataset:\n")
+display(test_missing_table[test_missing_table['Missing Values'] > 0])  
+Missing Values Table - Training Dataset:
+Missing Values Percentage (%) Data Type
+Age 18705 1.558750 float64
+Annual Income 44949 3.745750 float64
+Marital Status 18529 1.544083 object
+Number of Dependents 109672 9.139333 float64
+Occupation 358075 29.839583 object
+Health Score 74076 6.173000 float64
+Previous Claims 364029 30.335750 float64
+Vehicle Age 6 0.000500 float64
+Credit Score 137882 11.490167 float64
+Insurance Duration 1 0.000083 float64
+Customer Feedback 77824 6.485333 object
+Missing Values Table - Test Dataset:
+Missing Values Percentage (%) Data Type
+Age 12489 1.561125 float64
+Annual Income 29860 3.732500 float64
+Marital Status 12336 1.542000 object
+Number of Dependents 73130 9.141250 float64
+Occupation 239125 29.890625 object
+Health Score 49449 6.181125 float64
+Previous Claims 242802 30.350250 float64
+Vehicle Age 3 0.000375 float64
+Credit Score 91451 11.431375 float64
+Insurance Duration 2 0.000250 float64
+Customer Feedback 52276 6.534500 object
+Observational Insights from Missing Values Table:
+Training Dataset:
+Columns with High Missing Values:
+Occupation (29.84%) and Previous Claims (30.34%) have the highest percentage of missing values. These features might significantly impact the dataset's completeness and require careful handling.
+Credit Score (11.49%) and Number of Dependents (9.14%) also have notable missing percentages.
+Columns with Moderate Missing Values:
+Features such as Health Score (6.17%) and Customer Feedback (6.49%) have moderate levels of missing values.
+Columns with Minimal Missing Values:
+Features like Vehicle Age (0.0005%) and Insurance Duration (0.00008%) have very few missing values, which can be easily imputed without much impact.
+Data Types:
+Features with missing values include both numerical (float64) and categorical (object) data types, indicating the need for distinct imputation strategies.
+Test Dataset:
+Columns with High Missing Values:
+Similar to the training dataset, Occupation (29.89%) and Previous Claims (30.35%) exhibit the highest percentage of missing values.
+Credit Score (11.43%) and Number of Dependents (9.14%) also show significant missingness.
+Columns with Moderate Missing Values:
+Features such as Health Score (6.18%) and Customer Feedback (6.53%) align closely with the training dataset in terms of missing values.
+Columns with Minimal Missing Values:
+Features like Vehicle Age (0.000375%) and Insurance Duration (0.00025%) have minimal missing data, mirroring the training dataset.
+Consistency:
+The percentages of missing values in the test dataset are highly consistent with the training dataset, making it easier to apply uniform imputation strategies.
+In [7]:
+# Filter missing values for train and test datasets
+train_missing = train_missing_table[train_missing_table['Missing Values'] > 0].sort_values(by='Percentage (%)', ascending=False)
+test_missing = test_missing_table[test_missing_table['Missing Values'] > 0].sort_values(by='Percentage (%)', ascending=False)
+
+# Set up the figure and subplots
+fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+
+# Bar plot for train dataset
+train_colors = cm.get_cmap('viridis', len(train_missing))(range(len(train_missing)))
+axes[0].barh(train_missing.index, train_missing['Percentage (%)'], color=train_colors)
+axes[0].set_title('Percentage of Missing Values (Train Data)', fontsize=12)
+axes[0].set_xlabel('Percentage (%)', fontsize=10)
+axes[0].set_ylabel('Features', fontsize=10)
+axes[0].grid(axis='x', linestyle='--', alpha=0.6)
+axes[0].invert_yaxis()  
+
+# Bar plot for test dataset
+test_colors = cm.get_cmap('viridis', len(test_missing))(range(len(test_missing)))
+axes[1].barh(test_missing.index, test_missing['Percentage (%)'], color=test_colors)
+axes[1].set_title('Percentage of Missing Values (Test Data)', fontsize=12)
+axes[1].set_xlabel('Percentage (%)', fontsize=10)
+axes[1].grid(axis='x', linestyle='--', alpha=0.6)
+plt.tight_layout()
+plt.show()
+Key Observations:
+Consistency Across Datasets: The percentage of missing values in features is highly consistent between the training and test datasets, simplifying the imputation strategy.
+Critical Features: High missing percentages in key features like Previous Claims and Occupation could impact model performance significantly if not addressed carefully.
+Potential Strategies:
+Imputation: Use median or mean values for numerical features like Credit Score and Number of Dependents. For categorical features like Occupation, use the mode or "Unknown".
+In [8]:
+# Filter only features with missing values in the training dataset
+features_with_missing = train_missing_table[train_missing_table['Missing Values'] > 0].index.tolist()
+
+def analyze_nan_with_target_filtered(df, target_column, features):
+    missing_analysis = {}
+    
+    for col in features:
+        # Split the data into missing and non-missing subsets for the column
+        missing_mask = df[col].isnull()
+        non_missing_mask = ~missing_mask
+        
+        # Calculate statistics for Premium Amount
+        stats = {
+            "Missing Count": missing_mask.sum(),
+            "Non-Missing Count": non_missing_mask.sum(),
+            "Mean (Missing)": df.loc[missing_mask, target_column].mean(),
+            "Mean (Non-Missing)": df.loc[non_missing_mask, target_column].mean(),
+            "Median (Missing)": df.loc[missing_mask, target_column].median(),
+            "Median (Non-Missing)": df.loc[non_missing_mask, target_column].median(),
+            "Std Dev (Missing)": df.loc[missing_mask, target_column].std(),
+            "Std Dev (Non-Missing)": df.loc[non_missing_mask, target_column].std(),
+        }
+        
+        missing_analysis[col] = stats
+    
+    return pd.DataFrame(missing_analysis).T
+
+# Perform the analysis for only features with missing values
+missing_vs_premium_filtered = analyze_nan_with_target_filtered(train_data, "Premium Amount", features_with_missing)
+
+# Display the results
+print("Analysis of Missing Values with Target (Premium Amount):\n")
+display(missing_vs_premium_filtered)
+Analysis of Missing Values with Target (Premium Amount):
+Missing Count Non-Missing Count Mean (Missing) Mean (Non-Missing) Median (Missing) Median (Non-Missing) Std Dev (Missing) Std Dev (Non-Missing)
+Age 18705.0 1181295.0 1096.003689 1102.648396 873.0 872.0 862.234397 865.042527
+Annual Income 44949.0 1155051.0 930.200605 1109.251625 556.0 882.0 959.098967 860.432015
+Marital Status 18529.0 1181471.0 1217.871067 1100.736161 1001.0 871.0 904.286237 864.246334
+Number of Dependents 109672.0 1090328.0 1126.441571 1100.141137 892.0 871.0 885.171044 862.907498
+Occupation 358075.0 841925.0 1093.320969 1106.467773 861.0 876.0 859.637058 867.239987
+Health Score 74076.0 1125924.0 1158.043172 1098.893513 930.0 867.0 782.759101 870.013254
+Previous Claims 364029.0 835971.0 1076.944592 1113.692608 845.0 882.0 852.091240 870.324942
+Vehicle Age 6.0 1199994.0 1197.833333 1102.544345 935.5 872.0 855.199022 864.999234
+Credit Score 137882.0 1062118.0 1085.615773 1104.742516 845.0 874.0 874.343015 863.754490
+Insurance Duration 1.0 1199999.0 1044.000000 1102.544870 1044.0 872.0 NaN 864.999218
+Customer Feedback 77824.0 1122176.0 1189.619526 1096.506106 956.0 863.0 883.866640 863.349897
+In [9]:
+# List of float-type columns with missing values
+float_missing_columns = ['Age', 'Annual Income', 'Number of Dependents', 
+                         'Health Score', 'Previous Claims', 'Vehicle Age', 
+                         'Credit Score', 'Insurance Duration']
+
+for column in float_missing_columns:
+    # Drop NaN values for binning, but retain the NaN group separately
+    valid_data = train_data[column].dropna()
+    bins = 10  
+
+    # Bin the non-NaN values
+    binned_data = pd.cut(valid_data, bins)
+    df = pd.DataFrame({
+        column: binned_data,
+        'Premium Amount': train_data.loc[valid_data.index, 'Premium Amount']
+    })
+    
+    # Group by the binned column and calculate mean Premium Amount
+    grouped = df.groupby(column, observed=True, dropna=False).agg(
+        lambda x: np.expm1(np.log1p(x).mean())
+    ).reset_index()
+    
+    # Add the NaN group separately
+    nan_group_mean = np.expm1(np.log1p(train_data.loc[train_data[column].isnull(), 'Premium Amount']).mean())
+    nan_group = pd.DataFrame({column: ['NaN'], 'Premium Amount': [nan_group_mean]})
+    
+    # Concatenate the NaN group with the grouped data
+    grouped = pd.concat([grouped, nan_group], ignore_index=True)
+    
+    def label(x):
+        if isinstance(x, float) or x == 'NaN':
+            return x
+        x = x.mid  # Get the midpoint of the interval
+        s = int(np.floor(np.log10(x)))
+        return int(round(x, -s+1))
+
+    # Select the viridis color
+    viridis_colors = viridis(range(256))
+    line_color = viridis_colors[5]  
+
+    # Plot the non-NaN bins as a line plot
+    plt.plot(grouped[:-1]['Premium Amount'], marker='o', color=line_color, label='non-nan')
+
+    # Plot the NaN bin as a bar
+    plt.bar(len(grouped) - 1, grouped.iloc[-1]['Premium Amount'], color='red', label='nan')
+
+    # Set x-ticks and labels
+    plt.xticks(range(len(grouped)), labels=grouped[column].apply(label), fontsize=6)
+    plt.title(f'Average Premium Amount vs {column}')
+    plt.xlabel(column)
+    plt.ylabel('Premium Amount')
+    plt.legend(loc='upper right')
+    plt.show()
+In [10]:
+# List of object-type columns with missing values
+object_missing_columns = ['Marital Status', 'Occupation', 'Customer Feedback']
+
+for column in object_missing_columns:
+    # Group by the column and calculate the average log-transformed Premium Amount
+    grouped = train_data.groupby(column)['Premium Amount'].agg(
+        lambda x: np.expm1(np.log1p(x).mean())  # Use log-transform to calculate mean
+    ).reset_index()
+    
+    # Calculate the average log-transformed Premium Amount for missing (NaN) values
+    nan_group_mean = np.expm1(np.log1p(train_data.loc[train_data[column].isnull(), 'Premium Amount']).mean())
+    
+    # Add a row for the NaN group
+    nan_group = pd.DataFrame({column: ['NaN'], 'Premium Amount': [nan_group_mean]})
+    grouped = pd.concat([grouped, nan_group], ignore_index=True)
+    
+    # Use viridis color palette for the bars
+    viridis_colors = viridis(range(256))  
+    bar_colors = [viridis_colors[5]] * (len(grouped) - 1) + ['red']  
+
+    # Plot the bar chart
+    plt.figure(figsize=(10, 6))
+    plt.bar(grouped[column].astype(str), grouped['Premium Amount'], color=bar_colors)
+    
+    # Set labels and title
+    plt.title(f'{column.upper()} Log-Transformed Average Premium Amounts')
+    plt.ylabel('Average Premium Amount')
+    plt.xlabel(column)
+    plt.xticks(rotation=45, ha='right')  
+    plt.show()
+Imputation Strategies for Numeric and Categorical Data
+Filling Missing Values in Numeric Columns
+In [11]:
+numeric_columns = train_data.select_dtypes(include=['number']).columns
+
+for col in numeric_columns:
+    if col in test_data.columns:
+        # Impute missing values with -1
+        train_data[col].fillna(-1, inplace=True)
+        test_data[col].fillna(-1, inplace=True)
+Filling Missing Values in Object Columns
+In [12]:
+object_columns = train_data.select_dtypes(include=['object']).columns
+for col in object_columns:
+    if col in test_data.columns:
+        train_data[col].fillna("Unknown", inplace=True)
+        test_data[col].fillna("Unknown", inplace=True)
+For each categorical column:
+Missing values in both the train_data and test_data for that column are replaced with the string "Unknown".
+In [13]:
+# Verify Missing Values
+
+print("Missing Values After Imputation - Training Dataset:")
+print(train_data.isnull().sum())
+
+print("\nMissing Values After Imputation - Test Dataset:")
+print(test_data.isnull().sum())
+Missing Values After Imputation - Training Dataset:
+Age                     0
+Gender                  0
+Annual Income           0
+Marital Status          0
+Number of Dependents    0
+Education Level         0
+Occupation              0
+Health Score            0
+Location                0
+Policy Type             0
+Previous Claims         0
+Vehicle Age             0
+Credit Score            0
+Insurance Duration      0
+Policy Start Date       0
+Customer Feedback       0
+Smoking Status          0
+Exercise Frequency      0
+Property Type           0
+Premium Amount          0
+dtype: int64
+
+Missing Values After Imputation - Test Dataset:
+Age                     0
+Gender                  0
+Annual Income           0
+Marital Status          0
+Number of Dependents    0
+Education Level         0
+Occupation              0
+Health Score            0
+Location                0
+Policy Type             0
+Previous Claims         0
+Vehicle Age             0
+Credit Score            0
+Insurance Duration      0
+Policy Start Date       0
+Customer Feedback       0
+Smoking Status          0
+Exercise Frequency      0
+Property Type           0
+dtype: int64
+Missing Values Successfully Imputed
+After executing the imputation logic for both numeric and categorical columns:
+All missing values in the training dataset (train_data) have been successfully replaced.
+All missing values in the test dataset (test_data) have been successfully replaced.
+There are no remaining NaN values in any column for either dataset.
+Key Observations
+Numeric Columns: Missing values were filled using the median value of the respective column in the training dataset. This approach ensures that the central tendency of the data is preserved while mitigating the impact of outliers.
+Categorical Columns: Missing values were filled with the placeholder "Unknown". This ensures that the absence of data is explicitly marked without distorting the distribution of existing categories.
+In [14]:
+# Check for duplicate rows in the training dataset
+train_duplicates = train_data.duplicated().sum()
+print(f"\nNumber of duplicate rows in the training dataset: {train_duplicates}")
+
+# Check for duplicate rows in the test dataset
+test_duplicates = test_data.duplicated().sum()
+print(f"Number of duplicate rows in the test dataset: {test_duplicates}")
+Number of duplicate rows in the training dataset: 0
+Number of duplicate rows in the test dataset: 0
+After checking for duplicate rows in both datasets:
+Training Dataset (train_data): There are 0 duplicate rows detected.
+Test Dataset (test_data): There are 0 duplicate rows detected.
+Exploratory Data Analysis (EDA)
+Exploratory Data Analysis (EDA)
+Target Column Extraction and Visualizing Distribution
+In [15]:
+target_column = (set(train_data.columns) - set(test_data.columns)).pop()
+
+print(f"Target column: {target_column}")
+print(f"Data type: {train_data[target_column].dtype}")
+Target column: Premium Amount
+Data type: float64
+In [16]:
+# Custom colormap using viridis
+viridis_cmap = cm.get_cmap("viridis")
+
+def visualize_premium_amount_with_peaks(data, feature='Premium Amount'):
+    plt.figure(figsize=(9, 4))
+
+    # Histogram with KDE
+    plt.subplot(1, 2, 1)
+    ax = sns.histplot(data[feature], bins=30, kde=True, color=viridis_cmap(0.5))
+    plt.title(f'Histogram of {feature} with KDE', fontsize=11)
+    plt.xlabel(feature, fontsize=10)
+    plt.ylabel('Frequency', fontsize=10)
+    plt.grid(True, linestyle='--', alpha=0.6) 
+
+    # Extract KDE values to find peaks
+    kde = sns.kdeplot(data[feature], ax=ax, color=viridis_cmap(0.7)).lines[0].get_data()
+    kde_x, kde_y = kde[0], kde[1]
+    peaks, _ = find_peaks(kde_y)
+
+    # Highlight peaks
+    for peak_idx in peaks:
+        plt.plot(kde_x[peak_idx], kde_y[peak_idx], "ro")  # Red dots on peaks
+
+    # Box Plot
+    plt.subplot(1, 2, 2)
+    sns.boxplot(x=data[feature], color=viridis_cmap(0.5))
+    plt.title(f'Box Plot of {feature}', fontsize=11)
+    plt.xlabel(feature, fontsize=10)
+    plt.grid(True, linestyle='--', alpha=0.6)  
+    plt.tight_layout()
+    plt.show()
+
+visualize_premium_amount_with_peaks(train_data, feature='Premium Amount')
+Distribution Characteristics
+The Premium Amount shows a right-skewed distribution, meaning most of the values are concentrated towards lower premiums, with fewer instances of higher premium amounts.
+The red peaks highlight the modes (local maxima), indicating clusters where specific premium amounts are more common. The highest mode appears around 1000, suggesting this is a prevalent premium value in the dataset.
+Outliers and Variability
+The box plot demonstrates that a significant number of premium values fall within a lower range, as shown by the interquartile range (IQR).
+There are many outliers present, representing higher premium amounts that lie far beyond the upper whisker of the box plot. These outliers may require further analysis to understand their nature or consider their treatment in modeling (e.g., log transformation).
+Distribution Analysis of Numerical Features
+In [17]:
+# Define columns to analyze
+columns_to_analyze = train_data.select_dtypes(include=['number']).columns.drop('Premium Amount')
+
+viridis_cmap = cm.get_cmap("viridis")
+# Extract three colors from the colormap
+viridis_colors = [viridis_cmap(0.3), viridis_cmap(0.5), viridis_cmap(0.8)]
+
+fig, axes = plt.subplots(len(columns_to_analyze), 3, figsize=(25, len(columns_to_analyze) * 5))
+
+for i, column in enumerate(columns_to_analyze):
+    # Histogram for train_data
+    sns.histplot(train_data[column], bins=30, kde=True, color=viridis_colors[0], ax=axes[i, 0])
+    axes[i, 0].set_title(f'Distribution of {column} (Train)', fontsize=14)
+    axes[i, 0].set_xlabel(column, fontsize=10)
+    axes[i, 0].set_ylabel('Frequency', fontsize=10)
+    axes[i, 0].grid(visible=True, linestyle='--', alpha=0.6)
+
+    # Boxplot for train_data
+    sns.boxplot(x=train_data[column], color=viridis_colors[1], ax=axes[i, 1])
+    axes[i, 1].set_title(f'Boxplot of {column} (Train)', fontsize=14)
+    axes[i, 1].set_xlabel(column, fontsize=10)
+    axes[i, 1].grid(visible=True, linestyle='--', alpha=0.6)
+
+    # Boxplot for test_data
+    sns.boxplot(x=test_data[column], color=viridis_colors[2], ax=axes[i, 2])
+    axes[i, 2].set_title(f'Boxplot of {column} (Test)', fontsize=12)
+    axes[i, 2].set_xlabel(column, fontsize=10)
+    axes[i, 2].grid(visible=True, linestyle='--', alpha=0.6)
+
+plt.tight_layout()
+plt.show()
+In [18]:
+# Select numeric columns 
+numeric_data = train_data.select_dtypes(include=['number'])
+
+# Compute the correlation matrix
+correlation_matrix = numeric_data.corr()
+plt.figure(figsize=(8, 6))
+
+# Create the heatmap
+sns.heatmap(
+    correlation_matrix, 
+    annot=True, 
+    fmt=".2f", 
+    cmap='viridis',  
+    cbar=True, 
+    square=True,
+    mask=np.triu(np.ones_like(correlation_matrix, dtype=bool)),  
+    linewidths=0.5  
+)
+
+plt.title('Correlation Heatmap of Numerical Features (Excluding Target)', fontsize=12)
+plt.xticks(rotation=45, ha='right', fontsize=10)
+plt.yticks(fontsize=10)
+plt.tight_layout()
+plt.show()
+Low Correlation Between Features:
+The majority of the features exhibit very low correlation values (close to 0), indicating that they are weakly related or independent.
+This suggests minimal multicollinearity, which is beneficial for model training as it reduces the risk of redundancy in predictive features.
+Key Observations:
+Credit Score vs Annual Income: Shows a slightly negative correlation (-0.20), suggesting that individuals with lower income might have slightly higher credit scores or vice versa.
+Premium Amount vs Previous Claims: The correlation value is positive (0.05), indicating that individuals with higher previous claims tend to have slightly higher premium amounts.
+Health Score vs Premium Amount: A weak positive correlation (0.01) suggests minimal influence of health score on premium amount.
+Premium Amount Correlation:
+Most features show minimal correlation with the target variable (Premium Amount), highlighting the potential for non-linear relationships that might require advanced modeling techniques (e.g., tree-based algorithms).
+Categorical Feature Analysis
+In [19]:
+# Function to display barplot and pie chart for categorical columns
+def plot_categorical_distribution(data, column_name):
+    plt.figure(figsize=(12, 4))
+    
+    # Bar plot for categorical distribution
+    plt.subplot(1, 2, 1)
+    sns.countplot(y=column_name, data=data, palette='Set2')
+    plt.title(f'Distribution of {column_name}', fontsize=12)
+    plt.xlabel('Count', fontsize=10)
+    plt.ylabel(column_name, fontsize=10)
+
+    ax = plt.gca()
+    for p in ax.patches:
+        count = int(p.get_width())
+        ax.annotate(f'{count}', 
+                    (p.get_width() + 0.1, p.get_y() + p.get_height() / 2), 
+                    ha='left', va='center', fontsize=10, color='black')
+    
+    sns.despine(left=True, bottom=True)
+    
+    # Pie chart for percentage distribution
+    plt.subplot(1, 2, 2)
+    data[column_name].value_counts().plot.pie(
+        autopct='%1.1f%%', 
+        colors=sns.color_palette('Set2', data[column_name].nunique()), 
+        startangle=90, 
+        explode=[0.05] * data[column_name].nunique(), 
+        shadow=True
+    )
+    plt.title(f'Percentage Distribution of {column_name}', fontsize=12)
+    plt.ylabel('')  
+
+    plt.tight_layout()
+    plt.show()
+
+categorical_columns = ['Gender', 'Marital Status', 'Education Level', 'Occupation', 'Location', 
+                'Policy Type', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type']
+
+for column in categorical_columns:
+    plot_categorical_distribution(train_data, column)
+unfold_moreShow hidden cell
+Observational Insights:
+Gender Distribution:
+The dataset is balanced with a nearly equal proportion of males (50.21%) and females (49.79%).
+Marital Status:
+The three primary categories (Single, Married, Divorced) are distributed almost equally, each accounting for about 33%.
+A small percentage (1.54%) of data is categorized as Unknown, which could be imputed or treated based on the analysis.
+Education Level:
+Education levels are uniformly distributed among Bachelor's, Master's, PhD, and High School, with percentages ranging from 24% to 25%.
+No major outlier category exists in education, making this feature consistent.
+Occupation:
+A significant portion (29.84%) of data falls under the Unknown category, indicating missing values that were replaced during preprocessing.
+The remaining categories (Employed, Self-Employed, Unemployed) are evenly distributed around 23%.
+Location:
+The dataset shows an almost equal split between Suburban, Rural, and Urban areas, each contributing about 33% of the data.
+Policy Type:
+The types of policies (Premium, Comprehensive, Basic) are evenly distributed, with each type accounting for approximately one-third of the data.
+Customer Feedback:
+Feedback categories (Average, Poor, Good) account for around 31% each, with an Unknown category representing 6.48%.
+The presence of Unknown suggests gaps in feedback collection that might need attention.
+Smoking Status:
+A balanced distribution exists between Yes (50.16%) and No (49.84%) categories, making it a useful feature for potential analysis.
+Exercise Frequency:
+The dataset is evenly split across all four categories (Weekly, Monthly, Rarely, Daily), each contributing about 25%.
+Property Type:
+The three property types (House, Apartment, Condo) are evenly distributed, each accounting for approximately 33%.
+Key Observations:
+Many categorical features have balanced distributions, which can be advantageous for model training as it reduces bias.
+Certain features, such as Occupation, Customer Feedback, and Marital Status, contain Unknown categories due to imputed missing values. Their treatment depends on the modeling approach.
+Most features exhibit uniform distribution across their categories, suggesting no dominance of a single class, which could enhance feature diversity in the model.
+Categorical Features vs Premium Amount
+In [21]:
+# List of categorical columns
+categorical_columns = [
+    'Gender', 'Marital Status', 'Education Level', 'Occupation', 'Location', 
+    'Policy Type', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type'
+]
+
+# Loop through each categorical feature to display summary statistics and box plot
+for column in categorical_columns:
+    # Calculate summary statistics grouped by the categorical column
+    stats = train_data.groupby(column)['Premium Amount'].agg(['mean', 'median', 'count'])
+    
+    # Display summary statistics
+    print(f"\nSummary Statistics for Premium Amount by {column}:")
+    print(stats)
+    
+    # Plot box plot
+    plt.figure(figsize=(8, 4))
+    sns.boxplot(data=train_data, x=column, y='Premium Amount', palette='viridis')
+    plt.title(f'Premium Amount by {column}', fontsize=12)
+    plt.xlabel(column, fontsize=11)
+    plt.ylabel('Premium Amount', fontsize=11)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+Summary Statistics for Premium Amount by Gender:
+               mean  median   count
+Gender                             
+Female  1102.404974   872.0  597429
+Male    1102.683476   872.0  602571
+Summary Statistics for Premium Amount by Marital Status:
+                       mean  median   count
+Marital Status                             
+Divorced        1100.625116   870.0  391764
+Married         1099.844389   870.0  394316
+Single          1101.735535   872.0  395391
+Unknown         1217.871067  1001.0   18529
+Summary Statistics for Premium Amount by Education Level:
+                        mean  median   count
+Education Level                             
+Bachelor's       1102.698438   873.0  303234
+High School      1104.787490   876.0  289441
+Master's         1102.113989   871.0  303818
+PhD              1100.683885   869.0  303507
+Summary Statistics for Premium Amount by Occupation:
+                      mean  median   count
+Occupation                                
+Employed       1107.400895   881.0  282750
+Self-Employed  1106.609284   874.0  282645
+Unemployed     1105.369023   874.0  276530
+Unknown        1093.320969   861.0  358075
+Summary Statistics for Premium Amount by Location:
+                 mean  median   count
+Location                             
+Rural     1101.467665   871.0  400947
+Suburban  1102.462014   871.0  401542
+Urban     1103.714936   874.0  397511
+Summary Statistics for Premium Amount by Policy Type:
+                      mean  median   count
+Policy Type                               
+Basic          1103.452466   874.0  398554
+Comprehensive  1102.610526   873.0  399600
+Premium        1101.579277   870.0  401846
+Summary Statistics for Premium Amount by Customer Feedback:
+                          mean  median   count
+Customer Feedback                             
+Average            1094.350977   861.0  377905
+Good               1096.284299   861.0  368753
+Poor               1098.892745   868.0  375518
+Unknown            1189.619526   956.0   77824
+Summary Statistics for Premium Amount by Smoking Status:
+                       mean  median   count
+Smoking Status                             
+No              1102.403607   872.0  598127
+Yes             1102.685158   872.0  601873
+Summary Statistics for Premium Amount by Exercise Frequency:
+                           mean  median   count
+Exercise Frequency                             
+Daily               1103.789093   874.0  294571
+Monthly             1103.011720   871.0  299830
+Rarely              1102.193317   871.0  299420
+Weekly              1101.234252   872.0  306179
+Summary Statistics for Premium Amount by Property Type:
+                      mean  median   count
+Property Type                             
+Apartment      1104.150596   872.0  399978
+Condo          1101.922627   871.0  399673
+House          1101.561680   873.0  400349
+Data Preprocessing
+Data Preprocessing
+Converting Date Columns to Epoch Time
+In [22]:
+# Retrieve columns with 'object' data type
+datetime_columns = train_data.select_dtypes(include=['object']).columns
+
+for col in datetime_columns:
+    try:
+        # Convert the column to datetime format
+        train_data[col] = pd.to_datetime(train_data[col], errors='raise')
+        test_data[col] = pd.to_datetime(test_data[col], errors='raise')
+        
+        # Convert datetime to epoch time (in seconds)
+        train_data[col] = train_data[col].astype(np.int64) / 10**9
+        test_data[col] = test_data[col].astype(np.int64) / 10**9
+
+        print(f"Converted '{col}' to epoch time.")
+    except Exception as e:
+        print(f"Skipping column '{col}' due to: {e}")
+Skipping column 'Gender' due to: Unknown datetime string format, unable to parse: Female, at position 0
+Skipping column 'Marital Status' due to: Unknown datetime string format, unable to parse: Married, at position 0
+Skipping column 'Education Level' due to: Unknown datetime string format, unable to parse: Bachelor's, at position 0
+Skipping column 'Occupation' due to: Unknown datetime string format, unable to parse: Self-Employed, at position 0
+Skipping column 'Location' due to: Unknown datetime string format, unable to parse: Urban, at position 0
+Skipping column 'Policy Type' due to: Unknown datetime string format, unable to parse: Premium, at position 0
+Converted 'Policy Start Date' to epoch time.
+Skipping column 'Customer Feedback' due to: Unknown datetime string format, unable to parse: Poor, at position 0
+Skipping column 'Smoking Status' due to: Unknown datetime string format, unable to parse: No, at position 0
+Skipping column 'Exercise Frequency' due to: Unknown datetime string format, unable to parse: Weekly, at position 0
+Skipping column 'Property Type' due to: Unknown datetime string format, unable to parse: House, at position 0
+In [23]:
+# Check the first few rows and data type of the 'Policy Start Date' column
+column_name = 'Policy Start Date'
+
+# Display the first few rows
+print(f"Sample data for '{column_name}':\n", train_data[column_name].head())
+
+# Display the data type of the column
+print(f"Data type of '{column_name}' in train_data: {train_data[column_name].dtype}")
+
+# Repeat for test_data
+print(f"Sample data for '{column_name}' in test_data:\n", test_data[column_name].head())
+print(f"Data type of '{column_name}' in test_data: {test_data[column_name].dtype}")
+Sample data for 'Policy Start Date':
+ id
+0    1.703345e+09
+1    1.686583e+09
+2    1.696087e+09
+3    1.718206e+09
+4    1.638372e+09
+Name: Policy Start Date, dtype: float64
+Data type of 'Policy Start Date' in train_data: float64
+Sample data for 'Policy Start Date' in test_data:
+ id
+1200000    1.685892e+09
+1200001    1.713799e+09
+1200002    1.680708e+09
+1200003    1.698247e+09
+1200004    1.637940e+09
+Name: Policy Start Date, dtype: float64
+Data type of 'Policy Start Date' in test_data: float64
+Successfully converts the 'Policy Start Date' column to datetime and then to epoch time.
+The converted Policy Start Date values (e.g., 1.703345e+09) are epoch times in seconds.
+The float64 data type indicates that the values are now numerical.
+Label Encoding Categorical Features
+In [24]:
+def identify_non_numerical_features(data, dataset_name):
+    non_numerical_features = data.select_dtypes(include=['object'])
+    print(f"Non-Numerical Features and Unique Values in {dataset_name} dataset:")
+    for column in non_numerical_features.columns:
+        unique_values = non_numerical_features[column].unique()
+        print(f"\n{column}: {unique_values}")
+
+# Apply the function to training and test datasets
+identify_non_numerical_features(train_data, "Training")
+print("\n")
+identify_non_numerical_features(test_data, "Test")
+Non-Numerical Features and Unique Values in Training dataset:
+
+Gender: ['Female' 'Male']
+
+Marital Status: ['Married' 'Divorced' 'Single' 'Unknown']
+
+Education Level: ["Bachelor's" "Master's" 'High School' 'PhD']
+
+Occupation: ['Self-Employed' 'Unknown' 'Employed' 'Unemployed']
+
+Location: ['Urban' 'Rural' 'Suburban']
+
+Policy Type: ['Premium' 'Comprehensive' 'Basic']
+
+Customer Feedback: ['Poor' 'Average' 'Good' 'Unknown']
+
+Smoking Status: ['No' 'Yes']
+
+Exercise Frequency: ['Weekly' 'Monthly' 'Daily' 'Rarely']
+
+Property Type: ['House' 'Apartment' 'Condo']
+
+
+Non-Numerical Features and Unique Values in Test dataset:
+
+Gender: ['Female' 'Male']
+
+Marital Status: ['Unknown' 'Married' 'Divorced' 'Single']
+
+Education Level: ["Bachelor's" "Master's" 'PhD' 'High School']
+
+Occupation: ['Self-Employed' 'Unemployed' 'Unknown' 'Employed']
+
+Location: ['Rural' 'Suburban' 'Urban']
+
+Policy Type: ['Basic' 'Premium' 'Comprehensive']
+
+Customer Feedback: ['Poor' 'Good' 'Average' 'Unknown']
+
+Smoking Status: ['Yes' 'No']
+
+Exercise Frequency: ['Weekly' 'Rarely' 'Monthly' 'Daily']
+
+Property Type: ['House' 'Apartment' 'Condo']
+In [25]:
+# Define the encoding strategies for specific features
+binary_features = ['Gender', 'Smoking Status']
+ordinal_features = {
+    'Exercise Frequency': ['Rarely', 'Monthly', 'Weekly', 'Daily']
+}
+nominal_features = ['Marital Status', 'Education Level', 'Occupation', 
+                    'Location', 'Policy Type', 'Customer Feedback', 'Property Type']
+
+# Binary Encoding for binary features
+le = LabelEncoder()
+for feature in binary_features:
+    train_data[feature] = le.fit_transform(train_data[feature])
+    test_data[feature] = le.transform(test_data[feature])
+
+# Ordinal Encoding for ordered features
+for feature, order in ordinal_features.items():
+    oe = OrdinalEncoder(categories=[order])
+    train_data[feature] = oe.fit_transform(train_data[[feature]]).flatten()  # Flatten to 1D
+    test_data[feature] = oe.transform(test_data[[feature]]).flatten()       # Flatten to 1D
+
+# One-Hot Encoding for nominal features
+train_data = pd.get_dummies(train_data, columns=nominal_features, drop_first=True)
+test_data = pd.get_dummies(test_data, columns=nominal_features, drop_first=True)
+Verifying Data Types Across Datasets
+In [26]:
+# Create data type tables for train_data and test_data
+train_data_types = pd.DataFrame({
+    'Column Name': train_data.columns,
+    'Train Data Type': train_data.dtypes
+})
+
+test_data_types = pd.DataFrame({
+    'Column Name': test_data.columns,
+    'Test Data Type': test_data.dtypes
+})
+
+# Merge the two tables for comparison
+data_types_comparison = pd.merge(
+    train_data_types, 
+    test_data_types, 
+    on='Column Name', 
+    how='outer'
+)
+
+# Display the data types comparison table
+print("Data Types Comparison of Train and Test Datasets:\n")
+display(data_types_comparison)
+Data Types Comparison of Train and Test Datasets:
+Column Name Train Data Type Test Data Type
+0 Age float64 float64
+1 Gender int64 int64
+2 Annual Income float64 float64
+3 Number of Dependents float64 float64
+4 Health Score float64 float64
+5 Previous Claims float64 float64
+6 Vehicle Age float64 float64
+7 Credit Score float64 float64
+8 Insurance Duration float64 float64
+9 Policy Start Date float64 float64
+10 Smoking Status int64 int64
+11 Exercise Frequency float64 float64
+12 Premium Amount float64 NaN
+13 Marital Status_Married bool bool
+14 Marital Status_Single bool bool
+15 Marital Status_Unknown bool bool
+16 Education Level_High School bool bool
+17 Education Level_Master's bool bool
+18 Education Level_PhD bool bool
+19 Occupation_Self-Employed bool bool
+20 Occupation_Unemployed bool bool
+21 Occupation_Unknown bool bool
+22 Location_Suburban bool bool
+23 Location_Urban bool bool
+24 Policy Type_Comprehensive bool bool
+25 Policy Type_Premium bool bool
+26 Customer Feedback_Good bool bool
+27 Customer Feedback_Poor bool bool
+28 Customer Feedback_Unknown bool bool
+29 Property Type_Condo bool bool
+30 Property Type_House bool bool
+Normalization of Numerical Features
+In [27]:
+# Select numerical columns
+numerical_columns = train_data.select_dtypes(include=['float64']).columns
+numerical_columns = numerical_columns[numerical_columns != target_column]
+
+# Applying Normalization
+scaler = StandardScaler()
+train_data[numerical_columns] = scaler.fit_transform(train_data[numerical_columns])
+test_data[numerical_columns] = scaler.transform(test_data[numerical_columns])
+The StandardScaler is used to standardize numerical features by removing the mean and scaling to unit variance.
+The scaler is fit on the train_data to calculate the mean and standard deviation and then applied to both train_data and test_data.
+Why This Step is Important:
+Normalization ensures that all numerical features contribute equally to the model, preventing features with larger magnitudes (e.g., Annual Income) from dominating those with smaller values (e.g., Vehicle Age).
+Distribution Analysis of Preprocessed Features
+In [28]:
+# Identify numeric columns only (excluding boolean columns)
+numeric_columns = train_data.select_dtypes(include=[np.number]).columns
+
+# Calculate the number of rows and columns needed
+num_features = len(numeric_columns)
+num_cols = 4
+num_rows = math.ceil(num_features / num_cols)
+
+# Create subplots
+fig, axes = plt.subplots(nrows=num_rows, ncols=num_cols, figsize=(16, num_rows * 3))
+viridis_cmap = cm.get_cmap('viridis', len(numeric_columns))
+
+# Plot each numeric column
+for i, column in enumerate(numeric_columns):
+    ax = axes.flatten()[i]
+    train_data[column].hist(
+        ax=ax, 
+        bins=20, 
+        color=viridis_cmap(i / len(numeric_columns)),  
+        edgecolor='black', 
+        linewidth=0.5
+    )
+    ax.set_title(column, fontsize=9)
+    ax.tick_params(axis='both', which='major', labelsize=6)
+    ax.grid(True, linestyle='--', alpha=0.6)  
+
+# Remove empty subplots if any
+for j in range(i + 1, len(axes.flatten())):
+    fig.delaxes(axes.flatten()[j])
+
+plt.suptitle('Dataset Feature Distributions (train_data)', fontsize=11)
+plt.tight_layout()
+plt.show()
+Skewness Reduction with Log Transformation
+In [29]:
+# Define the continuous columns
+continuous_columns_train = ['Annual Income', 'Premium Amount']  
+continuous_columns_test = ['Annual Income']  
+
+# Calculate skewness for the specified continuous columns
+train_skewness = train_data[continuous_columns_train].apply(skew)
+test_skewness = test_data[continuous_columns_test].apply(skew)
+
+# Display results
+print("Skewness for Training Dataset:\n")
+display(train_skewness)
+
+print("\nSkewness for Test Dataset:\n")
+display(test_skewness)
+Skewness for Training Dataset:
+Annual Income     1.490474
+Premium Amount    1.240914
+dtype: float64
+Skewness for Test Dataset:
+Annual Income    1.484572
+dtype: float64
+In [30]:
+# Log-transform skewed features
+train_data['Annual Income'] = np.log1p(train_data['Annual Income'])
+test_data['Annual Income'] = np.log1p(test_data['Annual Income'])
+In [31]:
+# Select only numeric columns from the training data
+numeric_data = train_data.select_dtypes(include=['number'])
+
+# Add a new column for the log-transformed values of target variable
+numeric_data['Log_Transformed_Premium'] = np.log1p(train_data[target_column])
+Explanation and Insights:
+Skewness Analysis:
+Training Dataset Skewness:
+Annual Income: A skewness value of 1.522952 indicates moderate positive skewness, meaning that the distribution is tailing to the right, with a significant number of smaller income values and fewer larger ones.
+Premium Amount: A skewness value of 1.240914 also shows positive skewness, indicating that most premium values are clustered at the lower range with fewer higher premiums.
+Test Dataset Skewness:
+Annual Income: The skewness value of 1.516915 mirrors the training data, confirming that both datasets share similar distributions for this feature.
+Log Transformation:
+Applying a log transformation to Annual Income reduces its skewness and compresses the range of larger values. This step makes the distribution closer to normal, benefiting algorithms sensitive to skewed data.
+Adding Log of Target (Log_Transformed_Premium):
+The addition of a Log_Transformed_Premium column in the training dataset creates a normalized target variable that minimizes the impact of extreme outliers, leading to better model performance.
+Correlation Analysis of Preprocessed Data
+In [32]:
+# Compute the correlation matrix
+train_corr_matrix = numeric_data.corr()
+
+# Create the heatmap
+plt.figure(figsize=(12, 9))
+sns.heatmap(
+    train_corr_matrix, 
+    annot=True, 
+    cmap='viridis',   
+    vmax=1, 
+    vmin=-1,
+    annot_kws={"size": 8}, 
+    fmt=".3f",
+    linewidths=0.5  
+)
+
+# Customize x and y tick labels
+plt.xticks(rotation=80, fontsize=9)
+plt.yticks(fontsize=9)
+
+# Add title and layout adjustments
+plt.title("Correlation Heatmap of the Train Data", fontsize=11)
+plt.tight_layout()
+plt.show()
+Difference Between Premium Amount and Log_Transformed_Premium with Other Features:
+Correlation Strength:
+The correlation between Log_Transformed_Premium and other features tends to be slightly weaker compared to the correlation of the original Premium Amount with the same features. This is because the log transformation compresses the range of the Premium Amount, reducing the influence of extreme values (outliers).
+Normalization of Relationships:
+The log-transformed Log_Transformed_Premium shows more stable and normalized relationships with features like Health Score and Customer Feedback, which might indicate that these relationships are nonlinear in the raw Premium Amount.
+Reduction in Skewness Impact:
+In features like Annual Income, where the original correlation with Premium Amount is mildly negative, the correlation with Log_Transformed_Premium is further reduced. This suggests that the transformation reduces the skewed influence of high Premium Amount values.
+Stronger Predictive Relationships:
+The correlation between Log_Transformed_Premium and the original target (Premium Amount) is very high, indicating that the transformation retains most of the predictive information. However, the log-transformed target smooths out extreme values and better aligns with features like Health Score and Previous Claims.
+Impact of High-Variance Features:
+Features with high variability, such as Credit Score or Annual Income, exhibit more stable correlations with Log_Transformed_Premium, making them potentially more predictable in models using the transformed target.
+Feature Contribution Differences:
+The relationship between categorical features (e.g., Location, Policy Type) and the target remains nearly the same for Premium Amount and Log_Transformed_Premium, indicating that these features are less influenced by the target transformation.
+Higher Correlation with Log_Transformed_Premium for Log-Normal Relationships:
+Features like Health Score and Policy Start Date show slightly stronger positive correlations with Log_Transformed_Premium compared to Premium Amount, suggesting that these features have log-normal relationships with the target.
+Key Observations:
+The log-transformation of the target variable (Log_Transformed_Premium) smooths the relationships between the target and input features, particularly for features influenced by outliers (e.g., Annual Income and Previous Claims).
+It reduces the magnitude of extreme correlations, creating a more stable predictive target while retaining the most critical relationships for predictive modeling.
+Features showing slight differences in correlation strength post-transformation indicate the utility of Log_Transformed_Premium for handling nonlinear relationships effectively.
+Separating Features and Target
+In [33]:
+# Separate Features and Target
+X_train = train_data.drop([target_column], axis=1)  # Features
+y_train = train_data[target_column]                   # Target variable
+Applying Log Transformation to the target variable
+In [34]:
+# Apply log transformation to the target variable
+y_train_log = np.log1p(y_train)  # log1p is used for log(1 + x)
+In [35]:
+# Custom colormap using viridis
+viridis_cmap = cm.get_cmap("viridis")
+
+# Select two colors from the colormap
+color1 = viridis_cmap(0.5)  
+color2 = viridis_cmap(0.3)  
+
+# Plot with the custom colors
+plt.figure(figsize=(9, 4))
+
+# Plot original target distribution
+plt.subplot(1, 2, 1)
+sns.histplot(y_train, kde=True, bins=30, color=color1)
+plt.title(f'Histogram of Target: {target_column} (y)', fontsize=11)
+plt.xlabel(f'{target_column} (y)', fontsize=10)
+plt.ylabel('Frequency', fontsize=10)
+plt.tick_params(axis='both', which='major', labelsize=7)
+plt.grid(True, linestyle='--', alpha=0.6)
+
+# Log-transformed target distribution
+plt.subplot(1, 2, 2)
+sns.histplot(y_train_log, kde=True, bins=30, color=color2)
+plt.title('Histogram of log(y + 1)', fontsize=11)
+plt.xlabel('log(y + 1)', fontsize=10)
+plt.ylabel('Frequency', fontsize=10)
+plt.tick_params(axis='both', which='major', labelsize=7)
+plt.grid(True, linestyle='--', alpha=0.6)
+
+plt.tight_layout()
+plt.show()
+Histogram of log(y + 1)
+Transformed Distribution:
+After applying the logarithmic transformation (log(y + 1)), the distribution becomes approximately normal, reducing the skewness observed in the original data.
+This normalization ensures that most values fall within a manageable range for machine learning models, improving their performance.
+Symmetry and Centralization:
+The log transformation centers the distribution, with a peak around the range of log(y + 1) values between 6 and 7.
+By compressing the scale of high premium values, the transformation mitigates the influence of outliers, reducing their weight in model training. A normal-like distribution aligns better with assumptions made by many regression models, potentially leading to more accurate predictions.
+Removing Whitespaces in Feature Names
+In [36]:
+# Remove whitespaces in feature names for X_train and test_data
+X_train.columns = X_train.columns.str.replace(' ', '_', regex=True)
+test_data.columns = test_data.columns.str.replace(' ', '_', regex=True)
+
+# Verify the updated column names
+print("Updated Feature Names in X_train:")
+print(X_train.columns)
+
+print("\nUpdated Feature Names in test_data:")
+print(test_data.columns)
+Updated Feature Names in X_train:
+Index(['Age', 'Gender', 'Annual_Income', 'Number_of_Dependents',
+       'Health_Score', 'Previous_Claims', 'Vehicle_Age', 'Credit_Score',
+       'Insurance_Duration', 'Policy_Start_Date', 'Smoking_Status',
+       'Exercise_Frequency', 'Marital_Status_Married', 'Marital_Status_Single',
+       'Marital_Status_Unknown', 'Education_Level_High_School',
+       'Education_Level_Master's', 'Education_Level_PhD',
+       'Occupation_Self-Employed', 'Occupation_Unemployed',
+       'Occupation_Unknown', 'Location_Suburban', 'Location_Urban',
+       'Policy_Type_Comprehensive', 'Policy_Type_Premium',
+       'Customer_Feedback_Good', 'Customer_Feedback_Poor',
+       'Customer_Feedback_Unknown', 'Property_Type_Condo',
+       'Property_Type_House'],
+      dtype='object')
+
+Updated Feature Names in test_data:
+Index(['Age', 'Gender', 'Annual_Income', 'Number_of_Dependents',
+       'Health_Score', 'Previous_Claims', 'Vehicle_Age', 'Credit_Score',
+       'Insurance_Duration', 'Policy_Start_Date', 'Smoking_Status',
+       'Exercise_Frequency', 'Marital_Status_Married', 'Marital_Status_Single',
+       'Marital_Status_Unknown', 'Education_Level_High_School',
+       'Education_Level_Master's', 'Education_Level_PhD',
+       'Occupation_Self-Employed', 'Occupation_Unemployed',
+       'Occupation_Unknown', 'Location_Suburban', 'Location_Urban',
+       'Policy_Type_Comprehensive', 'Policy_Type_Premium',
+       'Customer_Feedback_Good', 'Customer_Feedback_Poor',
+       'Customer_Feedback_Unknown', 'Property_Type_Condo',
+       'Property_Type_House'],
+      dtype='object')
+Validating Target and Transformed Target Data Types
+In [37]:
+# Display data types
+print("Feature Data Types (X_train):")
+print(X_train.dtypes)
+
+print("\nTarget Data Type (y_train):")
+print(y_train.dtypes)
+
+print("\nLog-Transformed Target Data Type (y_train_log):")
+print(y_train_log.dtypes)
+Feature Data Types (X_train):
+Age                            float64
+Gender                           int64
+Annual_Income                  float64
+Number_of_Dependents           float64
+Health_Score                   float64
+Previous_Claims                float64
+Vehicle_Age                    float64
+Credit_Score                   float64
+Insurance_Duration             float64
+Policy_Start_Date              float64
+Smoking_Status                   int64
+Exercise_Frequency             float64
+Marital_Status_Married            bool
+Marital_Status_Single             bool
+Marital_Status_Unknown            bool
+Education_Level_High_School       bool
+Education_Level_Master's          bool
+Education_Level_PhD               bool
+Occupation_Self-Employed          bool
+Occupation_Unemployed             bool
+Occupation_Unknown                bool
+Location_Suburban                 bool
+Location_Urban                    bool
+Policy_Type_Comprehensive         bool
+Policy_Type_Premium               bool
+Customer_Feedback_Good            bool
+Customer_Feedback_Poor            bool
+Customer_Feedback_Unknown         bool
+Property_Type_Condo               bool
+Property_Type_House               bool
+dtype: object
+
+Target Data Type (y_train):
+float64
+
+Log-Transformed Target Data Type (y_train_log):
+float64
+Model Training
+Model Training
+Model Initialization
+In [38]:
+# Model Initialization
+lgb_gbdt = lgb.LGBMRegressor(
+    boosting_type='gbdt',
+    random_state=42,
+    learning_rate=0.030362233382902903,
+    n_estimators=998,
+    max_depth=9,
+    num_leaves=208,
+    min_child_samples=11,
+    subsample=0.8184667361186249,
+    colsample_bytree=0.8616459477375787,
+    reg_alpha=0.33080029457188864,
+    reg_lambda=0.20736962602335904,
+    objective='regression',
+    metric='rmse',
+    device='gpu',
+    verbose=-1
+)
+
+lgb_goss = lgb.LGBMRegressor(
+    boosting_type='goss',
+    random_state=42,
+    learning_rate=0.030362233382902903,
+    n_estimators=998,
+    max_depth=9,
+    num_leaves=208,
+    min_child_samples=11,
+    subsample=0.8184667361186249,
+    colsample_bytree=0.8616459477375787,
+    reg_alpha=0.33080029457188864,
+    reg_lambda=0.20736962602335904,
+    objective='regression',
+    metric='rmse',
+    device='gpu',
+    verbose=-1
+)
+Both lgb_gbdt and lgb_goss models are correctly initialized with appropriate hyperparameters, including GPU usage via device='gpu'.
+OOF Predictions
+In [39]:
+# Define the number of folds for OOF
+n_splits = 5
+kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+# Initialize arrays to store OOF predictions and test predictions
+oof_predictions_gbdt = np.zeros(len(X_train))
+oof_predictions_goss = np.zeros(len(X_train))
+
+test_predictions_gbdt = np.zeros((len(test_data), n_splits))
+test_predictions_goss = np.zeros((len(test_data), n_splits))
+
+# Store RMSLE for each fold
+fold_rmsle_gbdt = []
+fold_rmsle_goss = []
+
+# OOF Training for LightGBM (GBDT) and LightGBM (GOSS)
+for fold, (train_idx, val_idx) in enumerate(kf.split(X_train)):
+    print(f"Training Fold {fold + 1}/{n_splits}...")
+    
+    # Split the data into training and validation sets
+    X_train_fold, X_val_fold = X_train.iloc[train_idx], X_train.iloc[val_idx]
+    y_train_fold, y_val_fold = y_train_log.iloc[train_idx], y_train_log.iloc[val_idx]
+    
+    # LightGBM (GBDT)
+    lgb_gbdt.fit(
+        X_train_fold, y_train_fold,
+        eval_set=[(X_val_fold, y_val_fold)],
+        callbacks=[
+            lgb.early_stopping(stopping_rounds=50),  # Increased to 50
+            lgb.log_evaluation(period=10)
+        ]
+    )
+    oof_predictions_gbdt[val_idx] = lgb_gbdt.predict(X_val_fold)
+    test_predictions_gbdt[:, fold] = lgb_gbdt.predict(test_data)
+    fold_rmsle_gbdt.append(mean_squared_log_error(y_val_fold, oof_predictions_gbdt[val_idx]) ** 0.5)
+    
+    # LightGBM (GOSS)
+    lgb_goss.fit(
+        X_train_fold, y_train_fold,
+        eval_set=[(X_val_fold, y_val_fold)],
+        callbacks=[
+            lgb.early_stopping(stopping_rounds=50),  # Increased to 50
+            lgb.log_evaluation(period=10)
+        ]
+    )
+    oof_predictions_goss[val_idx] = lgb_goss.predict(X_val_fold)
+    test_predictions_goss[:, fold] = lgb_goss.predict(test_data)
+    fold_rmsle_goss.append(mean_squared_log_error(y_val_fold, oof_predictions_goss[val_idx]) ** 0.5)
+
+# Compute average RMSLE for each model
+avg_rmsle_gbdt = np.mean(fold_rmsle_gbdt)
+avg_rmsle_goss = np.mean(fold_rmsle_goss)
+
+print("Average RMSLE (GBDT):", avg_rmsle_gbdt)
+print("Average RMSLE (GOSS):", avg_rmsle_goss)
+Training Fold 1/5...
+Training until validation scores don't improve for 50 rounds
+[10] valid_0's rmse: 1.07912
+[20] valid_0's rmse: 1.07017
+[30] valid_0's rmse: 1.06222
+[40] valid_0's rmse: 1.05721
+[50] valid_0's rmse: 1.05392
+[60] valid_0's rmse: 1.05167
+[70] valid_0's rmse: 1.05003
+[80] valid_0's rmse: 1.049
+[90] valid_0's rmse: 1.0483
+[100] valid_0's rmse: 1.04773
+[110] valid_0's rmse: 1.04741
+[120] valid_0's rmse: 1.04718
+[130] valid_0's rmse: 1.04705
+[140] valid_0's rmse: 1.04697
+[150] valid_0's rmse: 1.04691
+[160] valid_0's rmse: 1.04685
+[170] valid_0's rmse: 1.04683
+[180] valid_0's rmse: 1.0468
+[190] valid_0's rmse: 1.04677
+[200] valid_0's rmse: 1.04677
+[210] valid_0's rmse: 1.04675
+[220] valid_0's rmse: 1.04673
+[230] valid_0's rmse: 1.04673
+[240] valid_0's rmse: 1.04674
+[250] valid_0's rmse: 1.04674
+[260] valid_0's rmse: 1.04675
+[270] valid_0's rmse: 1.04676
+Early stopping, best iteration is:
+[222] valid_0's rmse: 1.04673
+Training until validation scores don't improve for 50 rounds
+[10] valid_0's rmse: 1.07912
+[20] valid_0's rmse: 1.07017
+[30] valid_0's rmse: 1.06222
+[40] valid_0's rmse: 1.05727
+[50] valid_0's rmse: 1.05399
+[60] valid_0's rmse: 1.0518
+[70] valid_0's rmse: 1.0502
+[80] valid_0's rmse: 1.0492
+[90] valid_0's rmse: 1.04852
+[100] valid_0's rmse: 1.04797
+[110] valid_0's rmse: 1.04762
+[120] valid_0's rmse: 1.04746
+[130] valid_0's rmse: 1.04731
+[140] valid_0's rmse: 1.04727
+[150] valid_0's rmse: 1.04724
+[160] valid_0's rmse: 1.04721
+[170] valid_0's rmse: 1.04721
+[180] valid_0's rmse: 1.04718
+[190] valid_0's rmse: 1.0472
+[200] valid_0's rmse: 1.0472
+[210] valid_0's rmse: 1.04719
+[220] valid_0's rmse: 1.04718
+[230] valid_0's rmse: 1.04719
+[240] valid_0's rmse: 1.0472
+[250] valid_0's rmse: 1.0472
+[260] valid_0's rmse: 1.04718
+[270] valid_0's rmse: 1.04718
+[280] valid_0's rmse: 1.04719
+[290] valid_0's rmse: 1.0472
+[300] valid_0's rmse: 1.04719
+[310] valid_0's rmse: 1.04722
+[320] valid_0's rmse: 1.04722
+Early stopping, best iteration is:
+[276] valid_0's rmse: 1.04717
+Training Fold 2/5...
+Training until validation scores don't improve for 50 rounds
+[10] valid_0's rmse: 1.07792
+[20] valid_0's rmse: 1.06896
+[30] valid_0's rmse: 1.06101
+[40] valid_0's rmse: 1.05604
+[50] valid_0's rmse: 1.05278
+[60] valid_0's rmse: 1.05059
+[70] valid_0's rmse: 1.04898
+[80] valid_0's rmse: 1.048
+[90] valid_0's rmse: 1.04732
+[100] valid_0's rmse: 1.04678
+[110] valid_0's rmse: 1.04646
+[120] valid_0's rmse: 1.04629
+[130] valid_0's rmse: 1.04615
+[140] valid_0's rmse: 1.04608
+[150] valid_0's rmse: 1.04604
+[160] valid_0's rmse: 1.046
+[170] valid_0's rmse: 1.04599
+[180] valid_0's rmse: 1.04596
+[190] valid_0's rmse: 1.04596
+[200] valid_0's rmse: 1.04596
+[210] valid_0's rmse: 1.04595
+[220] valid_0's rmse: 1.04596
+[230] valid_0's rmse: 1.04596
+[240] valid_0's rmse: 1.04596
+[250] valid_0's rmse: 1.04596
+[260] valid_0's rmse: 1.04596
+Early stopping, best iteration is:
+[212] valid_0's rmse: 1.04595
+Training until validation scores don't improve for 50 rounds
+[10] valid_0's rmse: 1.07792
+[20] valid_0's rmse: 1.06896
+[30] valid_0's rmse: 1.06101
+[40] valid_0's rmse: 1.05608
+[50] valid_0's rmse: 1.05286
+[60] valid_0's rmse: 1.05072
+[70] valid_0's rmse: 1.04921
+[80] valid_0's rmse: 1.04822
+[90] valid_0's rmse: 1.04758
+[100] valid_0's rmse: 1.04705
+[110] valid_0's rmse: 1.04676
+[120] valid_0's rmse: 1.04659
+[130] valid_0's rmse: 1.04644
+[140] valid_0's rmse: 1.0464
+[150] valid_0's rmse: 1.04638
+[160] valid_0's rmse: 1.04636
+[170] valid_0's rmse: 1.04635
+[180] valid_0's rmse: 1.04635
+[190] valid_0's rmse: 1.04632
+[200] valid_0's rmse: 1.04631
+[210] valid_0's rmse: 1.04632
+[220] valid_0's rmse: 1.04632
+[230] valid_0's rmse: 1.04632
+[240] valid_0's rmse: 1.04634
+Early stopping, best iteration is:
+[194] valid_0's rmse: 1.04631
+Training Fold 3/5...
+Training until validation scores don't improve for 50 rounds
+[10] valid_0's rmse: 1.07808
+[20] valid_0's rmse: 1.06929
+[30] valid_0's rmse: 1.06148
+[40] valid_0's rmse: 1.0566
+[50] valid_0's rmse: 1.05337
+[60] valid_0's rmse: 1.05122
+[70] valid_0's rmse: 1.04962
+[80] valid_0's rmse: 1.04868
+[90] valid_0's rmse: 1.04797
+[100] valid_0's rmse: 1.04743
+[110] valid_0's rmse: 1.0471
+[120] valid_0's rmse: 1.04696
+[130] valid_0's rmse: 1.04679
+[140] valid_0's rmse: 1.04673
+[150] valid_0's rmse: 1.0467
+[160] valid_0's rmse: 1.04667
+[170] valid_0's rmse: 1.04664
+[180] valid_0's rmse: 1.04659
+[190] valid_0's rmse: 1.04658
+[200] valid_0's rmse: 1.04656
+[210] valid_0's rmse: 1.04654
+[220] valid_0's rmse: 1.04653
+[230] valid_0's rmse: 1.04654
+[240] valid_0's rmse: 1.04655
+[250] valid_0's rmse: 1.04657
+[260] valid_0's rmse: 1.04656
+[270] valid_0's rmse: 1.04656
+Early stopping, best iteration is:
+[221] valid_0's rmse: 1.04653
+Training until validation scores don't improve for 50 rounds
+[10] valid_0's rmse: 1.07808
+[20] valid_0's rmse: 1.06929
+[30] valid_0's rmse: 1.06148
+[40] valid_0's rmse: 1.05662
+[50] valid_0's rmse: 1.05348
+[60] valid_0's rmse: 1.05137
+[70] valid_0's rmse: 1.04987
+[80] valid_0's rmse: 1.04891
+[90] valid_0's rmse: 1.04829
+[100] valid_0's rmse: 1.04779
+[110] valid_0's rmse: 1.04747
+[120] valid_0's rmse: 1.04731
+[130] valid_0's rmse: 1.04718
+[140] valid_0's rmse: 1.04711
+[150] valid_0's rmse: 1.04707
+[160] valid_0's rmse: 1.04706
+[170] valid_0's rmse: 1.04705
+[180] valid_0's rmse: 1.04707
+[190] valid_0's rmse: 1.04705
+[200] valid_0's rmse: 1.0471
+[210] valid_0's rmse: 1.0471
+[220] valid_0's rmse: 1.04711
+[230] valid_0's rmse: 1.04712
+Early stopping, best iteration is:
+[186] valid_0's rmse: 1.04704
+Training Fold 4/5...
+Training until validation scores don't improve for 50 rounds
+[10] valid_0's rmse: 1.07793
+[20] valid_0's rmse: 1.06878
+[30] valid_0's rmse: 1.06059
+[40] valid_0's rmse: 1.05545
+[50] valid_0's rmse: 1.05209
+[60] valid_0's rmse: 1.04983
+[70] valid_0's rmse: 1.04814
+[80] valid_0's rmse: 1.04711
+[90] valid_0's rmse: 1.04638
+[100] valid_0's rmse: 1.04582
+[110] valid_0's rmse: 1.04547
+[120] valid_0's rmse: 1.04527
+[130] valid_0's rmse: 1.04513
+[140] valid_0's rmse: 1.04506
+[150] valid_0's rmse: 1.04501
+[160] valid_0's rmse: 1.04497
+[170] valid_0's rmse: 1.04492
+[180] valid_0's rmse: 1.04491
+[190] valid_0's rmse: 1.0449
+[200] valid_0's rmse: 1.04488
+[210] valid_0's rmse: 1.04487
+[220] valid_0's rmse: 1.04486
+[230] valid_0's rmse: 1.04487
+[240] valid_0's rmse: 1.04486
+[250] valid_0's rmse: 1.04487
+[260] valid_0's rmse: 1.04487
+Early stopping, best iteration is:
+[212] valid_0's rmse: 1.04486
+Training until validation scores don't improve for 50 rounds
+[10] valid_0's rmse: 1.07793
+[20] valid_0's rmse: 1.06878
+[30] valid_0's rmse: 1.06059
+[40] valid_0's rmse: 1.05551
+[50] valid_0's rmse: 1.05218
+[60] valid_0's rmse: 1.04996
+[70] valid_0's rmse: 1.04827
+[80] valid_0's rmse: 1.04725
+[90] valid_0's rmse: 1.04658
+[100] valid_0's rmse: 1.04603
+[110] valid_0's rmse: 1.04572
+[120] valid_0's rmse: 1.04553
+[130] valid_0's rmse: 1.04539
+[140] valid_0's rmse: 1.04534
+[150] valid_0's rmse: 1.04531
+[160] valid_0's rmse: 1.04525
+[170] valid_0's rmse: 1.04523
+[180] valid_0's rmse: 1.04522
+[190] valid_0's rmse: 1.04521
+[200] valid_0's rmse: 1.04523
+[210] valid_0's rmse: 1.0452
+[220] valid_0's rmse: 1.04522
+[230] valid_0's rmse: 1.04521
+[240] valid_0's rmse: 1.04521
+Early stopping, best iteration is:
+[194] valid_0's rmse: 1.0452
+Training Fold 5/5...
+Training until validation scores don't improve for 50 rounds
+[10] valid_0's rmse: 1.07919
+[20] valid_0's rmse: 1.07005
+[30] valid_0's rmse: 1.06191
+[40] valid_0's rmse: 1.0568
+[50] valid_0's rmse: 1.05341
+[60] valid_0's rmse: 1.05111
+[70] valid_0's rmse: 1.04945
+[80] valid_0's rmse: 1.0484
+[90] valid_0's rmse: 1.04767
+[100] valid_0's rmse: 1.04712
+[110] valid_0's rmse: 1.04676
+[120] valid_0's rmse: 1.04654
+[130] valid_0's rmse: 1.04638
+[140] valid_0's rmse: 1.04632
+[150] valid_0's rmse: 1.04628
+[160] valid_0's rmse: 1.04627
+[170] valid_0's rmse: 1.04623
+[180] valid_0's rmse: 1.0462
+[190] valid_0's rmse: 1.04618
+[200] valid_0's rmse: 1.04617
+[210] valid_0's rmse: 1.04615
+[220] valid_0's rmse: 1.04615
+[230] valid_0's rmse: 1.04615
+[240] valid_0's rmse: 1.04616
+[250] valid_0's rmse: 1.04617
+[260] valid_0's rmse: 1.04618
+Early stopping, best iteration is:
+[211] valid_0's rmse: 1.04614
+Training until validation scores don't improve for 50 rounds
+[10] valid_0's rmse: 1.07919
+[20] valid_0's rmse: 1.07005
+[30] valid_0's rmse: 1.06191
+[40] valid_0's rmse: 1.05684
+[50] valid_0's rmse: 1.05343
+[60] valid_0's rmse: 1.05117
+[70] valid_0's rmse: 1.04951
+[80] valid_0's rmse: 1.0485
+[90] valid_0's rmse: 1.04781
+[100] valid_0's rmse: 1.04728
+[110] valid_0's rmse: 1.04691
+[120] valid_0's rmse: 1.04673
+[130] valid_0's rmse: 1.04659
+[140] valid_0's rmse: 1.04647
+[150] valid_0's rmse: 1.04643
+[160] valid_0's rmse: 1.04637
+[170] valid_0's rmse: 1.04636
+[180] valid_0's rmse: 1.04634
+[190] valid_0's rmse: 1.04633
+[200] valid_0's rmse: 1.04635
+[210] valid_0's rmse: 1.04638
+[220] valid_0's rmse: 1.04637
+[230] valid_0's rmse: 1.04639
+[240] valid_0's rmse: 1.04639
+Early stopping, best iteration is:
+[190] valid_0's rmse: 1.04633
+Average RMSLE (GBDT): 0.1582516352165269
+Average RMSLE (GOSS): 0.15829345313826626
+In [40]:
+# Compute weights based on RMSLE
+# Lower RMSLE => Higher Weight
+total_weight = 1 / avg_rmsle_gbdt + 1 / avg_rmsle_goss
+weight_gbdt = (1 / avg_rmsle_gbdt) / total_weight
+weight_goss = (1 / avg_rmsle_goss) / total_weight
+
+print("Weight for GBDT:", weight_gbdt)
+print("Weight for GOSS:", weight_goss)
+Weight for GBDT: 0.5000660536575637
+Weight for GOSS: 0.49993394634243626
+In [41]:
+# Compute weighted average of predictions
+final_test_predictions = (
+    weight_gbdt * test_predictions_gbdt.mean(axis=1) +
+    weight_goss * test_predictions_goss.mean(axis=1)
+)
+
+# Exponentiate the final predictions (log scale to original scale)
+final_test_predictions = np.expm1(final_test_predictions)
+Feature Importance
+Feature importance is calculated for both GBDT and GOSS models.
+Combined importance is averaged and plotted for the top 10 features, providing insights into the key drivers for predictions.
+In [42]:
+# Combine feature importance for both GBDT and GOSS models
+feature_importance_gbdt = pd.DataFrame({
+    'Feature': X_train.columns,
+    'GBDT Importance': lgb_gbdt.feature_importances_,
+})
+
+feature_importance_goss = pd.DataFrame({
+    'Feature': X_train.columns,
+    'GOSS Importance': lgb_goss.feature_importances_,
+})
+
+# Merge the feature importance for comparison
+combined_feature_importance = pd.merge(
+    feature_importance_gbdt,
+    feature_importance_goss,
+    on='Feature',
+    how='inner'
+)
+
+# Sort features by average importance
+combined_feature_importance['Avg Importance'] = (
+    combined_feature_importance['GBDT Importance'] +
+    combined_feature_importance['GOSS Importance']
+) / 2
+
+combined_feature_importance = combined_feature_importance.sort_values(
+    by='Avg Importance', ascending=False
+)
+
+# Plot the feature importance
+plt.figure(figsize=(12, 8))
+sns.barplot(
+    x='Avg Importance', 
+    y='Feature', 
+    data=combined_feature_importance.head(10),  # Top 10 features
+    palette='viridis'
+)
+plt.title('Top 10 Features - Average Importance (GBDT & GOSS)', fontsize=16)
+plt.xlabel('Average Importance Score', fontsize=12)
+plt.ylabel('Features', fontsize=12)
+plt.grid(axis='x', linestyle='--', alpha=0.6)
+plt.tight_layout()
+plt.show()
+
+# Display top 10 features
+print("Top 10 Features by Average Importance:\n")
+display(combined_feature_importance.head(10))
+Top 10 Features by Average Importance:
+Feature GBDT Importance GOSS Importance Avg Importance
+4 Health_Score 6778 5781 6279.5
+9 Policy_Start_Date 6075 5516 5795.5
+7 Credit_Score 5820 5318 5569.0
+2 Annual_Income 5241 4586 4913.5
+0 Age 3993 3695 3844.0
+6 Vehicle_Age 2915 2585 2750.0
+8 Insurance_Duration 1847 1735 1791.0
+5 Previous_Claims 1891 1629 1760.0
+3 Number_of_Dependents 1612 1472 1542.0
+11 Exercise_Frequency 1006 921 963.5
+Prediction Distribution
+Histograms compare the distributions of the true values (y_train_log) and OOF predictions (oof_predictions_gbdt, oof_predictions_goss).
+This visualizes how well the models capture the target variable's distribution.
+In [43]:
+# Calculate average predictions for test data
+avg_test_predictions = (
+    weight_gbdt * test_predictions_gbdt.mean(axis=1) +
+    weight_goss * test_predictions_goss.mean(axis=1)
+)
+
+# Exponentiate predictions (log scale to original scale)
+avg_test_predictions_exp = np.expm1(avg_test_predictions)
+
+# Visualization of Prediction Distributions
+viridis_cmap = cm.get_cmap("viridis", 3)
+
+plt.figure(figsize=(12, 6))
+
+# Plot true values (Train Data)
+plt.hist(
+    y_train_log, bins=30, color=viridis_cmap(0), alpha=0.6, edgecolor="black", label="True Values (Train)"
+)
+
+# Plot predicted values (OOF Predictions)
+plt.hist(
+    oof_predictions_gbdt, bins=30, color=viridis_cmap(0.5), alpha=0.6, edgecolor="black", label="Predicted Values (GBDT)"
+)
+
+plt.hist(
+    oof_predictions_goss, bins=30, color=viridis_cmap(0.7), alpha=0.6, edgecolor="black", label="Predicted Values (GOSS)"
+)
+
+# Add titles and labels
+plt.title("Prediction Distributions - Train and OOF Predictions", fontsize=16)
+plt.xlabel("Log-transformed Premium Amount (log(y + 1))", fontsize=12)
+plt.ylabel("Frequency", fontsize=12)
+plt.legend(fontsize=10)
+plt.grid(True, linestyle="--", alpha=0.6)
+
+plt.tight_layout()
+plt.show()
+Creating the Submission File
+Creating the Submission File
+In [44]:
+# Prepare the submission file
+submission = pd.DataFrame({"id": test_data.index, target_column: final_test_predictions})
+submission.to_csv("ensemble_oof_submission.csv", index=False)
+print("Submission file created successfully!")
+Submission file created successfully!
+In [45]:
+print(submission.head(10))
+        id  Premium Amount
+0  1200000      759.689009
+1  1200001      806.554437
+2  1200002      797.675130
+3  1200003      799.098516
+4  1200004      749.505292
+5  1200005      829.844045
+6  1200006      976.694351
+7  1200007      715.729782
+8  1200008      212.078890
+9  1200009      823.210728
+🙏 Thanks for Reading! 🚀
+If you found this helpful, please upvote and share your thoughts!
+Happy Coding! 🙌😊

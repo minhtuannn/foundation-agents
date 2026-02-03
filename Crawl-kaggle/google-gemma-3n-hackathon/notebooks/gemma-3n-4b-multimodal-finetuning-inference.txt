@@ -1,0 +1,574 @@
+To run this, press "Runtime" and press "Run all" on a free Tesla T4 Google Kaggle instance!
+Join Discord if you need help + ⭐ Star us on Github ⭐
+To install Unsloth on your own computer, follow the installation instructions on our Github page here.
+You will learn how to do data prep, how to train, how to run the model, & how to save it
+Read our Gemma 3N Guide and check out our new Dynamic 2.0 quants which outperforms other quantization methods!
+Visit our docs for all our model uploads and notebooks.
+Gemma 3N Notebook collection:
+Gemma 3N Multimodal inference + conversational finetuning Kaggle Notebook ⬅️ Your are here
+Gemma 3N Vision finetuning Kaggle Notebook
+Gemma 3N Audio finetuning Kaggle Notebook
+Installation
+In [1]:
+%%capture
+import os
+if "COLAB_" not in "".join(os.environ.keys()):
+    !pip install unsloth
+else:
+    # Do this only in Colab notebooks! Otherwise use pip install unsloth
+    !pip install --no-deps bitsandbytes accelerate xformers==0.0.29.post3 peft trl triton cut_cross_entropy unsloth_zoo
+    !pip install sentencepiece protobuf "datasets>=3.4.1,<4.0.0" "huggingface_hub>=0.34.0" hf_transfer
+    !pip install --no-deps unsloth
+In [2]:
+%%capture
+# Install latest transformers for Gemma 3N
+!pip install --no-deps --upgrade transformers # Only for Gemma 3N
+!pip install --no-deps --upgrade timm # Only for Gemma 3N
+Unsloth
+FastModel supports loading nearly any model now! This includes Vision, Text and Audio models!
+In [3]:
+from unsloth import FastModel
+import torch
+
+fourbit_models = [
+    # 4bit dynamic quants for superior accuracy and low memory use
+    "unsloth/gemma-3n-E4B-it-unsloth-bnb-4bit",
+    "unsloth/gemma-3n-E2B-it-unsloth-bnb-4bit",
+    # Pretrained models
+    "unsloth/gemma-3n-E4B-unsloth-bnb-4bit",
+    "unsloth/gemma-3n-E2B-unsloth-bnb-4bit",
+
+    # Other Gemma 3 quants
+    "unsloth/gemma-3-1b-it-unsloth-bnb-4bit",
+    "unsloth/gemma-3-4b-it-unsloth-bnb-4bit",
+    "unsloth/gemma-3-12b-it-unsloth-bnb-4bit",
+    "unsloth/gemma-3-27b-it-unsloth-bnb-4bit",
+] # More models at https://huggingface.co/unsloth
+
+model, tokenizer = FastModel.from_pretrained(
+    model_name = "unsloth/gemma-3n-E4B-it", # Or "unsloth/gemma-3n-E2B-it"
+    dtype = None, # None for auto detection
+    max_seq_length = 1024, # Choose any for long context!
+    load_in_4bit = True,  # 4 bit quantization to reduce memory
+    full_finetuning = False, # [NEW!] We have full finetuning now!
+    # token = "hf_...", # use one if using gated models
+)
+🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.
+2025-07-30 10:37:14.675950: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:477] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1753871834.873144      19 cuda_dnn.cc:8310] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1753871834.932733      19 cuda_blas.cc:1418] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+🦥 Unsloth Zoo will now patch everything to make training faster!
+==((====))==  Unsloth 2025.7.11: Fast Gemma3N patching. Transformers: 4.54.1.
+   \\   /|    Tesla T4. Num GPUs = 2. Max memory: 14.741 GB. Platform: Linux.
+O^O/ \_/ \    Torch: 2.6.0+cu124. CUDA: 7.5. CUDA Toolkit: 12.4. Triton: 3.2.0
+\        /    Bfloat16 = FALSE. FA [Xformers = 0.0.29.post3. FA2 = False]
+ "-____-"     Free license: http://github.com/unslothai/unsloth
+Unsloth: Fast downloading is enabled - ignore downloading bars which are red colored!
+Unsloth: Gemma3N does not support SDPA - switching to eager!
+model.safetensors.index.json:
+370k/? [00:00<00:00, 33.9MB/s]
+model-00001-of-00003.safetensors: 100%
+3.72G/3.72G [00:11<00:00, 589MB/s]
+model-00002-of-00003.safetensors: 100%
+4.99G/4.99G [00:18<00:00, 584MB/s]
+model-00003-of-00003.safetensors: 100%
+1.15G/1.15G [00:06<00:00, 262MB/s]
+Loading checkpoint shards: 100%
+3/3 [00:04<00:00,  1.23s/it]
+generation_config.json: 100%
+210/210 [00:00<00:00, 27.7kB/s]
+processor_config.json: 100%
+98.0/98.0 [00:00<00:00, 11.6kB/s]
+chat_template.jinja:
+1.63k/? [00:00<00:00, 155kB/s]
+preprocessor_config.json:
+1.09k/? [00:00<00:00, 139kB/s]
+tokenizer_config.json:
+1.20M/? [00:00<00:00, 60.0MB/s]
+tokenizer.model: 100%
+4.70M/4.70M [00:01<00:00, 157kB/s]
+tokenizer.json: 100%
+33.4M/33.4M [00:01<00:00, 1.02MB/s]
+special_tokens_map.json: 100%
+777/777 [00:00<00:00, 95.2kB/s]
+Gemma 3N can process Text, Vision and Audio!
+Let's first experience how Gemma 3N can handle multimodal inputs. We use Gemma 3N's recommended settings of temperature = 1.0, top_p = 0.95, top_k = 64
+In [4]:
+from transformers import TextStreamer
+import gc
+# Helper function for inference
+def do_gemma_3n_inference(model, messages, max_new_tokens = 128):
+    inputs = tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt = True, # Must add for generation
+        tokenize = True,
+        return_dict = True,
+        return_tensors = "pt",
+    ).to("cuda")
+    _ = model.generate(
+        **inputs,
+        max_new_tokens = max_new_tokens,
+        temperature = 1.0, top_p = 0.95, top_k = 64,
+        streamer = TextStreamer(tokenizer, skip_prompt = True),
+    )
+    # Cleanup to reduce VRAM usage
+    del inputs
+    torch.cuda.empty_cache()
+    gc.collect()
+Gemma 3N can see images!
+In [5]:
+sloth_link = "https://files.worldwildlife.org/wwfcmsprod/images/Sloth_Sitting_iStock_3_12_2014/story_full_width/8l7pbjmj29_iStock_000011145477Large_mini__1_.jpg"
+
+messages = [{
+    "role" : "user",
+    "content": [
+        { "type": "image", "image" : sloth_link },
+        { "type": "text",  "text" : "Which films does this animal feature in?" }
+    ]
+}]
+# You might have to wait 1 minute for Unsloth's auto compiler
+do_gemma_3n_inference(model, messages, max_new_tokens = 256)
+This adorable animal is a **sloth**! Sloths have appeared in several films, most notably:
+
+* **Zootopia (2016):** The character Flash is a sloth who works at the DMV.
+* **The Jungle Book 2 (2003):** There are several sloth characters in this film.
+* **Ice Age: The Meltdown (2006):** A sloth named Sid is a supporting character.
+* **Rio (2011):** A sloth named Pedro appears in this animated film.
+
+Sloths are known for their slow movements and charming personalities, making them popular characters in animated movies! 
+<end_of_turn>
+Let's make a poem about sloths!
+In [6]:
+messages = [{
+    "role": "user",
+    "content": [{ "type" : "text",
+                  "text" : "Write a poem about sloths." }]
+}]
+do_gemma_3n_inference(model, messages, max_new_tokens = 128)
+In emerald canopies, slow and serene,
+A sloth hangs suspended, a peaceful scene.
+With gentle eyes and a languid grace,
+He moves at his own, unhurried pace.
+
+A master of stillness, a verdant disguise,
+He blends with the leaves, a clever surprise.
+He munches on leaves, a leafy delight,
+And dreams in the sun, bathed in soft light.
+
+No rush, no worry, no frantic chase,
+He finds contentment in this tranquil space.
+A symbol of patience, a lesson to teach,
+To slow down and breathe, within easy reach.
+Gemma 3N can also hear!
+In [7]:
+from IPython.display import Audio, display
+Audio("https://www.nasa.gov/wp-content/uploads/2015/01/591240main_JFKmoonspeech.mp3")
+Out[7]:
+Your browser does not support the audio element.
+In [8]:
+!wget -qqq https://www.nasa.gov/wp-content/uploads/2015/01/591240main_JFKmoonspeech.mp3 -O audio.mp3
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+ - Avoid using `tokenizers` before the fork if possible
+ - Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+In [9]:
+audio_file = "audio.mp3"
+
+messages = [{
+    "role" : "user",
+    "content": [
+        { "type": "audio", "audio" : audio_file },
+        { "type": "text",  "text" : "What is this audio about?" }
+    ]
+}]
+do_gemma_3n_inference(model, messages, max_new_tokens = 256)
+The audio is a quote from President John F. Kennedy's famous speech delivered on June 12, 1961, at Rice University. In this speech, Kennedy declared the nation's commitment to achieving the goal of landing a man on the moon and returning him safely to Earth before the end of that decade.<end_of_turn>
+Let's combine all 3 modalities together!
+In [10]:
+messages = [{
+    "role" : "user",
+    "content": [
+        { "type": "audio", "audio" : audio_file },
+        { "type": "image", "image" : sloth_link },
+        { "type": "text",  "text" : "What is this audio and image about? "\
+                                    "How are they related?" }
+    ]
+}]
+do_gemma_3n_inference(model, messages, max_new_tokens = 256)
+The audio is a quote from President John F. Kennedy's inaugural address, delivered in 1961. In this quote, he passionately calls on the nation to commit to a goal of landing a man on the moon and returning him safely to Earth before the end of the decade.
+
+The image is of a sloth, a very slow-moving animal.
+
+**How they are related:**
+
+The connection between the quote and the image is **ironic and metaphorical**. The quote emphasizes speed, ambition, and achieving a seemingly impossible goal within a short timeframe. The sloth, known for its extreme slowness and deliberate pace, directly contrasts with this rapid and ambitious vision.
+
+The juxtaposition of the two suggests a humorous or perhaps even a slightly mocking commentary on the grand ambitions of the space race. It highlights the vast difference in speed and approach between human technological aspirations and the natural world. It could also be interpreted as a gentle reminder to not always rush and to appreciate the natural pace of life.<end_of_turn>
+Let's finetune Gemma 3N!
+You can finetune the vision and text parts for now through selection - the audio part can also be finetuned - we're working to make it selectable as well!
+We now add LoRA adapters so we only need to update a small amount of parameters!
+In [11]:
+model = FastModel.get_peft_model(
+    model,
+    finetune_vision_layers     = False, # Turn off for just text!
+    finetune_language_layers   = True,  # Should leave on!
+    finetune_attention_modules = True,  # Attention good for GRPO
+    finetune_mlp_modules       = True,  # Should leave on always!
+
+    r = 8,           # Larger = higher accuracy, but might overfit
+    lora_alpha = 8,  # Recommended alpha == r at least
+    lora_dropout = 0,
+    bias = "none",
+    random_state = 3407,
+)
+Unsloth: Making `model.base_model.model.model.language_model` require gradients
+Data Prep
+We now use the Gemma-3 format for conversation style finetunes. We use Maxime Labonne's FineTome-100k dataset in ShareGPT style. Gemma-3 renders multi turn conversations like below:
+<bos><start_of_turn>user
+Hello!<end_of_turn>
+<start_of_turn>model
+Hey there!<end_of_turn>
+We use our get_chat_template function to get the correct chat template. We support zephyr, chatml, mistral, llama, alpaca, vicuna, vicuna_old, phi3, llama3, phi4, qwen2.5, gemma3 and more.
+In [12]:
+from unsloth.chat_templates import get_chat_template
+tokenizer = get_chat_template(
+    tokenizer,
+    chat_template = "gemma-3",
+)
+We get the first 3000 rows of the dataset
+In [13]:
+from datasets import load_dataset
+dataset = load_dataset("mlabonne/FineTome-100k", split = "train[:3000]")
+README.md: 100%
+982/982 [00:00<00:00, 119kB/s]
+data/train-00000-of-00001.parquet: 100%
+117M/117M [00:03<00:00, 62.6MB/s]
+Generating train split: 100%
+100000/100000 [00:00<00:00, 113638.96 examples/s]
+We now use standardize_data_formats to try converting datasets to the correct format for finetuning purposes!
+In [14]:
+from unsloth.chat_templates import standardize_data_formats
+dataset = standardize_data_formats(dataset)
+Unsloth: Standardizing formats (num_proc=4): 100%
+3000/3000 [00:00<00:00, 3212.87 examples/s]
+Let's see how row 100 looks like!
+In [15]:
+dataset[100]
+Out[15]:
+{'conversations': [{'content': 'What is the modulus operator in programming and how can I use it to calculate the modulus of two given numbers?',
+   'role': 'user'},
+  {'content': 'In programming, the modulus operator is represented by the \'%\' symbol. It calculates the remainder when one number is divided by another. To calculate the modulus of two given numbers, you can use the modulus operator in the following way:\n\n```python\n# Calculate the modulus\nModulus = a % b\n\nprint("Modulus of the given numbers is: ", Modulus)\n```\n\nIn this code snippet, the variables \'a\' and \'b\' represent the two given numbers for which you want to calculate the modulus. By using the modulus operator \'%\', we calculate the remainder when \'a\' is divided by \'b\'. The result is then stored in the variable \'Modulus\'. Finally, the modulus value is printed using the \'print\' statement.\n\nFor example, if \'a\' is 10 and \'b\' is 4, the modulus calculation would be 10 % 4, which equals 2. Therefore, the output of the above code would be:\n\n```\nModulus of the given numbers is: 2\n```\n\nThis means that the modulus of 10 and 4 is 2.',
+   'role': 'assistant'}],
+ 'source': 'infini-instruct-top-500k',
+ 'score': 4.774171352386475}
+We now have to apply the chat template for Gemma-3 onto the conversations, and save it to text. We remove the <bos> token using removeprefix('<bos>') since we're finetuning. The Processor will add this token before training and the model expects only one.
+In [16]:
+def formatting_prompts_func(examples):
+   convos = examples["conversations"]
+   texts = [tokenizer.apply_chat_template(convo, tokenize = False, add_generation_prompt = False).removeprefix('<bos>') for convo in convos]
+   return { "text" : texts, }
+
+dataset = dataset.map(formatting_prompts_func, batched = True)
+Map: 100%
+3000/3000 [00:00<00:00, 8635.91 examples/s]
+Let's see how the chat template did! Notice there is no <bos> token as the processor tokenizer will be adding one.
+In [17]:
+dataset[100]["text"]
+Out[17]:
+'<start_of_turn>user\nWhat is the modulus operator in programming and how can I use it to calculate the modulus of two given numbers?<end_of_turn>\n<start_of_turn>model\nIn programming, the modulus operator is represented by the \'%\' symbol. It calculates the remainder when one number is divided by another. To calculate the modulus of two given numbers, you can use the modulus operator in the following way:\n\n```python\n# Calculate the modulus\nModulus = a % b\n\nprint("Modulus of the given numbers is: ", Modulus)\n```\n\nIn this code snippet, the variables \'a\' and \'b\' represent the two given numbers for which you want to calculate the modulus. By using the modulus operator \'%\', we calculate the remainder when \'a\' is divided by \'b\'. The result is then stored in the variable \'Modulus\'. Finally, the modulus value is printed using the \'print\' statement.\n\nFor example, if \'a\' is 10 and \'b\' is 4, the modulus calculation would be 10 % 4, which equals 2. Therefore, the output of the above code would be:\n\n```\nModulus of the given numbers is: 2\n```\n\nThis means that the modulus of 10 and 4 is 2.<end_of_turn>\n'
+Train the model
+Now let's use Huggingface TRL's SFTTrainer! More docs here: TRL SFT docs. We do 60 steps to speed things up, but you can set num_train_epochs=1 for a full run, and turn off max_steps=None.
+In [18]:
+from trl import SFTTrainer, SFTConfig
+trainer = SFTTrainer(
+    model = model,
+    tokenizer = tokenizer,
+    train_dataset = dataset,
+    eval_dataset = None, # Can set up evaluation!
+    args = SFTConfig(
+        dataset_text_field = "text",
+        per_device_train_batch_size = 1,
+        gradient_accumulation_steps = 4, # Use GA to mimic batch size!
+        warmup_steps = 5,
+        # num_train_epochs = 1, # Set this for 1 full training run.
+        max_steps = 60,
+        learning_rate = 2e-4, # Reduce to 2e-5 for long training runs
+        logging_steps = 1,
+        optim = "paged_adamw_8bit",
+        weight_decay = 0.01,
+        lr_scheduler_type = "linear",
+        seed = 3407,
+        report_to = "none", # Use this for WandB etc
+    ),
+)
+Unsloth: Tokenizing ["text"] (num_proc=2): 100%
+3000/3000 [00:05<00:00, 744.25 examples/s]
+We also use Unsloth's train_on_completions method to only train on the assistant outputs and ignore the loss on the user's inputs. This helps increase accuracy of finetunes!
+In [19]:
+from unsloth.chat_templates import train_on_responses_only
+trainer = train_on_responses_only(
+    trainer,
+    instruction_part = "<start_of_turn>user\n",
+    response_part = "<start_of_turn>model\n",
+)
+Map (num_proc=4): 100%
+3000/3000 [00:00<00:00, 1114.97 examples/s]
+Let's verify masking the instruction part is done! Let's print the 100th row again. Notice how the sample only has a single <bos> as expected!
+In [20]:
+tokenizer.decode(trainer.train_dataset[100]["input_ids"])
+Out[20]:
+'<bos><start_of_turn>user\nWhat is the modulus operator in programming and how can I use it to calculate the modulus of two given numbers?<end_of_turn>\n<start_of_turn>model\nIn programming, the modulus operator is represented by the \'%\' symbol. It calculates the remainder when one number is divided by another. To calculate the modulus of two given numbers, you can use the modulus operator in the following way:\n\n```python\n# Calculate the modulus\nModulus = a % b\n\nprint("Modulus of the given numbers is: ", Modulus)\n```\n\nIn this code snippet, the variables \'a\' and \'b\' represent the two given numbers for which you want to calculate the modulus. By using the modulus operator \'%\', we calculate the remainder when \'a\' is divided by \'b\'. The result is then stored in the variable \'Modulus\'. Finally, the modulus value is printed using the \'print\' statement.\n\nFor example, if \'a\' is 10 and \'b\' is 4, the modulus calculation would be 10 % 4, which equals 2. Therefore, the output of the above code would be:\n\n```\nModulus of the given numbers is: 2\n```\n\nThis means that the modulus of 10 and 4 is 2.<end_of_turn>\n'
+Now let's print the masked out example - you should see only the answer is present:
+In [21]:
+tokenizer.decode([tokenizer.pad_token_id if x == -100 else x for x in trainer.train_dataset[100]["labels"]]).replace(tokenizer.pad_token, " ")
+Out[21]:
+'                               In programming, the modulus operator is represented by the \'%\' symbol. It calculates the remainder when one number is divided by another. To calculate the modulus of two given numbers, you can use the modulus operator in the following way:\n\n```python\n# Calculate the modulus\nModulus = a % b\n\nprint("Modulus of the given numbers is: ", Modulus)\n```\n\nIn this code snippet, the variables \'a\' and \'b\' represent the two given numbers for which you want to calculate the modulus. By using the modulus operator \'%\', we calculate the remainder when \'a\' is divided by \'b\'. The result is then stored in the variable \'Modulus\'. Finally, the modulus value is printed using the \'print\' statement.\n\nFor example, if \'a\' is 10 and \'b\' is 4, the modulus calculation would be 10 % 4, which equals 2. Therefore, the output of the above code would be:\n\n```\nModulus of the given numbers is: 2\n```\n\nThis means that the modulus of 10 and 4 is 2.<end_of_turn>\n'
+In [22]:
+# @title Show current memory stats
+import gc
+gc.collect()
+torch.cuda.empty_cache()
+gpu_stats = torch.cuda.get_device_properties(0)
+start_gpu_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
+max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
+print(f"GPU = {gpu_stats.name}. Max memory = {max_memory} GB.")
+print(f"{start_gpu_memory} GB of memory reserved.")
+GPU = Tesla T4. Max memory = 14.741 GB.
+12.592 GB of memory reserved.
+Let's train the model!
+To resume a training run, set trainer.train(resume_from_checkpoint = True)
+In [23]:
+trainer_stats = trainer.train()
+==((====))==  Unsloth - 2x faster free finetuning | Num GPUs used = 1
+   \\   /|    Num examples = 3,000 | Num Epochs = 1 | Total steps = 60
+O^O/ \_/ \    Batch size per device = 2 | Gradient accumulation steps = 4
+\        /    Data Parallel GPUs = 1 | Total batch size (2 x 4 x 1) = 8
+ "-____-"     Trainable parameters = 19,210,240 of 7,869,188,432 (0.24% trained)
+`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`.
+Unsloth: Will smartly offload gradients to save VRAM!
+[60/60 14:28, Epoch 0/1]
+Step Training Loss
+1 7.596500
+2 6.245000
+3 5.867900
+4 6.182600
+5 6.292800
+6 7.839500
+7 8.644600
+8 7.527900
+9 7.288900
+10 6.917300
+11 8.031300
+12 7.228900
+13 6.709900
+14 6.309600
+15 7.145600
+16 6.669800
+17 7.061000
+18 4.128500
+19 3.740500
+20 3.269000
+21 3.517200
+22 2.965300
+23 3.111800
+24 3.026900
+25 3.444100
+26 2.616300
+27 2.674800
+28 2.706400
+29 2.016800
+30 2.352700
+31 2.263400
+32 2.275500
+33 2.350700
+34 2.054200
+35 2.169600
+36 2.038500
+37 2.134100
+38 2.199800
+39 2.017500
+40 1.507900
+41 1.922900
+42 1.503500
+43 1.268800
+44 1.829700
+45 1.449100
+46 1.570300
+47 1.684200
+48 1.530700
+49 1.613700
+50 1.345900
+51 1.368800
+52 1.154200
+53 1.240000
+54 1.414000
+55 1.345300
+56 1.394400
+57 1.401400
+58 1.567200
+59 1.334300
+60 1.396500
+In [24]:
+# @title Show final memory and time stats
+gc.collect()
+torch.cuda.empty_cache()
+used_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
+used_memory_for_lora = round(used_memory - start_gpu_memory, 3)
+used_percentage = round(used_memory / max_memory * 100, 3)
+lora_percentage = round(used_memory_for_lora / max_memory * 100, 3)
+print(f"{trainer_stats.metrics['train_runtime']} seconds used for training.")
+print(
+    f"{round(trainer_stats.metrics['train_runtime']/60, 2)} minutes used for training."
+)
+print(f"Peak reserved memory = {used_memory} GB.")
+print(f"Peak reserved memory for training = {used_memory_for_lora} GB.")
+print(f"Peak reserved memory % of max memory = {used_percentage} %.")
+print(f"Peak reserved memory for training % of max memory = {lora_percentage} %.")
+978.857 seconds used for training.
+16.31 minutes used for training.
+Peak reserved memory = 12.592 GB.
+Peak reserved memory for training = 0.0 GB.
+Peak reserved memory % of max memory = 85.422 %.
+Peak reserved memory for training % of max memory = 0.0 %.
+Inference
+Let's run the model via Unsloth native inference! According to the Gemma-3 team, the recommended settings for inference are temperature = 1.0, top_p = 0.95, top_k = 64
+In [25]:
+from unsloth.chat_templates import get_chat_template
+tokenizer = get_chat_template(
+    tokenizer,
+    chat_template = "gemma-3",
+)
+messages = [{
+    "role": "user",
+    "content": [{
+        "type" : "text",
+        "text" : "Continue the sequence: 1, 1, 2, 3, 5, 8,",
+    }]
+}]
+inputs = tokenizer.apply_chat_template(
+    messages,
+    add_generation_prompt = True, # Must add for generation
+    return_tensors = "pt",
+    tokenize = True,
+    return_dict = True,
+).to("cuda")
+outputs = model.generate(
+    **inputs,
+    max_new_tokens = 64, # Increase for longer outputs!
+    # Recommended Gemma-3 settings!
+    temperature = 1.0, top_p = 0.95, top_k = 64,
+)
+tokenizer.batch_decode(outputs)
+Out[25]:
+['<bos><start_of_turn>user\nContinue the sequence: 1, 1, 2, 3, 5, 8,<end_of_turn>\n<start_of_turn>model\n13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181, 6']
+You can also use a TextStreamer for continuous inference - so you can see the generation token by token, instead of waiting the whole time!
+In [26]:
+messages = [{
+    "role": "user",
+    "content": [{"type" : "text", "text" : "Why is the sky blue?",}]
+}]
+inputs = tokenizer.apply_chat_template(
+    messages,
+    add_generation_prompt = True, # Must add for generation
+    return_tensors = "pt",
+    tokenize = True,
+    return_dict = True,
+).to("cuda")
+
+from transformers import TextStreamer
+_ = model.generate(
+    **inputs,
+    max_new_tokens = 64, # Increase for longer outputs!
+    # Recommended Gemma-3 settings!
+    temperature = 1.0, top_p = 0.95, top_k = 64,
+    streamer = TextStreamer(tokenizer, skip_prompt = True),
+)
+The sky is blue because of a phenomenon called Rayleigh scattering. Sunlight is made up of all the colors of the rainbow, but blue light has a shorter wavelength than red light. When sunlight enters the Earth's atmosphere, it collides with tiny air molecules. Blue light is scattered more than other colors because it has a
+Saving, loading finetuned models
+To save the final model as LoRA adapters, either use Huggingface's push_to_hub for an online save or save_pretrained for a local save.
+[NOTE] This ONLY saves the LoRA adapters, and not the full model. To save to 16bit or GGUF, scroll down!
+In [27]:
+model.save_pretrained("gemma-3n")  # Local saving
+tokenizer.save_pretrained("gemma-3n")
+# model.push_to_hub("HF_ACCOUNT/gemma-3", token = "...") # Online saving
+# tokenizer.push_to_hub("HF_ACCOUNT/gemma-3", token = "...") # Online saving
+Out[27]:
+['gemma-3n/processor_config.json']
+Now if you want to load the LoRA adapters we just saved for inference, set False to True:
+In [28]:
+if False:
+    from unsloth import FastModel
+    model, tokenizer = FastModel.from_pretrained(
+        model_name = "lora_model", # YOUR MODEL YOU USED FOR TRAINING
+        max_seq_length = 2048,
+        load_in_4bit = True,
+    )
+
+messages = [{
+    "role": "user",
+    "content": [{"type" : "text", "text" : "What is Gemma-3N?",}]
+}]
+inputs = tokenizer.apply_chat_template(
+    messages,
+    add_generation_prompt = True, # Must add for generation
+    return_tensors = "pt",
+    tokenize = True,
+    return_dict = True,
+).to("cuda")
+
+from transformers import TextStreamer
+_ = model.generate(
+    **inputs,
+    max_new_tokens = 128, # Increase for longer outputs!
+    # Recommended Gemma-3 settings!
+    temperature = 1.0, top_p = 0.95, top_k = 64,
+    streamer = TextStreamer(tokenizer, skip_prompt = True),
+)
+Gemma-3N is a family of open-weight large language models (LLMs) developed by Google DeepMind. They are designed to be accessible to a wider range of developers and researchers, fostering innovation in the field of AI.
+
+Here's a breakdown of what Gemma-3N is:
+
+* **Open-weight:** This means the model weights are publicly available, allowing developers to fine-tune and adapt them for their specific use cases. This openness is a key aspect of Google DeepMind's commitment to open research and development in AI.
+* **Large Language Models (LLMs):** Gemma-3
+Saving to float16 for VLLM
+We also support saving to float16 directly for deployment! We save it in the folder gemma-3N-finetune. Set if False to if True to let it run!
+In [29]:
+if False: # Change to True to save finetune!
+    model.save_pretrained_merged("gemma-3N-finetune", tokenizer)
+If you want to upload / push to your Hugging Face account, set if False to if True and add your Hugging Face token and upload location!
+In [30]:
+if False: # Change to True to upload finetune
+    model.push_to_hub_merged(
+        "HF_ACCOUNT/gemma-3N-finetune", tokenizer,
+        token = "hf_..."
+    )
+GGUF / llama.cpp Conversion
+To save to GGUF / llama.cpp, we support it natively now for all models! For now, you can convert easily to Q8_0, F16 or BF16 precision. Q4_K_M for 4bit will come later!
+In [31]:
+if False: # Change to True to save to GGUF
+    model.save_pretrained_gguf(
+        "gemma-3N-finetune",
+        quantization_type = "Q8_0", # For now only Q8_0, BF16, F16 supported
+    )
+Likewise, if you want to instead push to GGUF to your Hugging Face account, set if False to if True and add your Hugging Face token and upload location!
+In [32]:
+if False: # Change to True to upload GGUF
+    model.push_to_hub_gguf(
+        "gemma-3N-finetune",
+        quantization_type = "Q8_0", # Only Q8_0, BF16, F16 supported
+        repo_id = "HF_ACCOUNT/gemma-3N-finetune-gguf",
+        token = "hf_...",
+    )
+Now, use the gemma-3N-finetune.gguf file or gemma-3N-finetune-Q4_K_M.gguf file in llama.cpp or a UI based system like Jan or Open WebUI. You can install Jan here and Open WebUI here
+And we're done! If you have any questions on Unsloth, we have a Discord channel! If you find any bugs or want to keep updated with the latest LLM stuff, or need help, join projects etc, feel free to join our Discord!
+Some other links:
+Train your own reasoning model - Llama GRPO notebook Free Colab-GRPO.ipynb)
+Saving finetunes to Ollama. Free notebook-Ollama.ipynb)
+Llama 3.2 Vision finetuning - Radiography use case. Free Colab-Vision.ipynb)
+See notebooks for DPO, ORPO, Continued pretraining, conversational finetuning and more on our documentation!
+Gemma 3N Notebook collection:
+Gemma 3N Multimodal inference + conversational finetuning Kaggle Notebook ⬅️ Your are here
+Gemma 3N Vision finetuning Kaggle Notebook
+Gemma 3N Audio finetuning Kaggle Notebook
+Join Discord if you need help + ⭐️ Star us on Github ⭐️

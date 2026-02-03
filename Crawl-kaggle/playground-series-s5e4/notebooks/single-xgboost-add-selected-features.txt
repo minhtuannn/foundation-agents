@@ -1,0 +1,470 @@
+Single XGBoost - Add "Selected" Features
+In this notebook, I train a model using the most effective features identified in this notebook with forward feature selection.
+The feature ideas are based on techniques shared by Chris Deotte in his first-place solutions:
+References:
+https://www.kaggle.com/code/cdeotte/first-place-single-model-lb-38-81
+https://www.kaggle.com/code/cdeotte/first-place-single-model-cv-1-016-lb-1-016
+In [1]:
+# %load_ext cudf.pandas
+import numpy as np, pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+pd.set_option('display.max_columns', 100)
+
+TARGET = 'Listening_Time_minutes'
+CATS = ['Podcast_Name', 'Episode_Num', 'Genre', 'Publication_Day', 'Publication_Time', 'Episode_Sentiment']
+NUMS = ['Episode_Length_minutes', 'Host_Popularity_percentage', 
+        'Guest_Popularity_percentage', 'Number_of_Ads']
+
+oof_pred_name = '2+3+4_interact_xgb'
+In [2]:
+import warnings
+warnings.simplefilter('ignore')
+In [3]:
+train = pd.read_csv('/kaggle/input/playground-series-s5e4/train.csv', index_col='id')
+test = pd.read_csv('/kaggle/input/playground-series-s5e4/test.csv', index_col='id')
+original = pd.read_csv('/kaggle/input/podcast-listening-time-prediction-dataset/podcast_dataset.csv')
+print(f"Train shape: {train.shape}")
+print(f"Test  shape: {test.shape}")
+print(f"Orig  shape: {original.shape}")
+train.head(3)
+Train shape: (750000, 11)
+Test  shape: (250000, 10)
+Orig  shape: (52500, 11)
+Out[3]:
+Podcast_Name Episode_Title Episode_Length_minutes Genre Host_Popularity_percentage Publication_Day Publication_Time Guest_Popularity_percentage Number_of_Ads Episode_Sentiment Listening_Time_minutes
+id
+0 Mystery Matters Episode 98 NaN True Crime 74.81 Thursday Night NaN 0.0 Positive 31.41998
+1 Joke Junction Episode 26 119.8 Comedy 66.95 Saturday Afternoon 75.95 2.0 Negative 88.01241
+2 Study Sessions Episode 16 73.9 Education 69.97 Tuesday Evening 8.97 0.0 Negative 44.92531
+In [4]:
+original_clean = original.dropna(subset=[TARGET]).drop_duplicates()
+train = pd.concat([train, original_clean], axis=0, ignore_index=True)
+Add Features
+In [5]:
+def feature_eng(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    df['Episode_Num'] = df['Episode_Title'].str[8:]     
+    df['is_weekend']   = df['Publication_Day'].isin(['Saturday', 'Sunday']).astype(int)
+
+    return df.drop(columns=['Episode_Title'])
+
+train = feature_eng(train)
+test = feature_eng(test)
+In [6]:
+ELM = []
+for k in range(3):
+    col_name = f'ELm_r{k}'
+    train[col_name] = train['Episode_Length_minutes'].round(k)
+    test[col_name] = test['Episode_Length_minutes'].round(k)
+    ELM.append(col_name)
+In [7]:
+encoded_columns = []
+
+selected_comb = [
+    # 2-interaction
+    ['Episode_Length_minutes', 'Host_Popularity_percentage'],
+    ['Episode_Length_minutes', 'Guest_Popularity_percentage'],
+    ['Episode_Length_minutes', 'Number_of_Ads'],
+    ['Episode_Num', 'Host_Popularity_percentage'],
+    ['Episode_Num', 'Guest_Popularity_percentage'],
+    ['Episode_Num', 'Number_of_Ads'],    
+    ['Host_Popularity_percentage', 'Guest_Popularity_percentage'],
+    ['Host_Popularity_percentage', 'Number_of_Ads'],
+    ['Host_Popularity_percentage', 'Episode_Sentiment'],
+    ['Episode_Length_minutes', 'Podcast_Name'],
+    ['Episode_Num', 'Podcast_Name'],  
+    ['Guest_Popularity_percentage', 'Podcast_Name'],
+    ['ELm_r1', 'Episode_Num'],
+    ['ELm_r1', 'Host_Popularity_percentage'], 
+    ['ELm_r1', 'Guest_Popularity_percentage'],
+    ['ELm_r2', 'Episode_Num'],
+    ['ELm_r2', 'Episode_Sentiment'],
+    ['ELm_r2', 'Publication_Day'],
+
+    
+    # 3-interaction
+    ['Episode_Length_minutes', 'Episode_Num', 'Host_Popularity_percentage'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Guest_Popularity_percentage'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Number_of_Ads'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Episode_Sentiment'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Publication_Day'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Guest_Popularity_percentage'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Number_of_Ads'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Episode_Sentiment'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Publication_Day'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Publication_Time'],
+    ['Episode_Length_minutes', 'Guest_Popularity_percentage', 'Number_of_Ads'],
+    ['Episode_Length_minutes', 'Guest_Popularity_percentage', 'Publication_Day'],
+    ['Episode_Length_minutes', 'Guest_Popularity_percentage', 'Publication_Time'],
+    ['Episode_Length_minutes', 'Number_of_Ads', 'Episode_Sentiment'],
+    ['Episode_Length_minutes', 'Number_of_Ads', 'Publication_Day'],
+    ['Episode_Length_minutes', 'Episode_Sentiment', 'Publication_Time'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Guest_Popularity_percentage'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Number_of_Ads'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Episode_Sentiment'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Publication_Day'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Publication_Time'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Genre'],
+    ['Episode_Num', 'Guest_Popularity_percentage', 'Number_of_Ads'],
+    ['Episode_Num', 'Guest_Popularity_percentage', 'Episode_Sentiment'],
+    ['Episode_Num', 'Guest_Popularity_percentage', 'Publication_Day'],
+    ['Episode_Num', 'Guest_Popularity_percentage', 'Publication_Time'],
+    ['Episode_Num', 'Guest_Popularity_percentage', 'Genre'],
+    ['Episode_Num', 'Number_of_Ads', 'Episode_Sentiment'],
+    ['Host_Popularity_percentage', 'Guest_Popularity_percentage', 'Number_of_Ads'],
+    ['Host_Popularity_percentage', 'Guest_Popularity_percentage', 'Episode_Sentiment'],
+    ['Host_Popularity_percentage', 'Guest_Popularity_percentage', 'Publication_Day'],
+    ['Host_Popularity_percentage', 'Guest_Popularity_percentage', 'Publication_Time'],
+    ['Host_Popularity_percentage', 'Number_of_Ads', 'Publication_Day'],
+
+    ['Guest_Popularity_percentage', 'Number_of_Ads', 'Episode_Sentiment'],
+    ['Guest_Popularity_percentage', 'Number_of_Ads', 'Genre'],   
+    ['ELm_r1', 'Number_of_Ads', 'Episode_Sentiment'],
+    ['ELm_r2', 'Number_of_Ads', 'Podcast_Name'],
+    
+    # 4-interaction
+    ['Episode_Length_minutes', 'Episode_Num', 'Host_Popularity_percentage', 'Guest_Popularity_percentage'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Host_Popularity_percentage', 'Number_of_Ads'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Host_Popularity_percentage', 'Episode_Sentiment'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Host_Popularity_percentage', 'Publication_Day'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Host_Popularity_percentage', 'Publication_Time'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Host_Popularity_percentage', 'Genre'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Guest_Popularity_percentage', 'Number_of_Ads'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Guest_Popularity_percentage', 'Episode_Sentiment'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Guest_Popularity_percentage', 'Publication_Day'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Guest_Popularity_percentage', 'Publication_Time'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Number_of_Ads', 'Episode_Sentiment'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Number_of_Ads', 'Publication_Day'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Number_of_Ads', 'Publication_Time'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Publication_Day', 'Publication_Time'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Publication_Day', 'Genre'],    
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Guest_Popularity_percentage', 'Number_of_Ads'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Guest_Popularity_percentage', 'Episode_Sentiment'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Guest_Popularity_percentage', 'Publication_Day'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Guest_Popularity_percentage', 'Publication_Time'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Number_of_Ads', 'Episode_Sentiment'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Number_of_Ads', 'Publication_Day'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Publication_Day', 'Publication_Time'],
+    ['Episode_Length_minutes', 'Host_Popularity_percentage', 'Publication_Day', 'Genre'],
+    ['Episode_Length_minutes', 'Guest_Popularity_percentage', 'Number_of_Ads', 'Episode_Sentiment'],
+    ['Episode_Length_minutes', 'Guest_Popularity_percentage', 'Number_of_Ads', 'Publication_Day'],
+    ['Episode_Length_minutes', 'Guest_Popularity_percentage', 'Number_of_Ads', 'Publication_Time'],
+    ['Episode_Length_minutes', 'Guest_Popularity_percentage', 'Number_of_Ads', 'Genre'],
+    ['Episode_Length_minutes', 'Episode_Num', 'Publication_Time', 'Podcast_Name'],
+    
+    ['Episode_Num', 'Host_Popularity_percentage', 'Guest_Popularity_percentage', 'Number_of_Ads'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Guest_Popularity_percentage', 'Episode_Sentiment'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Number_of_Ads', 'Publication_Day'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Number_of_Ads', 'Publication_Time'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Episode_Sentiment', 'Publication_Day'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Episode_Sentiment', 'Publication_Time'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Episode_Sentiment', 'Genre'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Publication_Day', 'Publication_Time'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Publication_Time', 'Genre'],
+    ['Episode_Num', 'Guest_Popularity_percentage', 'Number_of_Ads', 'Episode_Sentiment'],
+    ['Episode_Num', 'Guest_Popularity_percentage', 'Number_of_Ads', 'Genre'],
+    ['Episode_Num', 'Host_Popularity_percentage', 'Episode_Sentiment', 'Podcast_Name'],
+    ['Host_Popularity_percentage', 'Number_of_Ads', 'Episode_Sentiment', 'Podcast_Name'],
+    ['Host_Popularity_percentage', 'Number_of_Ads', 'Publication_Day', 'Podcast_Name'],
+    ['Host_Popularity_percentage', 'Number_of_Ads', 'Publication_Time', 'Podcast_Name'],
+    
+]
+
+for comb in selected_comb:
+    name = '_'.join(comb)
+        
+    if len(comb) == 2:
+        train[name] = train[comb[0]].astype(str) + '_' + train[comb[1]].astype(str)
+        test[name] = test[comb[0]].astype(str) + '_' + test[comb[1]].astype(str)
+        
+    elif len(comb) == 3:
+        train[name] = (train[comb[0]].astype(str) + '_' +
+                       train[comb[1]].astype(str) + '_' +
+                       train[comb[2]].astype(str))
+        test[name] = (test[comb[0]].astype(str) + '_' +
+                      test[comb[1]].astype(str) + '_' +
+                      test[comb[2]].astype(str))
+        
+    elif len(comb) == 4:
+        train[name] = (train[comb[0]].astype(str) + '_' +
+                       train[comb[1]].astype(str) + '_' +
+                       train[comb[2]].astype(str) + '_' +
+                       train[comb[3]].astype(str))
+        test[name] = (test[comb[0]].astype(str) + '_' +
+                      test[comb[1]].astype(str) + '_' +
+                      test[comb[2]].astype(str) + '_' +
+                      test[comb[3]].astype(str))
+    
+    encoded_columns.append(name)
+
+train[encoded_columns] = train[encoded_columns].astype('category')
+test[encoded_columns] = test[encoded_columns].astype('category')
+In [8]:
+# reference: https://www.kaggle.com/code/masayakawamata/imputation-strategies/
+train[NUMS] = train[NUMS].fillna(train[NUMS].median())
+test[NUMS] = test[NUMS].fillna(train[NUMS].median())
+In [9]:
+FEATURES = NUMS + CATS + encoded_columns
+
+print(f"Train Shape: {train.shape}")
+print(f"Test  Shape: {test.shape}")
+train.head(3)
+Train Shape: (794868, 113)
+Test  Shape: (250000, 112)
+Out[9]:
+Podcast_Name Episode_Length_minutes Genre Host_Popularity_percentage Publication_Day Publication_Time Guest_Popularity_percentage Number_of_Ads Episode_Sentiment Listening_Time_minutes Episode_Num is_weekend ELm_r0 ELm_r1 ELm_r2 Episode_Length_minutes_Host_Popularity_percentage Episode_Length_minutes_Guest_Popularity_percentage Episode_Length_minutes_Number_of_Ads Episode_Num_Host_Popularity_percentage Episode_Num_Guest_Popularity_percentage Episode_Num_Number_of_Ads Host_Popularity_percentage_Guest_Popularity_percentage Host_Popularity_percentage_Number_of_Ads Host_Popularity_percentage_Episode_Sentiment Episode_Length_minutes_Podcast_Name Episode_Num_Podcast_Name Guest_Popularity_percentage_Podcast_Name ELm_r1_Episode_Num ELm_r1_Host_Popularity_percentage ELm_r1_Guest_Popularity_percentage ELm_r2_Episode_Num ELm_r2_Episode_Sentiment ELm_r2_Publication_Day Episode_Length_minutes_Episode_Num_Host_Popularity_percentage Episode_Length_minutes_Episode_Num_Guest_Popularity_percentage Episode_Length_minutes_Episode_Num_Number_of_Ads Episode_Length_minutes_Episode_Num_Episode_Sentiment Episode_Length_minutes_Episode_Num_Publication_Day Episode_Length_minutes_Host_Popularity_percentage_Guest_Popularity_percentage Episode_Length_minutes_Host_Popularity_percentage_Number_of_Ads Episode_Length_minutes_Host_Popularity_percentage_Episode_Sentiment Episode_Length_minutes_Host_Popularity_percentage_Publication_Day Episode_Length_minutes_Host_Popularity_percentage_Publication_Time Episode_Length_minutes_Guest_Popularity_percentage_Number_of_Ads Episode_Length_minutes_Guest_Popularity_percentage_Publication_Day Episode_Length_minutes_Guest_Popularity_percentage_Publication_Time Episode_Length_minutes_Number_of_Ads_Episode_Sentiment Episode_Length_minutes_Number_of_Ads_Publication_Day Episode_Length_minutes_Episode_Sentiment_Publication_Time Episode_Num_Host_Popularity_percentage_Guest_Popularity_percentage ... Host_Popularity_percentage_Guest_Popularity_percentage_Publication_Day Host_Popularity_percentage_Guest_Popularity_percentage_Publication_Time Host_Popularity_percentage_Number_of_Ads_Publication_Day Guest_Popularity_percentage_Number_of_Ads_Episode_Sentiment Guest_Popularity_percentage_Number_of_Ads_Genre ELm_r1_Number_of_Ads_Episode_Sentiment ELm_r2_Number_of_Ads_Podcast_Name Episode_Length_minutes_Episode_Num_Host_Popularity_percentage_Guest_Popularity_percentage Episode_Length_minutes_Episode_Num_Host_Popularity_percentage_Number_of_Ads Episode_Length_minutes_Episode_Num_Host_Popularity_percentage_Episode_Sentiment Episode_Length_minutes_Episode_Num_Host_Popularity_percentage_Publication_Day Episode_Length_minutes_Episode_Num_Host_Popularity_percentage_Publication_Time Episode_Length_minutes_Episode_Num_Host_Popularity_percentage_Genre Episode_Length_minutes_Episode_Num_Guest_Popularity_percentage_Number_of_Ads Episode_Length_minutes_Episode_Num_Guest_Popularity_percentage_Episode_Sentiment Episode_Length_minutes_Episode_Num_Guest_Popularity_percentage_Publication_Day Episode_Length_minutes_Episode_Num_Guest_Popularity_percentage_Publication_Time Episode_Length_minutes_Episode_Num_Number_of_Ads_Episode_Sentiment Episode_Length_minutes_Episode_Num_Number_of_Ads_Publication_Day Episode_Length_minutes_Episode_Num_Number_of_Ads_Publication_Time Episode_Length_minutes_Episode_Num_Publication_Day_Publication_Time Episode_Length_minutes_Episode_Num_Publication_Day_Genre Episode_Length_minutes_Host_Popularity_percentage_Guest_Popularity_percentage_Number_of_Ads Episode_Length_minutes_Host_Popularity_percentage_Guest_Popularity_percentage_Episode_Sentiment Episode_Length_minutes_Host_Popularity_percentage_Guest_Popularity_percentage_Publication_Day Episode_Length_minutes_Host_Popularity_percentage_Guest_Popularity_percentage_Publication_Time Episode_Length_minutes_Host_Popularity_percentage_Number_of_Ads_Episode_Sentiment Episode_Length_minutes_Host_Popularity_percentage_Number_of_Ads_Publication_Day Episode_Length_minutes_Host_Popularity_percentage_Publication_Day_Publication_Time Episode_Length_minutes_Host_Popularity_percentage_Publication_Day_Genre Episode_Length_minutes_Guest_Popularity_percentage_Number_of_Ads_Episode_Sentiment Episode_Length_minutes_Guest_Popularity_percentage_Number_of_Ads_Publication_Day Episode_Length_minutes_Guest_Popularity_percentage_Number_of_Ads_Publication_Time Episode_Length_minutes_Guest_Popularity_percentage_Number_of_Ads_Genre Episode_Length_minutes_Episode_Num_Publication_Time_Podcast_Name Episode_Num_Host_Popularity_percentage_Guest_Popularity_percentage_Number_of_Ads Episode_Num_Host_Popularity_percentage_Guest_Popularity_percentage_Episode_Sentiment Episode_Num_Host_Popularity_percentage_Number_of_Ads_Publication_Day Episode_Num_Host_Popularity_percentage_Number_of_Ads_Publication_Time Episode_Num_Host_Popularity_percentage_Episode_Sentiment_Publication_Day Episode_Num_Host_Popularity_percentage_Episode_Sentiment_Publication_Time Episode_Num_Host_Popularity_percentage_Episode_Sentiment_Genre Episode_Num_Host_Popularity_percentage_Publication_Day_Publication_Time Episode_Num_Host_Popularity_percentage_Publication_Time_Genre Episode_Num_Guest_Popularity_percentage_Number_of_Ads_Episode_Sentiment Episode_Num_Guest_Popularity_percentage_Number_of_Ads_Genre Episode_Num_Host_Popularity_percentage_Episode_Sentiment_Podcast_Name Host_Popularity_percentage_Number_of_Ads_Episode_Sentiment_Podcast_Name Host_Popularity_percentage_Number_of_Ads_Publication_Day_Podcast_Name Host_Popularity_percentage_Number_of_Ads_Publication_Time_Podcast_Name
+0 Mystery Matters 63.77 True Crime 74.81 Thursday Night 53.36 0.0 Positive 31.41998 98 0 NaN NaN NaN nan_74.81 nan_nan nan_0.0 98_74.81 98_nan 98_0.0 74.81_nan 74.81_0.0 74.81_Positive nan_Mystery Matters 98_Mystery Matters nan_Mystery Matters nan_98 nan_74.81 nan_nan nan_98 nan_Positive nan_Thursday nan_98_74.81 nan_98_nan nan_98_0.0 nan_98_Positive nan_98_Thursday nan_74.81_nan nan_74.81_0.0 nan_74.81_Positive nan_74.81_Thursday nan_74.81_Night nan_nan_0.0 nan_nan_Thursday nan_nan_Night nan_0.0_Positive nan_0.0_Thursday nan_Positive_Night 98_74.81_nan ... 74.81_nan_Thursday 74.81_nan_Night 74.81_0.0_Thursday nan_0.0_Positive nan_0.0_True Crime nan_0.0_Positive nan_0.0_Mystery Matters nan_98_74.81_nan nan_98_74.81_0.0 nan_98_74.81_Positive nan_98_74.81_Thursday nan_98_74.81_Night nan_98_74.81_True Crime nan_98_nan_0.0 nan_98_nan_Positive nan_98_nan_Thursday nan_98_nan_Night nan_98_0.0_Positive nan_98_0.0_Thursday nan_98_0.0_Night nan_98_Thursday_Night nan_98_Thursday_True Crime nan_74.81_nan_0.0 nan_74.81_nan_Positive nan_74.81_nan_Thursday nan_74.81_nan_Night nan_74.81_0.0_Positive nan_74.81_0.0_Thursday nan_74.81_Thursday_Night nan_74.81_Thursday_True Crime nan_nan_0.0_Positive nan_nan_0.0_Thursday nan_nan_0.0_Night nan_nan_0.0_True Crime nan_98_Night_Mystery Matters 98_74.81_nan_0.0 98_74.81_nan_Positive 98_74.81_0.0_Thursday 98_74.81_0.0_Night 98_74.81_Positive_Thursday 98_74.81_Positive_Night 98_74.81_Positive_True Crime 98_74.81_Thursday_Night 98_74.81_Night_True Crime 98_nan_0.0_Positive 98_nan_0.0_True Crime 98_74.81_Positive_Mystery Matters 74.81_0.0_Positive_Mystery Matters 74.81_0.0_Thursday_Mystery Matters 74.81_0.0_Night_Mystery Matters
+1 Joke Junction 119.80 Comedy 66.95 Saturday Afternoon 75.95 2.0 Negative 88.01241 26 1 120.0 119.8 119.8 119.8_66.95 119.8_75.95 119.8_2.0 26_66.95 26_75.95 26_2.0 66.95_75.95 66.95_2.0 66.95_Negative 119.8_Joke Junction 26_Joke Junction 75.95_Joke Junction 119.8_26 119.8_66.95 119.8_75.95 119.8_26 119.8_Negative 119.8_Saturday 119.8_26_66.95 119.8_26_75.95 119.8_26_2.0 119.8_26_Negative 119.8_26_Saturday 119.8_66.95_75.95 119.8_66.95_2.0 119.8_66.95_Negative 119.8_66.95_Saturday 119.8_66.95_Afternoon 119.8_75.95_2.0 119.8_75.95_Saturday 119.8_75.95_Afternoon 119.8_2.0_Negative 119.8_2.0_Saturday 119.8_Negative_Afternoon 26_66.95_75.95 ... 66.95_75.95_Saturday 66.95_75.95_Afternoon 66.95_2.0_Saturday 75.95_2.0_Negative 75.95_2.0_Comedy 119.8_2.0_Negative 119.8_2.0_Joke Junction 119.8_26_66.95_75.95 119.8_26_66.95_2.0 119.8_26_66.95_Negative 119.8_26_66.95_Saturday 119.8_26_66.95_Afternoon 119.8_26_66.95_Comedy 119.8_26_75.95_2.0 119.8_26_75.95_Negative 119.8_26_75.95_Saturday 119.8_26_75.95_Afternoon 119.8_26_2.0_Negative 119.8_26_2.0_Saturday 119.8_26_2.0_Afternoon 119.8_26_Saturday_Afternoon 119.8_26_Saturday_Comedy 119.8_66.95_75.95_2.0 119.8_66.95_75.95_Negative 119.8_66.95_75.95_Saturday 119.8_66.95_75.95_Afternoon 119.8_66.95_2.0_Negative 119.8_66.95_2.0_Saturday 119.8_66.95_Saturday_Afternoon 119.8_66.95_Saturday_Comedy 119.8_75.95_2.0_Negative 119.8_75.95_2.0_Saturday 119.8_75.95_2.0_Afternoon 119.8_75.95_2.0_Comedy 119.8_26_Afternoon_Joke Junction 26_66.95_75.95_2.0 26_66.95_75.95_Negative 26_66.95_2.0_Saturday 26_66.95_2.0_Afternoon 26_66.95_Negative_Saturday 26_66.95_Negative_Afternoon 26_66.95_Negative_Comedy 26_66.95_Saturday_Afternoon 26_66.95_Afternoon_Comedy 26_75.95_2.0_Negative 26_75.95_2.0_Comedy 26_66.95_Negative_Joke Junction 66.95_2.0_Negative_Joke Junction 66.95_2.0_Saturday_Joke Junction 66.95_2.0_Afternoon_Joke Junction
+2 Study Sessions 73.90 Education 69.97 Tuesday Evening 8.97 0.0 Negative 44.92531 16 0 74.0 73.9 73.9 73.9_69.97 73.9_8.97 73.9_0.0 16_69.97 16_8.97 16_0.0 69.97_8.97 69.97_0.0 69.97_Negative 73.9_Study Sessions 16_Study Sessions 8.97_Study Sessions 73.9_16 73.9_69.97 73.9_8.97 73.9_16 73.9_Negative 73.9_Tuesday 73.9_16_69.97 73.9_16_8.97 73.9_16_0.0 73.9_16_Negative 73.9_16_Tuesday 73.9_69.97_8.97 73.9_69.97_0.0 73.9_69.97_Negative 73.9_69.97_Tuesday 73.9_69.97_Evening 73.9_8.97_0.0 73.9_8.97_Tuesday 73.9_8.97_Evening 73.9_0.0_Negative 73.9_0.0_Tuesday 73.9_Negative_Evening 16_69.97_8.97 ... 69.97_8.97_Tuesday 69.97_8.97_Evening 69.97_0.0_Tuesday 8.97_0.0_Negative 8.97_0.0_Education 73.9_0.0_Negative 73.9_0.0_Study Sessions 73.9_16_69.97_8.97 73.9_16_69.97_0.0 73.9_16_69.97_Negative 73.9_16_69.97_Tuesday 73.9_16_69.97_Evening 73.9_16_69.97_Education 73.9_16_8.97_0.0 73.9_16_8.97_Negative 73.9_16_8.97_Tuesday 73.9_16_8.97_Evening 73.9_16_0.0_Negative 73.9_16_0.0_Tuesday 73.9_16_0.0_Evening 73.9_16_Tuesday_Evening 73.9_16_Tuesday_Education 73.9_69.97_8.97_0.0 73.9_69.97_8.97_Negative 73.9_69.97_8.97_Tuesday 73.9_69.97_8.97_Evening 73.9_69.97_0.0_Negative 73.9_69.97_0.0_Tuesday 73.9_69.97_Tuesday_Evening 73.9_69.97_Tuesday_Education 73.9_8.97_0.0_Negative 73.9_8.97_0.0_Tuesday 73.9_8.97_0.0_Evening 73.9_8.97_0.0_Education 73.9_16_Evening_Study Sessions 16_69.97_8.97_0.0 16_69.97_8.97_Negative 16_69.97_0.0_Tuesday 16_69.97_0.0_Evening 16_69.97_Negative_Tuesday 16_69.97_Negative_Evening 16_69.97_Negative_Education 16_69.97_Tuesday_Evening 16_69.97_Evening_Education 16_8.97_0.0_Negative 16_8.97_0.0_Education 16_69.97_Negative_Study Sessions 69.97_0.0_Negative_Study Sessions 69.97_0.0_Tuesday_Study Sessions 69.97_0.0_Evening_Study Sessions
+3 rows × 113 columns
+Train XGBoost
+In [10]:
+from sklearn.model_selection import KFold
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.metrics import mean_squared_error
+from xgboost import XGBRegressor
+import gc
+In [11]:
+def target_encode(df_train, df_val, col, target, stats='mean', prefix='TE'):
+    df_val = df_val.copy()
+    agg = df_train.groupby(col)[target].agg(stats)    
+    if isinstance(stats, (list, tuple)):
+        for s in stats:
+            colname = f"{prefix}_{col}_{s}"
+            df_val[colname] = df_val[col].map(agg[s]).astype(float)
+            df_val[colname].fillna(agg[s].mean(), inplace=True)
+    else:
+        suffix = stats if isinstance(stats, str) else stats.__name__
+        colname = f"{prefix}_{col}_{suffix}"
+        df_val[colname] = df_val[col].map(agg).astype(float)
+        df_val[colname].fillna(agg.mean(), inplace=True)
+    return df_val
+In [12]:
+# reference: https://www.kaggle.com/code/act18l/say-goodbye-to-ordinalencoder
+class OrderedTargetEncoder(BaseEstimator, TransformerMixin):
+    """
+    Out‑of‑fold **mean‑rank** encoder with optional smoothing.
+    • Encodes each category by the *rank* of its target mean within a fold.
+    • Unseen categories get the global mean rank (or −1 if you prefer).
+    """
+    def __init__(self, cat_cols=None, n_splits=5, smoothing=0):
+        self.cat_cols   = cat_cols
+        self.n_splits   = n_splits
+        self.smoothing  = smoothing       # 0 = no smoothing
+        self.maps_      = {}              # per‑fold maps
+        self.global_map = {}              # fit on full data for test set
+
+    def _make_fold_map(self, X_col, y):
+        means = y.groupby(X_col, dropna=False).mean()
+        if self.smoothing > 0:
+            counts = y.groupby(X_col, dropna=False).count()
+            smooth = (counts * means + self.smoothing * y.mean()) / (counts + self.smoothing)
+            means  = smooth
+        return {k: r for r, k in enumerate(means.sort_values().index)}
+
+    def fit(self, X, y):
+        X, y = X.reset_index(drop=True), y.reset_index(drop=True)
+        if self.cat_cols is None:
+            self.cat_cols = X.select_dtypes(include='object').columns.tolist()
+
+        kf = KFold(self.n_splits, shuffle=True, random_state=42)
+        self.maps_ = {col: [None]*self.n_splits for col in self.cat_cols}
+
+        for fold, (tr_idx, _) in enumerate(kf.split(X)):
+            X_tr, y_tr = X.loc[tr_idx], y.loc[tr_idx]
+            for col in self.cat_cols:
+                self.maps_[col][fold] = self._make_fold_map(X_tr[col], y_tr)
+
+        for col in self.cat_cols:
+            self.global_map[col] = self._make_fold_map(X[col], y)
+
+        return self
+
+    def transform(self, X, y=None, fold=None):
+        """
+        • During CV pass fold index to use fold‑specific maps (leak‑free).
+        • At inference time (fold=None) uses global map.
+        """
+        X = X.copy()
+        tgt_maps = {col: (self.global_map[col] if fold is None else self.maps_[col][fold])
+                    for col in self.cat_cols}
+        for col, mapping in tgt_maps.items():
+            X[col] = X[col].map(mapping).fillna(-1).astype(int)
+        return X
+In [13]:
+encode_stats = ['mean']
+In [14]:
+FOLDS          = 10
+outer_kf       = KFold(n_splits=FOLDS, shuffle=True, random_state=42)
+oof            = np.zeros(len(train))
+pred           = np.zeros(len(test))
+
+for fold, (tr_idx, vl_idx) in enumerate(outer_kf.split(train), 1):
+    print(f"--- Fold {fold} / {FOLDS} ---")
+
+    X_tr_raw = train.loc[tr_idx, FEATURES].reset_index(drop=True)
+    y_tr     = train.loc[tr_idx, TARGET].reset_index(drop=True)
+
+    X_vl_raw = train.loc[vl_idx, FEATURES].reset_index(drop=True)
+    y_vl     = train.loc[vl_idx, TARGET].reset_index(drop=True)
+
+    X_ts_raw = test[FEATURES].copy()
+
+    X_tr, X_vl, X_ts = X_tr_raw.copy(), X_vl_raw.copy(), X_ts_raw.copy()
+
+    inner_kf = KFold(n_splits=FOLDS, shuffle=True, random_state=42)
+    for _, (in_tr_idx, in_vl_idx) in enumerate(inner_kf.split(X_tr_raw), 1):
+        in_tr = pd.concat([X_tr_raw.loc[in_tr_idx], y_tr.loc[in_tr_idx]], axis=1)
+        in_vl = X_tr_raw.loc[in_vl_idx].reset_index(drop=True)
+
+        for col in encoded_columns:
+            for stat in encode_stats:
+                te_tmp = target_encode(
+                    in_tr, in_vl.copy(),
+                    col, TARGET,
+                    stats=stat, prefix="TE"
+                )
+                te_col = f"TE_{col}_{stat}"
+                X_tr.loc[in_vl_idx, te_col] = te_tmp[te_col].values
+
+    tr_with_y = pd.concat([X_tr_raw, y_tr], axis=1)
+    for col in encoded_columns:
+        for stat in encode_stats:
+            te_col = f"TE_{col}_{stat}"
+            X_vl = target_encode(tr_with_y, X_vl,      col, TARGET,
+                                  stats=stat, prefix="TE")
+            X_ts = target_encode(tr_with_y, X_ts,      col, TARGET,
+                                  stats=stat, prefix="TE")
+
+    X_tr.drop(encoded_columns, axis=1, inplace=True)
+    X_vl.drop(encoded_columns, axis=1, inplace=True)
+    X_ts.drop(encoded_columns, axis=1, inplace=True)    
+
+    enc = OrderedTargetEncoder(
+        cat_cols=CATS,
+        n_splits=FOLDS,
+        smoothing=20
+    ).fit(X_tr, y_tr)
+
+    X_tr[CATS] = enc.transform(X_tr[CATS], fold=None)[CATS]
+    X_vl[CATS] = enc.transform(X_vl[CATS], fold=None)[CATS]
+    X_ts[CATS] = enc.transform(X_ts[CATS], fold=None)[CATS]
+    
+    model = XGBRegressor(
+        tree_method='hist',
+        max_depth=14,
+        colsample_bytree=0.5,
+        subsample=0.9,
+        n_estimators=50_000,
+        learning_rate=0.02,
+        enable_categorical=True,
+        min_child_weight=10,
+        early_stopping_rounds=150,
+    )
+
+    model.fit(
+        X_tr, y_tr,
+        eval_set=[(X_vl, y_vl)],
+        verbose=500
+    )
+
+    oof[vl_idx]  = model.predict(X_vl)
+    pred        += model.predict(X_ts)
+
+    del X_tr_raw, X_vl_raw, X_ts_raw, X_tr, X_vl, X_ts, y_tr, y_vl
+    if fold != FOLDS:
+        del model
+    gc.collect()
+
+pred /= FOLDS
+rmse = mean_squared_error(train[TARGET], oof, squared=False)
+print(f"Final OOF RMSE (XGB): {rmse:.5f}")
+--- Fold 1 / 10 ---
+[0] validation_0-rmse:26.63397
+[500] validation_0-rmse:11.86750
+[674] validation_0-rmse:11.86982
+--- Fold 2 / 10 ---
+[0] validation_0-rmse:26.75928
+[500] validation_0-rmse:11.87429
+[848] validation_0-rmse:11.87389
+--- Fold 3 / 10 ---
+[0] validation_0-rmse:26.68832
+[500] validation_0-rmse:11.85898
+[710] validation_0-rmse:11.85896
+--- Fold 4 / 10 ---
+[0] validation_0-rmse:26.74679
+[500] validation_0-rmse:11.86474
+[1000] validation_0-rmse:11.86378
+[1008] validation_0-rmse:11.86409
+--- Fold 5 / 10 ---
+[0] validation_0-rmse:26.75002
+[500] validation_0-rmse:11.87085
+[787] validation_0-rmse:11.87131
+--- Fold 6 / 10 ---
+[0] validation_0-rmse:26.65291
+[500] validation_0-rmse:11.94659
+[708] validation_0-rmse:11.94999
+--- Fold 7 / 10 ---
+[0] validation_0-rmse:26.79196
+[500] validation_0-rmse:11.91091
+[693] validation_0-rmse:11.91135
+--- Fold 8 / 10 ---
+[0] validation_0-rmse:26.75466
+[500] validation_0-rmse:11.95138
+[711] validation_0-rmse:11.94907
+--- Fold 9 / 10 ---
+[0] validation_0-rmse:26.65016
+[500] validation_0-rmse:11.87315
+[771] validation_0-rmse:11.87042
+--- Fold 10 / 10 ---
+[0] validation_0-rmse:26.68560
+[500] validation_0-rmse:11.91629
+[755] validation_0-rmse:11.91603
+Final OOF RMSE (XGB): 11.89073
+In [15]:
+importance_types = ['weight', 'gain', 'cover', 'total_gain', 'total_cover']
+
+booster = model.get_booster()
+
+for itype in importance_types:
+    score = booster.get_score(importance_type=itype)
+    score_series = pd.Series(score).sort_values(ascending=False)
+
+    plt.figure(figsize=(10, 6))
+    score_series.head(30).plot(kind='bar')
+    plt.title(f"Feature Importance - {itype}")
+    plt.ylabel(itype)
+    plt.xlabel("Features")
+    plt.tight_layout()
+    plt.show()
+Submission
+In [16]:
+sub = pd.read_csv('/kaggle/input/playground-series-s5e4/sample_submission.csv')
+sub[TARGET] = pred
+sub.to_csv('submission.csv', index=False)
+sub.head(3)
+Out[16]:
+id Listening_Time_minutes
+0 750000 55.732540
+1 750001 23.182414
+2 750002 50.444081
+In [17]:
+import pickle
+
+data_to_save = {
+    'oof': oof,
+    'pred': pred,
+}
+
+with open(f'oof_pred_{oof_pred_name}.pkl', 'wb') as f:
+    pickle.dump(data_to_save, f)
+
+
+# with open('oof_pred.pkl', 'rb') as f:
+#     data = pickle.load(f)
+
+# oof = data['oof']
+# pred = data['pred']

@@ -1,0 +1,767 @@
+LightGBM & Feature Engineering | Insurance
+Import Libraries
+In [1]:
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+import pandas as pd 
+import missingno as msno
+import seaborn as sns
+
+from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import OrdinalEncoder
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+from lightgbm import LGBMRegressor
+
+import warnings
+warnings.filterwarnings("ignore")
+Loading Dataset
+In [2]:
+train = pd.read_csv('/kaggle/input/playground-series-s4e12/train.csv',index_col=[0])
+test = pd.read_csv('/kaggle/input/playground-series-s4e12/test.csv',index_col=[0])
+In [3]:
+train.tail().T
+Out[3]:
+id 1199995 1199996 1199997 1199998 1199999
+Age 36.0 54.0 19.0 55.0 21.0
+Gender Female Male Male Male Female
+Annual Income 27316.0 35786.0 51884.0 NaN NaN
+Marital Status Married Divorced Divorced Single Divorced
+Number of Dependents 0.0 NaN 0.0 1.0 0.0
+Education Level Master's Master's Master's PhD PhD
+Occupation Unemployed Self-Employed NaN NaN NaN
+Health Score 13.772907 11.483482 14.724469 18.547381 10.125323
+Location Urban Rural Suburban Suburban Rural
+Policy Type Premium Comprehensive Basic Premium Premium
+Previous Claims NaN NaN 0.0 1.0 0.0
+Vehicle Age 5.0 10.0 19.0 7.0 18.0
+Credit Score 372.0 597.0 NaN 407.0 502.0
+Insurance Duration 3.0 4.0 6.0 4.0 6.0
+Policy Start Date 2023-05-03 15:21:39.257696 2022-09-10 15:21:39.134960 2021-05-25 15:21:39.106582 2021-09-19 15:21:39.190215 2020-08-26 15:21:39.155231
+Customer Feedback Poor Poor Good Poor Good
+Smoking Status No No No No Yes
+Exercise Frequency Daily Weekly Monthly Daily Monthly
+Property Type Apartment Apartment Condo Apartment House
+Premium Amount 1303.0 821.0 371.0 596.0 2480.0
+Evaluation metric
+Extract Target Column
+In [4]:
+# Extract the Target Column
+target_column = (set(train.columns) - set(test.columns)).pop()
+
+print(f"Target column: {target_column}")
+print(f"Data type: {train[target_column].dtype}")
+Target column: Premium Amount
+Data type: float64
+Histogram of Target Variable (Original and Log)
+In [5]:
+# Original target column
+plt.figure(figsize=(9, 3))
+plt.subplot(1, 2, 1)
+sns.histplot(train[target_column], kde=True, bins=30, color='blue')
+plt.title(f'Histogram of Target : {target_column} (y)', fontsize=11)
+plt.xlabel(f'{target_column} (y)', fontsize=10)
+plt.ylabel('Frequency', fontsize=10)
+plt.tick_params(axis='both', which='major', labelsize=7)
+plt.grid(True, linestyle='--', alpha=0.6)
+
+# log(y_train + 1)
+y_train_log = np.log1p(train[target_column])
+plt.subplot(1, 2, 2)
+sns.histplot(y_train_log, kde=True, bins=30, color='green')
+plt.title(f'Histogram of log( y + 1 )', fontsize=11)
+plt.xlabel(f'log( y + 1 )', fontsize=10)
+plt.ylabel('Frequency', fontsize=10)
+plt.tick_params(axis='both', which='major', labelsize=7)
+plt.grid(True, linestyle='--', alpha=0.6)
+
+plt.tight_layout()
+plt.show()
+EDA (Exploratory Data Analysis)
+In [6]:
+train.info()
+<class 'pandas.core.frame.DataFrame'>
+Index: 1200000 entries, 0 to 1199999
+Data columns (total 20 columns):
+ #   Column                Non-Null Count    Dtype  
+---  ------                --------------    -----  
+ 0   Age                   1181295 non-null  float64
+ 1   Gender                1200000 non-null  object 
+ 2   Annual Income         1155051 non-null  float64
+ 3   Marital Status        1181471 non-null  object 
+ 4   Number of Dependents  1090328 non-null  float64
+ 5   Education Level       1200000 non-null  object 
+ 6   Occupation            841925 non-null   object 
+ 7   Health Score          1125924 non-null  float64
+ 8   Location              1200000 non-null  object 
+ 9   Policy Type           1200000 non-null  object 
+ 10  Previous Claims       835971 non-null   float64
+ 11  Vehicle Age           1199994 non-null  float64
+ 12  Credit Score          1062118 non-null  float64
+ 13  Insurance Duration    1199999 non-null  float64
+ 14  Policy Start Date     1200000 non-null  object 
+ 15  Customer Feedback     1122176 non-null  object 
+ 16  Smoking Status        1200000 non-null  object 
+ 17  Exercise Frequency    1200000 non-null  object 
+ 18  Property Type         1200000 non-null  object 
+ 19  Premium Amount        1200000 non-null  float64
+dtypes: float64(9), object(11)
+memory usage: 192.3+ MB
+Missing Values Count
+In [7]:
+train.isnull().sum()
+Out[7]:
+Age                      18705
+Gender                       0
+Annual Income            44949
+Marital Status           18529
+Number of Dependents    109672
+Education Level              0
+Occupation              358075
+Health Score             74076
+Location                     0
+Policy Type                  0
+Previous Claims         364029
+Vehicle Age                  6
+Credit Score            137882
+Insurance Duration           1
+Policy Start Date            0
+Customer Feedback        77824
+Smoking Status               0
+Exercise Frequency           0
+Property Type                0
+Premium Amount               0
+dtype: int64
+Missing Data Locations
+In [8]:
+# Missing Data Locations in Train Columns
+
+msno.matrix(df=train, color=(0.0, 0.2, 0.4))
+
+plt.title('Missing Data Locations in Train Columns', fontsize=24)
+plt.xlabel('Columns', fontsize=22)
+plt.ylabel('Rows', fontsize=22)
+plt.xticks(fontsize=18)
+plt.yticks(fontsize=18)
+plt.show()
+Visualizing Missing Values
+In [9]:
+# Function to highlight missing values in the DataFrame
+def highlight_missing(val):
+    if pd.isna(val):
+        # Apply styling for missing values
+        return 'background-color: SkyBlue; border: 1px solid red'
+    else:
+        return ''
+
+# Identify columns with missing values
+columns_with_issues = train.columns[train.isnull().sum() > 0]
+
+# Select representative rows with missing values for each column
+representative_rows = pd.concat(
+    [train[train[col].isnull()].iloc[:1] for col in columns_with_issues]
+).drop_duplicates()
+
+# Apply styling to highlight missing values in the selected rows
+styled_df = representative_rows.T.style.applymap(highlight_missing)
+
+# Display the styled DataFrame
+display(styled_df)
+id 83 22 45 14 1 6 11 15629 2 711358 28
+Age nan 22.000000 61.000000 40.000000 39.000000 41.000000 23.000000 25.000000 23.000000 64.000000 43.000000
+Gender Male Male Male Female Female Male Male Female Male Male Male
+Annual Income 645.000000 nan 5095.000000 23897.000000 31678.000000 40336.000000 30983.000000 638.000000 25602.000000 30206.000000 1060.000000
+Marital Status Single Divorced nan Divorced Divorced Married Single Divorced Divorced Married Married
+Number of Dependents 3.000000 4.000000 3.000000 nan 3.000000 0.000000 3.000000 3.000000 3.000000 3.000000 nan
+Education Level PhD PhD Master's High School Master's PhD Master's PhD High School Master's Master's
+Occupation Employed nan Employed Self-Employed nan nan nan Employed Self-Employed Employed Self-Employed
+Health Score 30.766284 25.583790 40.886124 29.082036 15.569731 nan 5.813129 13.494674 47.177549 49.551038 41.376716
+Location Urban Urban Suburban Suburban Rural Rural Urban Suburban Suburban Suburban Suburban
+Policy Type Comprehensive Comprehensive Comprehensive Basic Comprehensive Basic Premium Comprehensive Premium Basic Premium
+Previous Claims 1.000000 nan 2.000000 2.000000 1.000000 2.000000 nan 2.000000 1.000000 0.000000 0.000000
+Vehicle Age 18.000000 5.000000 7.000000 15.000000 12.000000 8.000000 6.000000 nan 14.000000 18.000000 8.000000
+Credit Score 319.000000 773.000000 842.000000 498.000000 694.000000 807.000000 597.000000 467.000000 nan 581.000000 795.000000
+Insurance Duration 4.000000 5.000000 7.000000 1.000000 2.000000 6.000000 8.000000 6.000000 3.000000 nan 7.000000
+Policy Start Date 2022-11-12 15:21:39.123711 2021-10-09 15:21:39.258696 2020-08-04 15:21:39.269494 2021-08-14 15:21:39.233998 2023-06-12 15:21:39.111551 2020-02-21 15:21:39.219432 2020-03-22 15:21:39.155231 2022-06-20 15:21:39.288099 2023-09-30 15:21:39.221386 2022-04-06 15:21:39.203442 2019-09-06 15:21:39.171102
+Customer Feedback Good Good Poor Good Average Poor Good Poor Good Poor nan
+Smoking Status No Yes No No Yes No No Yes Yes Yes Yes
+Exercise Frequency Weekly Monthly Weekly Rarely Monthly Weekly Rarely Daily Weekly Rarely Rarely
+Property Type House House House Condo House House Condo Condo House Apartment Condo
+Premium Amount 934.000000 202.000000 23.000000 30.000000 1483.000000 439.000000 1447.000000 909.000000 567.000000 1044.000000 699.000000
+Feature Engineering : Part1
+Convert Object columns to Category type
+In [10]:
+# Convert object columns to category type
+def convert_object_to_category(df):
+   
+    # Automatically detect 'object' type columns
+    object_columns = df.select_dtypes(include=['object']).columns
+    
+    # Convert 'object' type columns to 'category' type
+    for col in object_columns:
+        df[col] = df[col].astype('category')
+    
+    return df
+
+# Convert 'object' columns to 'category'
+train = convert_object_to_category(train)
+test = convert_object_to_category(test)
+
+# Data Types
+print(train.dtypes)
+Age                      float64
+Gender                  category
+Annual Income            float64
+Marital Status          category
+Number of Dependents     float64
+Education Level         category
+Occupation              category
+Health Score             float64
+Location                category
+Policy Type             category
+Previous Claims          float64
+Vehicle Age              float64
+Credit Score             float64
+Insurance Duration       float64
+Policy Start Date       category
+Customer Feedback       category
+Smoking Status          category
+Exercise Frequency      category
+Property Type           category
+Premium Amount           float64
+dtype: object
+Training and Scoring
+In [11]:
+# Function to Calculate RMSLE Using LightGBM Model
+def calculate_rmsle(train, target_column): 
+
+    # Prepare input data
+    X_train = train.drop([target_column], axis=1)
+    y_train = train[target_column]
+    y_train_log = np.log1p(y_train)  # Log transformation of the target
+
+    # Split data into training and validation sets
+    X_train, X_val, y_train_log, y_val_log = train_test_split(X_train, y_train_log, test_size=0.2, random_state=42)
+
+    # LightGBM model
+    model = LGBMRegressor(n_estimators=100, num_leaves=50, reg_alpha=0.2, reg_lambda=100, verbose=-1)
+
+    # Training
+    model.fit(X_train, y_train_log)
+
+    # Predict on the validation data
+    y_pred_log = model.predict(X_val)
+
+    # Calculate RMSLE
+    RMSLE = np.sqrt(mean_squared_error(y_val_log, y_pred_log))
+
+    return RMSLE, model  # Return both RMSLE and model
+
+# Calculate RMSLE for the model
+model_name = 'Convert Object to Category'
+RMSLE_dict = {}
+RMSLE_dict[model_name], model = calculate_rmsle(train, target_column)
+
+print(f"Train RMSLE : {RMSLE_dict[model_name]}")
+Train RMSLE : 1.0556861036781024
+Feature Engineering : Part2
+Datetime Transformation
+In [12]:
+# Function to Extract Datetime Features and Encode Them
+def extract_datetime_features(df):
+
+    # Retrieve columns with 'category' data type
+    datetime_columns = df.select_dtypes(include=['category']).columns
+
+    for col in datetime_columns:
+        try:
+            # Convert the column to datetime
+            df[col] = pd.to_datetime(df[col], errors='raise')
+            
+            # Convert datetime to epoch time (UNIX time in seconds)
+            df[f'{col}_epoch'] = df[col].astype(np.int64) / 10**9
+
+            # Extract relevant features from the datetime objects
+            df[f'{col}_year'] = df[col].dt.year.astype('float64')
+            df[f'{col}_month'] = df[col].dt.month.astype('float64')
+            df[f'{col}_day'] = df[col].dt.day.astype('float64')
+            df[f'{col}_day_of_week'] = df[col].dt.dayofweek.astype('float64')
+            df[f'{col}_hour'] = df[col].dt.hour.astype('float64')
+            df[f'{col}_minute'] = df[col].dt.minute.astype('float64')
+
+            # Add cyclical features for year and month
+            df[f'{col}_year_sin'] = np.sin(2 * np.pi * df[f'{col}_year'])
+            df[f'{col}_year_cos'] = np.cos(2 * np.pi * df[f'{col}_year'])
+            df[f'{col}_month_sin'] = np.sin(2 * np.pi * df[f'{col}_month'] / 12) 
+            df[f'{col}_month_cos'] = np.cos(2 * np.pi * df[f'{col}_month'] / 12)
+
+            # Drop the original datetime column
+            df.drop(col, axis=1, inplace=True)
+
+        except Exception as e:
+            # Continue with the next column in case of errors
+            continue
+
+    return df
+
+# Extract and Encode Datetime Features
+train = extract_datetime_features(train)
+test = extract_datetime_features(test)
+In [13]:
+train.info()
+<class 'pandas.core.frame.DataFrame'>
+Index: 1200000 entries, 0 to 1199999
+Data columns (total 30 columns):
+ #   Column                         Non-Null Count    Dtype   
+---  ------                         --------------    -----   
+ 0   Age                            1181295 non-null  float64 
+ 1   Gender                         1200000 non-null  category
+ 2   Annual Income                  1155051 non-null  float64 
+ 3   Marital Status                 1181471 non-null  category
+ 4   Number of Dependents           1090328 non-null  float64 
+ 5   Education Level                1200000 non-null  category
+ 6   Occupation                     841925 non-null   category
+ 7   Health Score                   1125924 non-null  float64 
+ 8   Location                       1200000 non-null  category
+ 9   Policy Type                    1200000 non-null  category
+ 10  Previous Claims                835971 non-null   float64 
+ 11  Vehicle Age                    1199994 non-null  float64 
+ 12  Credit Score                   1062118 non-null  float64 
+ 13  Insurance Duration             1199999 non-null  float64 
+ 14  Customer Feedback              1122176 non-null  category
+ 15  Smoking Status                 1200000 non-null  category
+ 16  Exercise Frequency             1200000 non-null  category
+ 17  Property Type                  1200000 non-null  category
+ 18  Premium Amount                 1200000 non-null  float64 
+ 19  Policy Start Date_epoch        1200000 non-null  float64 
+ 20  Policy Start Date_year         1200000 non-null  float64 
+ 21  Policy Start Date_month        1200000 non-null  float64 
+ 22  Policy Start Date_day          1200000 non-null  float64 
+ 23  Policy Start Date_day_of_week  1200000 non-null  float64 
+ 24  Policy Start Date_hour         1200000 non-null  float64 
+ 25  Policy Start Date_minute       1200000 non-null  float64 
+ 26  Policy Start Date_year_sin     1200000 non-null  float64 
+ 27  Policy Start Date_year_cos     1200000 non-null  float64 
+ 28  Policy Start Date_month_sin    1200000 non-null  float64 
+ 29  Policy Start Date_month_cos    1200000 non-null  float64 
+dtypes: category(10), float64(20)
+memory usage: 203.7 MB
+Training and Scoring
+In [14]:
+# Calculate RMSLE for the model
+
+model_name = 'Datetime Transformation'
+RMSLE_dict[model_name], model = calculate_rmsle(train, target_column)
+
+print(f"Train RMSLE : {RMSLE_dict[model_name]}")
+Train RMSLE : 1.0470574797158128
+In [15]:
+# Function to Plot RMSLE Comparison Between Models
+def plot_rmsle_comparison(rmsle_dict):
+     
+    # Extract model names and RMSLE values from the dictionary
+    models = list(rmsle_dict.keys())
+    rmsle_values = list(rmsle_dict.values())
+
+    # Create a line plot
+    plt.figure(figsize=(8, 6))
+    plt.plot(models, rmsle_values, marker='o', linestyle='-', color='blue', label="RMSLE")
+
+    # Display RMSLE values on each data point
+    for i, value in enumerate(rmsle_values):
+        # Adjust the position of the numbers slightly above the points
+        plt.text(i + 0.055, value + 0.00055, f"{value:.6f}", ha='center', va='bottom', fontsize=10)
+
+    # Set the graph decorations
+    y_min, y_max = min(rmsle_values) - 0.002, max(rmsle_values) + 0.002
+    plt.ylim(y_min, y_max) 
+    plt.xticks(rotation=45, ha='right')
+    plt.title("RMSLE Comparison Between Models", fontsize=11)
+    plt.ylabel("RMSLE", fontsize=11)
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+
+# Comparing RMSLE Characteristics Across Models
+plot_rmsle_comparison(RMSLE_dict)
+Feature Engineering : Part3
+Filling Missing Values in Categorical Features
+In [16]:
+# Function to Fill Missing Values in Categorical Columns with a Specified Value
+def fill_missing_categoricals(data, fill_value="Unknown"):
+
+    # Retrieve columns of category type
+    category_columns = data.select_dtypes(include=['category']).columns
+
+    # Fill missing values for each categorical column
+    for col in category_columns:
+        if fill_value not in data[col].cat.categories:
+            data[col] = data[col].cat.add_categories([fill_value])
+
+        # Fill missing values
+        data[col].fillna(fill_value, inplace=True)
+
+# Apply the function
+fill_missing_categoricals(train, fill_value="Unknown")
+fill_missing_categoricals(test, fill_value="Unknown")
+Training and Scoring
+In [17]:
+# Calculate RMSLE for the model
+
+model_name = 'Fill Missing Categorical Columns'
+RMSLE_dict[model_name], model = calculate_rmsle(train, target_column)
+
+print(f"Train RMSLE : {RMSLE_dict[model_name]}")
+
+# Comparing RMSLE Characteristics Across Models
+plot_rmsle_comparison(RMSLE_dict)
+Train RMSLE : 1.0459944550608418
+Feature Engineering : Part4
+Categorical Data Encoding
+In [18]:
+# Checking the Elements of Categorical Data
+
+categorical_columns = train.select_dtypes(include=['category']).columns
+
+for col in categorical_columns:
+    print(f"Column: {col}")
+    print(train[col].unique())
+    print("-" * 50)
+Column: Gender
+['Female', 'Male']
+Categories (3, object): ['Female', 'Male', 'Unknown']
+--------------------------------------------------
+Column: Marital Status
+['Married', 'Divorced', 'Single', 'Unknown']
+Categories (4, object): ['Divorced', 'Married', 'Single', 'Unknown']
+--------------------------------------------------
+Column: Education Level
+['Bachelor's', 'Master's', 'High School', 'PhD']
+Categories (5, object): ['Bachelor's', 'High School', 'Master's', 'PhD', 'Unknown']
+--------------------------------------------------
+Column: Occupation
+['Self-Employed', 'Unknown', 'Employed', 'Unemployed']
+Categories (4, object): ['Employed', 'Self-Employed', 'Unemployed', 'Unknown']
+--------------------------------------------------
+Column: Location
+['Urban', 'Rural', 'Suburban']
+Categories (4, object): ['Rural', 'Suburban', 'Urban', 'Unknown']
+--------------------------------------------------
+Column: Policy Type
+['Premium', 'Comprehensive', 'Basic']
+Categories (4, object): ['Basic', 'Comprehensive', 'Premium', 'Unknown']
+--------------------------------------------------
+Column: Customer Feedback
+['Poor', 'Average', 'Good', 'Unknown']
+Categories (4, object): ['Average', 'Good', 'Poor', 'Unknown']
+--------------------------------------------------
+Column: Smoking Status
+['No', 'Yes']
+Categories (3, object): ['No', 'Yes', 'Unknown']
+--------------------------------------------------
+Column: Exercise Frequency
+['Weekly', 'Monthly', 'Daily', 'Rarely']
+Categories (5, object): ['Daily', 'Monthly', 'Rarely', 'Weekly', 'Unknown']
+--------------------------------------------------
+Column: Property Type
+['House', 'Apartment', 'Condo']
+Categories (4, object): ['Apartment', 'Condo', 'House', 'Unknown']
+--------------------------------------------------
+Ordinal Encoding
+In [19]:
+# List of columns that will be encoded with ordinal values
+ordinal_columns = ['Policy Type', 'Education Level']
+
+# Specify the order of categories for each column
+ordinal_categories = [
+    ['Basic', 'Comprehensive', 'Premium'],
+    ['High School', "Bachelor's", "Master's", 'PhD'],
+]
+
+# Create an instance of OrdinalEncoder with the specified categories
+ordinal_encoder = OrdinalEncoder(categories=ordinal_categories)
+
+# Apply the OrdinalEncoder to the training data and test data
+train[ordinal_columns] = ordinal_encoder.fit_transform(train[ordinal_columns]).astype('int8')
+test[ordinal_columns] = ordinal_encoder.transform(test[ordinal_columns]).astype('int8')
+Label Encoding
+In [20]:
+# List of columns to apply label encoding
+label_encode_columns = ['Gender', 'Smoking Status']
+le = LabelEncoder()
+
+# Apply label encoding for each specified column
+for col in label_encode_columns:
+    train[col] = le.fit_transform(train[col]).astype('int8')
+    test[col] = le.transform(test[col]).astype('int8')
+One-Hot Encoding
+In [21]:
+# Save the target column
+target = train[target_column]
+
+# Drop the target column and apply One-Hot Encoding to categorical columns
+train = train.drop(columns=[target_column])
+train = pd.get_dummies(train, columns=train.select_dtypes(include=['category']).columns, drop_first=True)
+test = pd.get_dummies(test, columns=test.select_dtypes(include=['category']).columns, drop_first=True)
+
+# Align columns between train and test datasets
+train, test = train.align(test, join='left', axis=1, fill_value=0)
+
+# Restore the target column to the training data
+train[target_column] = target
+In [22]:
+train.head().T
+Out[22]:
+id 0 1 2 3 4
+Age 19.0 39.0 23.0 21.0 21.0
+Gender 0 0 1 1 1
+Annual Income 10049.0 31678.0 25602.0 141855.0 39651.0
+Number of Dependents 1.0 3.0 3.0 2.0 1.0
+Education Level 1 2 0 1 1
+Health Score 22.598761 15.569731 47.177549 10.938144 20.376094
+Policy Type 2 1 2 0 2
+Previous Claims 2.0 1.0 1.0 1.0 0.0
+Vehicle Age 17.0 12.0 14.0 0.0 8.0
+Credit Score 372.0 694.0 NaN 367.0 598.0
+Insurance Duration 5.0 2.0 3.0 1.0 4.0
+Smoking Status 0 1 1 1 1
+Policy Start Date_epoch 1703344899.13496 1686583299.111551 1696087299.221386 1718205699.226954 1638372099.252145
+Policy Start Date_year 2023.0 2023.0 2023.0 2024.0 2021.0
+Policy Start Date_month 12.0 6.0 9.0 6.0 12.0
+Policy Start Date_day 23.0 12.0 30.0 12.0 1.0
+Policy Start Date_day_of_week 5.0 0.0 5.0 2.0 2.0
+Policy Start Date_hour 15.0 15.0 15.0 15.0 15.0
+Policy Start Date_minute 21.0 21.0 21.0 21.0 21.0
+Policy Start Date_year_sin -0.0 -0.0 -0.0 0.0 -0.0
+Policy Start Date_year_cos 1.0 1.0 1.0 1.0 1.0
+Policy Start Date_month_sin -0.0 0.0 -1.0 0.0 -0.0
+Policy Start Date_month_cos 1.0 -1.0 -0.0 -1.0 1.0
+Marital Status_Married True False False True False
+Marital Status_Single False False False False True
+Marital Status_Unknown False False False False False
+Occupation_Self-Employed True False True False True
+Occupation_Unemployed False False False False False
+Occupation_Unknown False True False True False
+Location_Suburban False False True False False
+Location_Urban True False False False False
+Location_Unknown False False False False False
+Customer Feedback_Good False False True False False
+Customer Feedback_Poor True False False True True
+Customer Feedback_Unknown False False False False False
+Exercise Frequency_Monthly False True False False False
+Exercise Frequency_Rarely False False False False False
+Exercise Frequency_Weekly True False True False True
+Exercise Frequency_Unknown False False False False False
+Property Type_Condo False False False False False
+Property Type_House True True True False True
+Property Type_Unknown False False False False False
+Premium Amount 2869.0 1483.0 567.0 765.0 2022.0
+Training and Scoring
+In [23]:
+# Calculate RMSLE for the model
+
+model_name = 'Categorical Data Encoding'
+RMSLE_dict[model_name], model = calculate_rmsle(train, target_column)
+
+print(f"Train RMSLE : {RMSLE_dict[model_name]}")
+
+# Comparing RMSLE Characteristics Across Models
+plot_rmsle_comparison(RMSLE_dict)
+Train RMSLE : 1.0459889236711646
+Feature Engineering : Part5
+Normalization of Numerical Data
+In [24]:
+# Select numerical columns
+numerical_columns = train.select_dtypes(include=['float64']).columns
+numerical_columns = numerical_columns[numerical_columns != target_column]
+
+# Applying Normalization
+scaler = StandardScaler()
+train[numerical_columns] = scaler.fit_transform(train[numerical_columns])
+test[numerical_columns] = scaler.transform(test[numerical_columns])
+Training and Scoring
+In [25]:
+# Calculate RMSLE for the model
+
+model_name = 'Normalization of Numerical Data'
+RMSLE_dict[model_name], model = calculate_rmsle(train, target_column)
+
+print(f"Train RMSLE : {RMSLE_dict[model_name]}")
+
+# Comparing RMSLE Characteristics Across Models
+plot_rmsle_comparison(RMSLE_dict)
+Train RMSLE : 1.0459917868779112
+Feature Engineering : Part6
+Select Features from Correlation Data
+Visualizing Feature-Target Correlation
+In [26]:
+# Extract only numerical columns
+numeric_data = train.select_dtypes(include=['number']).copy()
+
+# Calculate the correlation matrix
+correlation_matrix = numeric_data.corr()
+
+# Extract the correlation with the target column and take absolute values
+correlation_with_target = correlation_matrix[target_column].drop(target_column).abs()
+
+# Sort the correlation coefficients in descending order
+correlation_with_target_sorted = correlation_with_target.sort_values(ascending=False)
+
+# Plot horizontal bar chart
+plt.figure(figsize=(10, 6))
+ax = correlation_with_target_sorted.plot(kind='barh', color='steelblue', edgecolor='black')
+
+# Display correlation coefficients on each bar
+for index, value in enumerate(correlation_with_target_sorted):
+    if not (pd.isna(value) or value == float('inf') or value == float('-inf')):
+        plt.text(value + 0.002, index, f"{value:.3f}", va='center', fontsize=10)
+
+# Display larger values at the top
+ax.invert_yaxis()
+
+# Set graph display parameters
+max_value = correlation_with_target_sorted.max()
+plt.xlim(0, max_value + 0.01)
+plt.title(f"Correlation with {target_column} (Absolute Values)", fontsize=12)
+plt.xlabel("Correlation Coefficient (Absolute)", fontsize=11)
+plt.ylabel("Features", fontsize=10)
+plt.grid(axis='x', linestyle='--', alpha=0.7)
+plt.tight_layout(pad=2)
+plt.show()
+Eliminate Low-Correlation Features
+In [27]:
+# Define the number of bottom features to remove (based on prior analysis)
+num_bottom_features = 17
+
+# Get the bottom features based on correlation with the target
+lowest_features = correlation_with_target_sorted.tail(num_bottom_features).index.tolist()
+
+# Display the features to be dropped
+print("<<< Features to be dropped >>>")
+for feature in lowest_features:
+    print(feature)
+
+# Drop the selected columns from the training and test data
+train.drop(columns=lowest_features, inplace=True)
+test.drop(columns=lowest_features, inplace=True)
+<<< Features to be dropped >>>
+Policy Start Date_epoch
+Policy Start Date_month
+Policy Start Date_month_sin
+Policy Start Date_month_cos
+Age
+Education Level
+Number of Dependents
+Policy Type
+Vehicle Age
+Policy Start Date_day
+Smoking Status
+Gender
+Insurance Duration
+Policy Start Date_day_of_week
+Policy Start Date_hour
+Policy Start Date_minute
+Policy Start Date_year_cos
+In [28]:
+train.head().T
+Out[28]:
+id 0 1 2 3 4
+Annual Income -0.705301 -0.033165 -0.22198 3.390662 0.214602
+Health Score -0.247073 -0.82306 1.767011 -1.202591 -0.429207
+Previous Claims 1.014724 -0.002736 -0.002736 -0.002736 -1.020196
+Credit Score -1.473007 0.673919 NaN -1.506344 0.033842
+Policy Start Date_year 0.934365 0.934365 0.934365 1.611868 -0.420641
+Policy Start Date_year_sin -0.162162 -0.162162 -0.162162 1.132294 0.813481
+Marital Status_Married True False False True False
+Marital Status_Single False False False False True
+Marital Status_Unknown False False False False False
+Occupation_Self-Employed True False True False True
+Occupation_Unemployed False False False False False
+Occupation_Unknown False True False True False
+Location_Suburban False False True False False
+Location_Urban True False False False False
+Location_Unknown False False False False False
+Customer Feedback_Good False False True False False
+Customer Feedback_Poor True False False True True
+Customer Feedback_Unknown False False False False False
+Exercise Frequency_Monthly False True False False False
+Exercise Frequency_Rarely False False False False False
+Exercise Frequency_Weekly True False True False True
+Exercise Frequency_Unknown False False False False False
+Property Type_Condo False False False False False
+Property Type_House True True True False True
+Property Type_Unknown False False False False False
+Premium Amount 2869.0 1483.0 567.0 765.0 2022.0
+Training and Scoring
+In [29]:
+# Calculate RMSLE for the model
+
+model_name = 'Select Features'
+RMSLE_dict[model_name], model = calculate_rmsle(train, target_column)
+
+print(f"Train RMSLE : {RMSLE_dict[model_name]}")
+
+# Comparing RMSLE Characteristics Across Models
+plot_rmsle_comparison(RMSLE_dict)
+Train RMSLE : 1.045702935829387
+Submission
+In [30]:
+test.head().T
+Out[30]:
+id 1200000 1200001 1200002 1200003 1200004
+Annual Income -0.945795 2.89892 -0.486435 -0.072133 -0.680005
+Health Score -1.47138 -1.002382 -0.103199 -1.678023 -1.128349
+Previous Claims NaN NaN NaN -0.002736 NaN
+Credit Score NaN -1.473007 1.507353 1.180647 1.080635
+Policy Start Date_year 0.934365 1.611868 0.934365 0.934365 -0.420641
+Policy Start Date_year_sin -0.162162 1.132294 -0.162162 -0.162162 0.813481
+Marital Status_Married False True False False False
+Marital Status_Single False False False False False
+Marital Status_Unknown True False False False False
+Occupation_Self-Employed True True False True False
+Occupation_Unemployed False False True False True
+Occupation_Unknown False False False False False
+Location_Suburban False True False True True
+Location_Urban False False True False False
+Location_Unknown False False False False False
+Customer Feedback_Good False True False False False
+Customer Feedback_Poor True False False True False
+Customer Feedback_Unknown False False False False False
+Exercise Frequency_Monthly False False True False False
+Exercise Frequency_Rarely False True False False False
+Exercise Frequency_Weekly True False False False True
+Exercise Frequency_Unknown False False False False False
+Property Type_Condo False False True False False
+Property Type_House True False False True True
+Property Type_Unknown False False False False False
+In [31]:
+# Test target value prediction
+
+y_test_pred_log = model.predict(test)      # log(y+1)
+y_test_pred = np.expm1(y_test_pred_log)
+In [32]:
+# Create the submission DataFrame
+submission = pd.DataFrame({'id': test.index, target_column: y_test_pred})
+
+# Save the submission DataFrame to a CSV file
+submission.to_csv('submission.csv', index=False)
+
+submission
+Out[32]:
+id Premium Amount
+0 1200000 879.260069
+1 1200001 783.807564
+2 1200002 809.033271
+3 1200003 801.961483
+4 1200004 761.231918
+... ... ...
+799995 1999995 980.171201
+799996 1999996 588.466480
+799997 1999997 813.977878
+799998 1999998 818.688068
+799999 1999999 777.585302
+800000 rows × 2 columns
+In [ ]:
+ 

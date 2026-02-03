@@ -1,0 +1,436 @@
+more_horiz5 hidden cells
+Exploratory Data Analysis (EDA)
+Exploratory Data Analysis (EDA) is a critical step in any data project. It allows us to understand, summarize, and visualize the dataset effectively, paving the way for further analysis or modeling.
+🎯 Objectives
+🕵️‍♀️ Gain insights into the data.
+📊 Visualize distributions, relationships, and patterns.
+🧹 Identify missing values, outliers, and data inconsistencies.etection.
+Let’s dive into the EDA! 🚀
+📜 Dataset Overview
+unfold_moreShow hidden code
+Dataset contains 1200000 rows and 21 columns.
+Out[6]:
+id Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location ... Previous Claims Vehicle Age Credit Score Insurance Duration Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type Premium Amount
+0 0 19.0 Female 10049.0 Married 1.0 Bachelor's Self-Employed 22.598761 Urban ... 2.0 17.0 372.0 5.0 2023-12-23 15:21:39.134960 Poor No Weekly House 2869.0
+1 1 39.0 Female 31678.0 Divorced 3.0 Master's NaN 15.569731 Rural ... 1.0 12.0 694.0 2.0 2023-06-12 15:21:39.111551 Average Yes Monthly House 1483.0
+2 2 23.0 Male 25602.0 Divorced 3.0 High School Self-Employed 47.177549 Suburban ... 1.0 14.0 NaN 3.0 2023-09-30 15:21:39.221386 Good Yes Weekly House 567.0
+3 3 21.0 Male 141855.0 Married 2.0 Bachelor's NaN 10.938144 Rural ... 1.0 0.0 367.0 1.0 2024-06-12 15:21:39.226954 Poor Yes Daily Apartment 765.0
+4 4 21.0 Male 39651.0 Single 1.0 Bachelor's Self-Employed 20.376094 Rural ... 0.0 8.0 598.0 4.0 2021-12-01 15:21:39.252145 Poor Yes Weekly House 2022.0
+5 rows × 21 columns
+unfold_moreShow hidden code
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 1200000 entries, 0 to 1199999
+Data columns (total 21 columns):
+ #   Column                Non-Null Count    Dtype  
+---  ------                --------------    -----  
+ 0   id                    1200000 non-null  int64  
+ 1   Age                   1181295 non-null  float64
+ 2   Gender                1200000 non-null  object 
+ 3   Annual Income         1155051 non-null  float64
+ 4   Marital Status        1181471 non-null  object 
+ 5   Number of Dependents  1090328 non-null  float64
+ 6   Education Level       1200000 non-null  object 
+ 7   Occupation            841925 non-null   object 
+ 8   Health Score          1125924 non-null  float64
+ 9   Location              1200000 non-null  object 
+ 10  Policy Type           1200000 non-null  object 
+ 11  Previous Claims       835971 non-null   float64
+ 12  Vehicle Age           1199994 non-null  float64
+ 13  Credit Score          1062118 non-null  float64
+ 14  Insurance Duration    1199999 non-null  float64
+ 15  Policy Start Date     1200000 non-null  object 
+ 16  Customer Feedback     1122176 non-null  object 
+ 17  Smoking Status        1200000 non-null  object 
+ 18  Exercise Frequency    1200000 non-null  object 
+ 19  Property Type         1200000 non-null  object 
+ 20  Premium Amount        1200000 non-null  float64
+dtypes: float64(9), int64(1), object(11)
+memory usage: 192.3+ MB
+unfold_moreShow hidden code
+Target Column: Premium Amount
+
+Categorical Columns: ['Gender', 'Marital Status', 'Education Level', 'Occupation', 'Location', 'Policy Type', 'Policy Start Date', 'Customer Feedback', 'Smoking Status', 'Exercise Frequency', 'Property Type']
+
+Numerical Columns: ['id', 'Age', 'Annual Income', 'Number of Dependents', 'Health Score', 'Previous Claims', 'Vehicle Age', 'Credit Score', 'Insurance Duration', 'Premium Amount']
+📊 Descriptive Statistics
+unfold_moreShow hidden code
+Out[9]:
+id Age Annual Income Number of Dependents Health Score Previous Claims Vehicle Age Credit Score Insurance Duration Premium Amount
+count 1200000.00 1181295.00 1155051.00 1090328.00 1125924.00 835971.00 1199994.00 1062118.00 1199999.00 1200000.00
+mean 599999.50 41.15 32745.22 2.01 25.61 1.00 9.57 592.92 5.02 1102.54
+std 346410.31 13.54 32179.51 1.42 12.20 0.98 5.78 149.98 2.59 865.00
+min 0.00 18.00 1.00 0.00 2.01 0.00 0.00 300.00 1.00 20.00
+25% 299999.75 30.00 8001.00 1.00 15.92 0.00 5.00 468.00 3.00 514.00
+50% 599999.50 41.00 23911.00 2.00 24.58 1.00 10.00 595.00 5.00 872.00
+75% 899999.25 53.00 44634.00 3.00 34.53 2.00 15.00 721.00 7.00 1509.00
+max 1199999.00 64.00 149997.00 4.00 58.98 9.00 19.00 849.00 9.00 4999.00
+unfold_moreShow hidden code
+'Gender' has 2 unique categories.
+'Marital Status' has 3 unique categories.
+'Education Level' has 4 unique categories.
+'Occupation' has 3 unique categories.
+'Location' has 3 unique categories.
+'Policy Type' has 3 unique categories.
+'Policy Start Date' has 167381 unique categories.
+'Customer Feedback' has 3 unique categories.
+'Smoking Status' has 2 unique categories.
+'Exercise Frequency' has 4 unique categories.
+'Property Type' has 3 unique categories.
+unfold_moreShow hidden code
+Top value counts in 'Gender':
+Gender
+Male      602571
+Female    597429
+Name: count, dtype: int64
+
+Top value counts in 'Marital Status':
+Marital Status
+Single      395391
+Married     394316
+Divorced    391764
+Name: count, dtype: int64
+
+Top value counts in 'Education Level':
+Education Level
+Master's       303818
+PhD            303507
+Bachelor's     303234
+High School    289441
+Name: count, dtype: int64
+
+Top value counts in 'Occupation':
+Occupation
+Employed         282750
+Self-Employed    282645
+Unemployed       276530
+Name: count, dtype: int64
+
+Top value counts in 'Location':
+Location
+Suburban    401542
+Rural       400947
+Urban       397511
+Name: count, dtype: int64
+
+Top value counts in 'Policy Type':
+Policy Type
+Premium          401846
+Comprehensive    399600
+Basic            398554
+Name: count, dtype: int64
+
+Top value counts in 'Policy Start Date':
+Policy Start Date
+2020-02-08 15:21:39.134960    142
+2022-02-02 15:21:39.134960    137
+2023-08-13 15:21:39.155231    137
+2022-08-30 15:21:39.134960    134
+2024-02-19 15:21:39.134960    118
+2023-11-02 15:21:39.134960    118
+2021-04-22 15:21:39.134960    115
+2020-09-03 15:21:39.155231    115
+2022-03-30 15:21:39.134960    113
+2021-05-27 15:21:39.134960    113
+Name: count, dtype: int64
+
+Top value counts in 'Customer Feedback':
+Customer Feedback
+Average    377905
+Poor       375518
+Good       368753
+Name: count, dtype: int64
+
+Top value counts in 'Smoking Status':
+Smoking Status
+Yes    601873
+No     598127
+Name: count, dtype: int64
+
+Top value counts in 'Exercise Frequency':
+Exercise Frequency
+Weekly     306179
+Monthly    299830
+Rarely     299420
+Daily      294571
+Name: count, dtype: int64
+
+Top value counts in 'Property Type':
+Property Type
+House        400349
+Apartment    399978
+Condo        399673
+Name: count, dtype: int64
+unfold_moreShow hidden code
+The mean of columns:
+id                      599999.500000
+Age                         41.145563
+Annual Income            32745.217777
+Number of Dependents         2.009934
+Health Score                25.613908
+Previous Claims              1.002689
+Vehicle Age                  9.569889
+Credit Score               592.924350
+Insurance Duration           5.018219
+Premium Amount            1102.544822
+dtype: float64
+
+The std dev of columns:
+id                      346410.305851
+Age                         13.539950
+Annual Income            32179.506124
+Number of Dependents         1.417338
+Health Score                12.203462
+Previous Claims              0.982840
+Vehicle Age                  5.776189
+Credit Score               149.981945
+Insurance Duration           2.594331
+Premium Amount             864.998859
+dtype: float64
+
+The skewness of columns:
+id                      3.836279e-16
+Age                    -1.253192e-02
+Annual Income           1.470357e+00
+Number of Dependents   -1.325461e-02
+Health Score            2.821873e-01
+Previous Claims         9.053210e-01
+Vehicle Age            -2.040888e-02
+Credit Score           -1.135726e-01
+Insurance Duration     -8.793302e-03
+Premium Amount          1.240915e+00
+dtype: float64
+🧹 Data Cleaning Insights
+unfold_moreShow hidden code
+🖼️ Visual Exploration
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+🏁 Next Steps
+Dive deeper into specific features of interest.
+Address missing values and.
+Prepare the dataset for modeling.
+Data Preprocessing
+Data preprocessing is a crucial step in preparing the dataset for analysis and modeling. It ensures the data is clean, consistent, and ready for machine learning algorithms.
+🔍 Objectives
+Handle missing values.
+Encode categorical features.
+Standardize or normalize numerical features.
+Create new features or transform existing ones if necessary.
+🗓️ Feature Transformation: Date Handling
+In this step, we transform the Policy Start Date feature into multiple useful date-related features. This helps to extract temporal patterns and improve the model's ability to learn from the data.
+In [17]:
+def date(df):
+
+    df['Policy Start Date'] = pd.to_datetime(df['Policy Start Date'])
+    df['Year'] = df['Policy Start Date'].dt.year
+    df['Day'] = df['Policy Start Date'].dt.day
+    df['Month'] = df['Policy Start Date'].dt.month
+    df['Month_name'] = df['Policy Start Date'].dt.month_name()
+    df['Day_of_week'] = df['Policy Start Date'].dt.day_name()
+    df['Week'] = df['Policy Start Date'].dt.isocalendar().week
+    df['Year_sin'] = np.sin(2 * np.pi * df['Year'])
+    df['Year_cos'] = np.cos(2 * np.pi * df['Year'])
+    min_year = df['Year'].min()
+    max_year = df['Year'].max()
+    df['Year_sin'] = np.sin(2 * np.pi * (df['Year'] - min_year) / (max_year - min_year))
+    df['Year_cos'] = np.cos(2 * np.pi * (df['Year'] - min_year) / (max_year - min_year))
+    df['Month_sin'] = np.sin(2 * np.pi * df['Month'] / 12) 
+    df['Month_cos'] = np.cos(2 * np.pi * df['Month'] / 12)
+    df['Day_sin'] = np.sin(2 * np.pi * df['Day'] / 31)  
+    df['Day_cos'] = np.cos(2 * np.pi * df['Day'] / 31)
+    df['Group']=(df['Year']-2020)*48+df['Month']*4+df['Day']//7
+    
+    df.drop('Policy Start Date', axis=1, inplace=True)
+
+    return df
+
+# Apply the date function to both datasets
+train_df = date(train_df)
+test_df = date(test_df)
+unfold_moreShow hidden code
+✂️ Splitting Data: Features and Target
+In this step, we split the training dataset into:
+Features (X): The independent variables used to predict the target.
+Target (y): The dependent variable that the model will learn to predict.
+In [19]:
+# Split train data into features and target
+X = train_df.drop(columns=[target_column, 'id', 'Group', 'Year', 'Month', 'Day', 'Week'])
+y = train_df[target_column]
+🛠️ Handle Missing Values & Preprocessing Pipeline
+In this step, we handle missing values and set up a preprocessing pipeline to prepare the data for machine learning.
+🔍 What We Did
+Missing Values Imputation:
+Numerical Features:
+Replaced missing values with the mean of the respective columns.
+Categorical Features:
+Replaced missing values with the constant value "Unknown".
+Feature Scaling & Encoding:
+Numerical Features:
+Standardized using StandardScaler to normalize the values.
+Categorical Features:
+One-Hot Encoded to handle categorical variables as numerical inputs.
+Combined Using a ColumnTransformer:
+Applied preprocessing selectively to numerical and categorical features using a single, unified pipeline.
+In [20]:
+# Preprocessing pipeline for numerical features
+num_pipeline = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='median')),
+    #('scaler', StandardScaler())                       # Scale numerical features
+])
+
+# Preprocessing pipeline for categorical features
+cat_pipeline = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='constant', fill_value='Unknown')),  # Handle missing values
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))                      # Encode categorical features
+])
+
+# Combine pipelines into a ColumnTransformer
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', num_pipeline, numerical_features),
+        ('cat', cat_pipeline, categorical_features)
+    ]
+)
+
+# Preprocess train and test data
+X_processed = preprocessor.fit_transform(X)
+test_processed = preprocessor.transform(test_df.drop(columns=['id', 'Group', 'Year', 'Month', 'Day', 'Week']))
+✂️ Splitting Data: Training and Validation Sets
+Here, we split the preprocessed data into training and validation sets to evaluate the model's performance during training.
+In [21]:
+# Split the data
+X_train, X_val, y_train, y_val = train_test_split(X_processed, y, test_size=0.2, random_state=42)
+Model Training
+Training the model is the core step in any machine learning pipeline. Here, we use the processed features and target variable to fit a predictive model and evaluate its performance on a validation set.
+🔍 Objectives
+Train the model using the training dataset (X_train, y_train).
+Evaluate the model on the validation set (X_val, y_val).
+Optimize the model's parameters to improve its performance.
+🔧 Hyperparameter Optimization with Optuna
+Optuna is a powerful library for hyperparameter optimization. In this step, we use Optuna to fine-tune the hyperparameters of a LightGBM model to achieve optimal performance.
+In [22]:
+# Define Optuna optimization function
+def objective(trial):
+    # Define parameter search space
+    param = {
+        "objective": "regression",
+        "metric": "rmse",
+        "boosting_type": trial.suggest_categorical("boosting_type", ["gbdt", "dart"]),
+        "num_leaves": trial.suggest_int("num_leaves", 200, 512),
+        "learning_rate": trial.suggest_loguniform("learning_rate", 1e-4, 1e-1),
+        "feature_fraction": trial.suggest_uniform("feature_fraction", 0.6, 1.0),
+        "bagging_fraction": trial.suggest_uniform("bagging_fraction", 0.6, 1.0),
+        "bagging_freq": trial.suggest_int("bagging_freq", 5, 12),
+        "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 20, 100),
+        "max_depth": trial.suggest_int("max_depth", -1, 16),  # -1 means no limit
+        "lambda_l1": trial.suggest_loguniform("lambda_l1", 1e-4, 10.0),
+        "lambda_l2": trial.suggest_loguniform("lambda_l2", 1e-4, 10.0),
+        "device_type": "gpu",  # Enable GPU support
+        "seed" : 42
+
+    }
+
+    # Create a LightGBM dataset
+    dtrain = lgb.Dataset(X_train, label=y_train)
+    dval = lgb.Dataset(X_val, label=y_val, reference=dtrain)
+
+    # Train LightGBM model
+    model = lgb.train(
+        param,
+        dtrain,
+        valid_sets=[dval],
+    )
+
+    # Predict on validation set
+    y_val_pred = model.predict(X_val)
+    
+    # Compute RMSLE using sklearn's root_mean_squared_log_error
+    rmsle = root_mean_squared_log_error(y_val, np.maximum(y_val_pred, 0))
+    return rmsle
+
+# Run Optuna study
+study = optuna.create_study(direction="minimize")
+study.optimize(objective, n_trials=1)
+unfold_moreShow hidden output
+🔧 Best Hyperparameters
+After running the hyperparameter optimization process with Optuna, the best combination of parameters was identified. These parameters will be used to train the final LightGBM model.
+In [23]:
+# Initialize or update the best_params dictionary
+best_params = {
+    'boosting_type': 'dart',
+    'num_leaves': 384,
+    'learning_rate': 0.024680120465142227,
+    'feature_fraction': 0.9883068358315126,
+    'bagging_fraction': 0.7201712704805496,
+    'bagging_freq': 7,
+    'min_data_in_leaf': 50,
+    'max_depth': 15,
+    'lambda_l1': 0.0011290211269753322,
+    'lambda_l2': 3.056310541294088,
+    'seed': 42
+}
+🚀 Train Final Model with Best Parameters
+Finally, we train the final LightGBM model using the optimal hyperparameters identified during the hyperparameter optimization process. This ensures the model is trained with the most effective configuration for achieving the best performance.
+In [24]:
+# Train final model with best parameters
+#best_params = study.best_params
+
+final_model = lgb.train(
+    best_params,
+    lgb.Dataset(X_processed, label=y),
+)
+unfold_moreShow hidden output
+📊 Model Evaluation
+In this section, we evaluate the performance of the trained model using multiple metrics and visualizations. This helps us understand how well the model performs and identify areas for improvement.
+🔍 Performance Metrics
+We compute the following metrics to evaluate the model:
+RMSLE (Root Mean Squared Logarithmic Error): Measures the ratio-based prediction error, suitable for skewed datasets.
+RMSE (Root Mean Squared Error): Quantifies the average magnitude of prediction errors.
+MAE (Mean Absolute Error): Represents the average absolute difference between predicted and actual values.
+R² (Coefficient of Determination): Indicates the proportion of variance in the target explained by the model.
+MAPE (Mean Absolute Percentage Error): Expresses prediction errors as a percentage of actual values.
+unfold_moreShow hidden code
+Performance Metrics:
+------------------------------
+RMSLE: 1.0638
+RMSE: 907.4986
+MAE: 625.6826
+R²: -0.1007
+MAPE: 204.86%
+before KNN imputer :
+Performance Metrics:
+RMSLE: 1.0634
+RMSE: 906.9466
+MAE: 625.4777
+R²: -0.0993
+MAPE: 204.97%
+Generate Predictions & Prepare Submission
+Finally, we use the trained model to predict outcomes on the test set and format the results into a submission file for the competition.
+In [26]:
+# Make predictions on the test set
+test_predictions = final_model.predict(test_processed, num_iteration=final_model.best_iteration)
+
+# Prepare submission file
+submission = pd.DataFrame({'id': test_df['id'], 'Premium Amount': test_predictions})
+submission.to_csv("submission.csv", index=False)
+Conclusion
+Finally, we have completed the end-to-end process of building and evaluating a machine learning model. This journey included data exploration, preprocessing, model training, hyperparameter optimization, and preparing the final submission file.
+🔑 Key Highlights
+Exploratory Data Analysis (EDA):
+Gained valuable insights into the dataset through visualization and descriptive statistics.
+Identified key patterns, correlations, and potential data quality issues.
+Data Preprocessing:
+Handled missing values, encoded categorical features, and standardized numerical features.
+Engineered new features, especially time-based features, to improve the model's predictive capabilities.
+Model Training and Evaluation:
+Trained a LightGBM model with optimized hyperparameters using Optuna.
+Evaluated the model's performance using metrics such as RMSE, RMSLE, and ( R^2 ).
+Performed residual analysis to validate the model's behavior and assumptions.
+Final Submission:
+Used the trained model to predict outcomes on the test dataset.
+Prepared and saved the submission file in the required format.
+🚀 Next Steps
+Explore additional feature engineering opportunities to further enhance model performance.
+Experiment with ensemble methods or other advanced algorithms for potential improvements.
+Analyze and fine-tune the model using feedback from the competition leaderboard.
+Thank you for exploring this notebook!

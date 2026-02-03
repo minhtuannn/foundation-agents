@@ -1,0 +1,865 @@
+Predicting Road Accident Risk
+Start from Version 32, we added external data (OOF) from other Notebook. a Credit were given to :
+Notebook Author Public Leaderboard
+S5E10 | Single TabM - Tuned Masaya Kawamata 0.05545
+XGB Boosting Over Residuals - [CV 0.05595] Chris Deotte 0.05548
+S5E10 | XGB +OrigCol - 20seeds Masaya Kawamata 0.05549
+PG S5E10 - RealMLP - [CV 0.055936 LB 0.05549] Mahog 0.05549
+Feature-Rich Single XGB | CV = 0.05594 Meta Models 0.05547
+S5E10 | TabM over Residuals Masaya Kawamata 0.05544
+Road Risk | Single YDF Mikhail Naumov 0.05541
+S5E10 | NN Stacking - Baseline Masaya Kawamata 0.05541
+🚑 [Accident Prediction]🚦- Stacking Model 🍰 Aliffa Agnur 0.05540
+🔎 TL;DR
+Version 5 : AutoGluon Baseline 10 Hours Extreme GPU. Best Models = 0.055884, Public Leaderboard = 0.05548
+Version 6 : AutoGluon Baseline 11 Hours Best Quality GPU. Best Models = 0.055967, Public Leaderboard = 0.05551
+Version 7 : AutoGluon Baseline 11 Hours Extreme CPU. Best Models = 0.055867, Public Leaderboard = 0.05549
+Version 9 : AutoGluon Baseline 11 Hours Extreme CPU. Best Models = 0.055868, Public Leaderboard = 0.05550
+Version 11: AutoGluon Baseline 9 Hours Extreme CPU. Best Models = 0.055867, Public Leaderboard = ?
+Version 13: AutoGluon 11 Hours Extreme CPU with Bayesian Optimal Model. thanks to Broccoli beef for the insight. Best Models = 0.055930, Public Leaderboard = 0.05546
+Version 16: AutoGluon 11 Hours Best Quality CPU with Bayesian Optimal Model. Best Models = 0.055930, Public Leaderboard = 0.05546
+Version 20: AutoGluon 11.5 Hours Extreme CPU Bayesian Optimal Model. Best Models = 0.055930, Public Leaderboard = 0.05546
+Version 23: AutoGluon 11.5H Extreme CPU Bayesian Optimal Model + Mean Encoding from orig_df. Best Models = 0.055862, Public Leaderboard = 0.05547
+Version 25: AutoGluon 11H Extreme CPU Bayesian Optimal Model + Mean Encoding + Std Encoding from orig_df. Best Models = 0.055941, Public Leaderboard = 0.05549
+Version 26: AutoGluon 11H Extreme CPU Bayesian Optimal Model, Mean Encoding. using Metrics = r2 instead rmse. Best Models = 0.887294 (R2), Public Leaderboard = 0.05546
+Version 28: AutoGluon (Predict Residual) 11H Extreme CPU Bayesian Optimal Model. using metrics = rmse. Best Models = 0.055869 , Public Leaderboard = 0.05543
+Version 31: AutoGluon 11H Extreme CPU. Adding 1 AutoGluon OOF with lb = 0.05543 as a Features (from version 28). metric = RMSE, Best Models = 0.055877, Public Leaderboard = 0.0544
+Version 32: AutoGluon 11H Extreme CPU. Adding 7+ Other data (OOF) from other notebook. Best Models = 0.055841, Public Leaderboard = 0.05541
+Version 34: AutoGluon 11H Extreme CPU. same as version 32, but adding ydf + nn_stack + ridge_l2_V13 OOF. Best Models = 0.055838, Public Leaderboard = 0.05540
+Version 38: AutoGluon 11H Best Quality CPU. same as version 34, and using all AutoGluon OOF as Features. Best Models = 0.055767, Public Leaderboard = 0.05543
+Version 39: AutoGluon 11H Best Quality CPU. same as version 38, but removing All Autogluon Experimental OOF. Best Models = 0.055775, Public Leaderboard = 0.05539 , Hold-out 20% = 0.055823
+Version 41: AutoGluon 11H Best Quality CPU. Only use all AutoGluon Experimental (1-8) OOF. Best Models = ?, Public Leaderboard = ?
+Load Data
+In [1]:
+%%capture
+!pip install autogluon.tabular scikit-learn==1.5.2
+#!pip install "autogluon.tabular[tabpfn]==1.4.0"
+In [2]:
+import os
+import glob
+
+import scipy
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+from autogluon.tabular import TabularPredictor
+from sklearn.metrics import mean_squared_error, r2_score
+
+import warnings
+warnings.filterwarnings('ignore')
+In [3]:
+# LOAD DATA
+
+train_df = pd.read_csv(r'/kaggle/input/playground-series-s5e10/train.csv').drop(columns = 'id')
+test_df  = pd.read_csv(r'/kaggle/input/playground-series-s5e10/test.csv').drop(columns = 'id')
+ 
+print(f'Train : {train_df.shape[0]}')
+print(f'Test  : {test_df.shape[0]}')
+Train : 517754
+Test  : 172585
+In [4]:
+# LOAD EXTERNAL DATA (FROM OTHER NOTEBOOKS)
+
+tabm_residual_oof  = pd.read_csv(r'/kaggle/input/s5e10-tabm-over-residuals/oof_tabm_overresid.csv')
+tabm_residual_test = pd.read_csv(r'/kaggle/input/s5e10-tabm-over-residuals/test_tabm_overresid.csv')
+
+realmlp_oof = pd.read_csv('/kaggle/input/pg-s5e10-realmlp-cv-0-055936-lb-0-05549/realmlp_oof.csv')
+realmlp_test = pd.read_csv('/kaggle/input/pg-s5e10-realmlp-cv-0-055936-lb-0-05549/realmlp.csv')
+
+xgb_residual_oof = pd.DataFrame(np.load(r'/kaggle/input/xgb-boosting-over-residuals-cv-0-05595/oof.npy'), columns = ['xgb_residual'])
+xgb_residual_test = pd.read_csv(r'/kaggle/input/xgb-boosting-over-residuals-cv-0-05595/submission.csv')
+
+single_tabm_oof = pd.read_csv(r'/kaggle/input/s5e10-single-tabm-tuned/oof_tabm_plus_origcol_tuned.csv')
+single_tabm_test = pd.read_csv(r'/kaggle/input/s5e10-single-tabm-tuned/test_tabm_plus_origcol_tuned.csv')
+
+xgb_diff_seed_oof = pd.read_csv(r'/kaggle/input/s5e10-xgb-origcol-20seeds/oof_xgb_plus_origcol.csv')
+xgb_diff_seed_test = pd.read_csv(r'/kaggle/input/s5e10-single-tabm-tuned/test_tabm_plus_origcol_tuned.csv')
+
+xgb_rich_oof  = pd.read_csv(r'/kaggle/input/feature-rich-single-xgb-cv-0-05594/oof_xgb_enhanced_meta_20251011_184833_cv0.055942.csv')
+xgb_rich_test = pd.read_csv(r'/kaggle/input/feature-rich-single-xgb-cv-0-05594/test_xgb_enhanced_meta_20251011_184833_cv0.055942.csv')
+
+nn_stacking_oof = pd.read_csv(r'/kaggle/input/s5e10-nn-stacking-baseline/oof_nn_ensemble.csv')
+nn_stacking_test = pd.read_csv(r'/kaggle/input/s5e10-nn-stacking-baseline/test_nn_ensemble.csv')
+
+single_ydf_oof = pd.read_csv(r'/kaggle/input/road-risk-single-ydf/YDF_oof.csv')
+single_ydf_test = pd.read_csv(r'/kaggle/input/road-risk-single-ydf/YDF_test.csv')
+
+
+# MERGE ALL EXTERNAL DATA
+external_oof = pd.concat((tabm_residual_oof, realmlp_oof, xgb_residual_oof, single_tabm_oof, xgb_diff_seed_oof, xgb_rich_oof, 
+                          nn_stacking_oof, single_ydf_oof), axis = 1)
+
+external_oof = external_oof.drop(columns = 'id')     # --> DROP ALL id FEATURES
+external_oof.columns = ['tabm_residual', 'realmlp', 'xgb_residual', 'single_tabm', 'xgb_diff_seed20', 'xgb_rich',
+                        'nn_stacking', 'single_ydf']  # RENAME COLUMNS
+
+
+external_test = pd.concat((tabm_residual_test, realmlp_test, xgb_residual_test, single_tabm_test, xgb_diff_seed_test, xgb_rich_test, 
+                           nn_stacking_test, single_ydf_test), axis = 1)
+
+external_test = external_test.drop(columns = 'id')     # --> DROP ALL id FEATURES
+external_test.columns = ['tabm_residual', 'realmlp', 'xgb_residual', 'single_tabm', 'xgb_diff_seed20', 'xgb_rich', 
+                         'nn_stacking', 'single_ydf']  # RENAME COLUMNS
+
+
+external_oof.shape, external_test.shape
+Out[4]:
+((517754, 8), (172585, 8))
+In [5]:
+# MERGING TRAIN DATA WITH EXTERNAL DATA
+
+merge_train = pd.concat((train_df, external_oof), axis = 1)
+merge_test = pd.concat((test_df, external_test), axis = 1)
+
+merge_train
+Out[5]:
+road_type num_lanes curvature speed_limit lighting weather road_signs_present public_road time_of_day holiday ... num_reported_accidents accident_risk tabm_residual realmlp xgb_residual single_tabm xgb_diff_seed20 xgb_rich nn_stacking single_ydf
+0 urban 2 0.06 35 daylight rainy False True afternoon False ... 1 0.13 0.130670 0.128773 0.126662 0.128814 0.128963 0.129418 0.128434 0.130264
+1 urban 4 0.99 35 daylight clear True False evening True ... 0 0.35 0.325544 0.327026 0.326985 0.323260 0.322940 0.322881 0.324563 0.325790
+2 rural 4 0.63 70 dim clear False True morning True ... 2 0.30 0.388800 0.385355 0.389054 0.382161 0.387817 0.387941 0.386533 0.386329
+3 highway 4 0.07 35 dim rainy True True morning False ... 1 0.21 0.134281 0.133874 0.128482 0.132775 0.129615 0.129980 0.132626 0.131700
+4 rural 1 0.58 60 daylight foggy False False evening True ... 1 0.56 0.472425 0.472611 0.470489 0.471251 0.469951 0.471372 0.471103 0.468466
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+517749 highway 4 0.10 70 daylight foggy True True afternoon False ... 2 0.32 0.316405 0.323327 0.320074 0.317979 0.320555 0.320493 0.319734 0.321161
+517750 rural 4 0.47 35 daylight rainy True True morning False ... 1 0.26 0.240590 0.240129 0.240548 0.236662 0.239382 0.240492 0.239043 0.242210
+517751 urban 4 0.62 25 daylight foggy False False afternoon False ... 0 0.19 0.294203 0.295854 0.292329 0.296087 0.293422 0.294688 0.294786 0.293608
+517752 highway 3 0.63 25 night clear True False afternoon True ... 3 0.51 0.497290 0.495361 0.492313 0.495484 0.493777 0.492699 0.495922 0.496974
+517753 highway 2 0.31 45 dim rainy False True afternoon True ... 2 0.22 0.189941 0.191042 0.192058 0.192340 0.191005 0.192192 0.189296 0.191728
+517754 rows × 21 columns
+In [6]:
+display(merge_test)
+road_type num_lanes curvature speed_limit lighting weather road_signs_present public_road time_of_day holiday school_season num_reported_accidents tabm_residual realmlp xgb_residual single_tabm xgb_diff_seed20 xgb_rich nn_stacking single_ydf
+0 highway 2 0.34 45 night clear True True afternoon True True 1 0.295337 0.295693 0.294914 0.296001 0.296001 0.295182 0.295168 0.296523
+1 urban 3 0.04 45 dim foggy True False afternoon True False 0 0.120559 0.118715 0.120085 0.117532 0.117532 0.121481 0.119272 0.123731
+2 urban 2 0.59 35 dim clear True False afternoon True True 1 0.185113 0.178979 0.180709 0.180968 0.180968 0.182011 0.181912 0.182780
+3 rural 4 0.95 35 daylight rainy False False afternoon False False 2 0.307005 0.303249 0.307187 0.309812 0.309812 0.315057 0.310136 0.306962
+4 highway 2 0.86 35 daylight clear True False evening False True 3 0.396242 0.392223 0.396670 0.396790 0.396790 0.396305 0.396914 0.400744
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+172580 rural 2 0.01 45 dim rainy False False afternoon True True 2 0.105337 0.103375 0.104611 0.106372 0.106372 0.101307 0.103797 0.102585
+172581 rural 1 0.74 70 daylight foggy False True afternoon False False 2 0.517383 0.517045 0.517941 0.518917 0.518917 0.517864 0.518025 0.518740
+172582 urban 2 0.14 70 dim clear False False evening True True 1 0.251603 0.248754 0.249541 0.249645 0.249645 0.249413 0.249822 0.250564
+172583 urban 1 0.09 45 daylight foggy True True morning False True 0 0.127359 0.124852 0.125785 0.124998 0.124998 0.126752 0.124878 0.127078
+172584 highway 1 0.63 35 night foggy True False evening False False 0 0.488765 0.485463 0.485016 0.488204 0.488204 0.485559 0.487610 0.486701
+172585 rows × 20 columns
+In [7]:
+# CHECK TARGET DISTRIBUTION
+
+sns.histplot(merge_train['accident_risk'], kde = True, bins = 50)
+Out[7]:
+<Axes: xlabel='accident_risk', ylabel='Count'>
+In [8]:
+# CHECK CORRELATION BETWEEN OOF
+
+# GET ALL OOF AUTOGLUON COLUMNS
+autogluon_features = merge_train.iloc[:, 13:].columns
+
+# HEATMAP CORRELATION
+plt.figure(figsize = (12, 6))
+corr_matrix = merge_train[autogluon_features].corr(method = 'spearman')
+sns.heatmap(corr_matrix, annot = False, cmap = 'coolwarm', fmt = '.2f')
+Out[8]:
+<Axes: >
+Feature Engineering
+🔎 Feature Engineering :
+This feature engineering method is inspired by the Bayesian optimal model discussed by @siuketin(Broccoli beef) .Link discussion
+In [9]:
+# FEATURE ENGINEERING 
+
+def f(X):
+    return \
+    0.3 * X["curvature"] + \
+    0.2 * (X["lighting"] == "night").astype(int) + \
+    0.1 * (X["weather"] != "clear").astype(int) + \
+    0.2 * (X["speed_limit"] >= 60).astype(int) + \
+    0.1 * (X["num_reported_accidents"] > 2).astype(int)
+
+def clip(f):
+    def clip_f(X):
+        sigma = 0.05
+        mu = f(X)
+        a, b = -mu/sigma, (1-mu)/sigma
+        Phi_a, Phi_b = scipy.stats.norm.cdf(a), scipy.stats.norm.cdf(b)
+        phi_a, phi_b = scipy.stats.norm.pdf(a), scipy.stats.norm.pdf(b)
+        return mu*(Phi_b-Phi_a)+sigma*(phi_a-phi_b)+1-Phi_b
+    return clip_f
+
+train = clip(f)(merge_train)
+test = clip(f)(merge_test)
+
+merge_train['score'] = train
+merge_test['score']  = test
+
+print("Added New Feature ✅")
+
+merge_train
+Added New Feature ✅
+Out[9]:
+road_type num_lanes curvature speed_limit lighting weather road_signs_present public_road time_of_day holiday ... accident_risk tabm_residual realmlp xgb_residual single_tabm xgb_diff_seed20 xgb_rich nn_stacking single_ydf score
+0 urban 2 0.06 35 daylight rainy False True afternoon False ... 0.13 0.130670 0.128773 0.126662 0.128814 0.128963 0.129418 0.128434 0.130264 0.118153
+1 urban 4 0.99 35 daylight clear True False evening True ... 0.35 0.325544 0.327026 0.326985 0.323260 0.322940 0.322881 0.324563 0.325790 0.297000
+2 rural 4 0.63 70 dim clear False True morning True ... 0.30 0.388800 0.385355 0.389054 0.382161 0.387817 0.387941 0.386533 0.386329 0.389000
+3 highway 4 0.07 35 dim rainy True True morning False ... 0.21 0.134281 0.133874 0.128482 0.132775 0.129615 0.129980 0.132626 0.131700 0.121128
+4 rural 1 0.58 60 daylight foggy False False evening True ... 0.56 0.472425 0.472611 0.470489 0.471251 0.469951 0.471372 0.471103 0.468466 0.474000
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+517749 highway 4 0.10 70 daylight foggy True True afternoon False ... 0.32 0.316405 0.323327 0.320074 0.317979 0.320555 0.320493 0.319734 0.321161 0.330000
+517750 rural 4 0.47 35 daylight rainy True True morning False ... 0.26 0.240590 0.240129 0.240548 0.236662 0.239382 0.240492 0.239043 0.242210 0.241000
+517751 urban 4 0.62 25 daylight foggy False False afternoon False ... 0.19 0.294203 0.295854 0.292329 0.296087 0.293422 0.294688 0.294786 0.293608 0.286000
+517752 highway 3 0.63 25 night clear True False afternoon True ... 0.51 0.497290 0.495361 0.492313 0.495484 0.493777 0.492699 0.495922 0.496974 0.489000
+517753 highway 2 0.31 45 dim rainy False True afternoon True ... 0.22 0.189941 0.191042 0.192058 0.192340 0.191005 0.192192 0.189296 0.191728 0.193001
+517754 rows × 22 columns
+In [10]:
+# TARGET ENCODER
+
+#FEATURES = ['road_type', 'num_lanes', 'curvature', 'speed_limit', 'lighting', 'weather', 'road_signs_present', 'public_road', 'time_of_day', 'holiday', 'school_season', 'num_reported_accidents', 'score']
+
+# DO ENCODING FOR EACH X COLUMN
+#for col in FEATURES:
+#    mean_encode = orig_df.groupby(col)['accident_risk'].mean()
+#    std_encode  = orig_df.groupby(col)['accident_risk'].std()
+
+#    # APPLY MEAN ENCODE
+#    train_df[f'mean_{col}'] = train_df[col].map(mean_encode)
+#    test_df[f'mean_{col}']  = test_df[col].map(mean_encode)
+
+#train_df
+AutoGluon
+In [11]:
+# AUTOGLUON
+
+# DEFINE AUTOGLUON
+predictor = TabularPredictor(label = 'accident_risk',
+                             problem_type = 'regression',
+                             eval_metric = 'rmse')
+
+# TRAIN AUTOGLUON
+predictor.fit(merge_train,
+              presets = 'best_quality',
+              time_limit = 3600 * 11,
+              auto_stack = True,
+              num_stack_levels = 2,
+              #num_bag_folds = 7,
+              #num_bag_sets = 3,
+              num_cpus = 4,
+              verbosity = 2,
+              ag_args_fit={'num_gpus': 0}
+             )
+No path specified. Models will be saved in: "AutogluonModels/ag-20251026_194909"
+Verbosity: 2 (Standard Logging)
+=================== System Info ===================
+AutoGluon Version:  1.4.0
+Python Version:     3.11.13
+Operating System:   Linux
+Platform Machine:   x86_64
+Platform Version:   #1 SMP PREEMPT_DYNAMIC Sun Nov 10 10:07:59 UTC 2024
+CPU Count:          4
+Memory Avail:       29.89 GB / 31.35 GB (95.3%)
+Disk Space Avail:   19.50 GB / 19.52 GB (99.9%)
+===================================================
+Presets specified: ['best_quality']
+Using hyperparameters preset: hyperparameters='zeroshot'
+Setting dynamic_stacking from 'auto' to True. Reason: Enable dynamic_stacking when use_bag_holdout is disabled. (use_bag_holdout=False)
+Stack configuration (auto_stack=True): num_stack_levels=2, num_bag_folds=8, num_bag_sets=1
+DyStack is enabled (dynamic_stacking=True). AutoGluon will try to determine whether the input data is affected by stacked overfitting and enable or disable stacking as a consequence.
+ This is used to identify the optimal `num_stack_levels` value. Copies of AutoGluon will be fit on subsets of the data. Then holdout validation data is used to detect stacked overfitting.
+ Running DyStack for up to 9900s of the 39600s of remaining time (25%).
+  Context path: "/kaggle/working/AutogluonModels/ag-20251026_194909/ds_sub_fit/sub_fit_ho"
+Running DyStack sub-fit ...
+Beginning AutoGluon training ... Time limit = 9899s
+AutoGluon will save models to "/kaggle/working/AutogluonModels/ag-20251026_194909/ds_sub_fit/sub_fit_ho"
+Train Data Rows:    460225
+Train Data Columns: 21
+Label Column:       accident_risk
+Problem Type:       regression
+Preprocessing data ...
+Using Feature Generators to preprocess the data ...
+Fitting AutoMLPipelineFeatureGenerator...
+ Available Memory:                    30581.44 MB
+ Train Data (Original)  Memory Usage: 157.85 MB (0.5% of available memory)
+ Inferring data type of each feature based on column values. Set feature_metadata_in to manually specify special dtypes of the features.
+ Stage 1 Generators:
+  Fitting AsTypeFeatureGenerator...
+   Note: Converting 4 features to boolean dtype as they only contain 2 unique values.
+ Stage 2 Generators:
+  Fitting FillNaFeatureGenerator...
+ Stage 3 Generators:
+  Fitting IdentityFeatureGenerator...
+  Fitting CategoryFeatureGenerator...
+   Fitting CategoryMemoryMinimizeFeatureGenerator...
+ Stage 4 Generators:
+  Fitting DropUniqueFeatureGenerator...
+ Stage 5 Generators:
+  Fitting DropDuplicatesFeatureGenerator...
+ Types of features in original data (raw dtype, special dtypes):
+  ('bool', [])   :  4 | ['road_signs_present', 'public_road', 'holiday', 'school_season']
+  ('float', [])  : 10 | ['curvature', 'tabm_residual', 'realmlp', 'xgb_residual', 'single_tabm', ...]
+  ('int', [])    :  3 | ['num_lanes', 'speed_limit', 'num_reported_accidents']
+  ('object', []) :  4 | ['road_type', 'lighting', 'weather', 'time_of_day']
+ Types of features in processed data (raw dtype, special dtypes):
+  ('category', [])  :  4 | ['road_type', 'lighting', 'weather', 'time_of_day']
+  ('float', [])     : 10 | ['curvature', 'tabm_residual', 'realmlp', 'xgb_residual', 'single_tabm', ...]
+  ('int', [])       :  3 | ['num_lanes', 'speed_limit', 'num_reported_accidents']
+  ('int', ['bool']) :  4 | ['road_signs_present', 'public_road', 'holiday', 'school_season']
+ 2.1s = Fit runtime
+ 21 features in original data used to generate 21 features in processed data.
+ Train Data (Processed) Memory Usage: 49.16 MB (0.2% of available memory)
+Data preprocessing and feature engineering runtime = 2.28s ...
+AutoGluon will gauge predictive performance using evaluation metric: 'root_mean_squared_error'
+ This metric's sign has been flipped to adhere to being higher_is_better. The metric score can be multiplied by -1 to get the metric value.
+ To change this, specify the eval_metric parameter of Predictor()
+Large model count detected (110 configs) ... Only displaying the first 3 models of each family. To see all, set `verbosity=3`.
+User-specified model hyperparameters to be fit:
+{
+ 'NN_TORCH': [{}, {'activation': 'elu', 'dropout_prob': 0.10077639529843717, 'hidden_size': 108, 'learning_rate': 0.002735937344002146, 'num_layers': 4, 'use_batchnorm': True, 'weight_decay': 1.356433327634438e-12, 'ag_args': {'name_suffix': '_r79', 'priority': -2}}, {'activation': 'elu', 'dropout_prob': 0.11897478034205347, 'hidden_size': 213, 'learning_rate': 0.0010474382260641949, 'num_layers': 4, 'use_batchnorm': False, 'weight_decay': 5.594471067786272e-10, 'ag_args': {'name_suffix': '_r22', 'priority': -7}}],
+ 'GBM': [{'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, {}, {'learning_rate': 0.03, 'num_leaves': 128, 'feature_fraction': 0.9, 'min_data_in_leaf': 3, 'ag_args': {'name_suffix': 'Large', 'priority': 0, 'hyperparameter_tune_kwargs': None}}],
+ 'CAT': [{}, {'depth': 6, 'grow_policy': 'SymmetricTree', 'l2_leaf_reg': 2.1542798306067823, 'learning_rate': 0.06864209415792857, 'max_ctr_complexity': 4, 'one_hot_max_size': 10, 'ag_args': {'name_suffix': '_r177', 'priority': -1}}, {'depth': 8, 'grow_policy': 'Depthwise', 'l2_leaf_reg': 2.7997999596449104, 'learning_rate': 0.031375015734637225, 'max_ctr_complexity': 2, 'one_hot_max_size': 3, 'ag_args': {'name_suffix': '_r9', 'priority': -5}}],
+ 'XGB': [{}, {'colsample_bytree': 0.6917311125174739, 'enable_categorical': False, 'learning_rate': 0.018063876087523967, 'max_depth': 10, 'min_child_weight': 0.6028633586934382, 'ag_args': {'name_suffix': '_r33', 'priority': -8}}, {'colsample_bytree': 0.6628423832084077, 'enable_categorical': False, 'learning_rate': 0.08775715546881824, 'max_depth': 5, 'min_child_weight': 0.6294123374222513, 'ag_args': {'name_suffix': '_r89', 'priority': -16}}],
+ 'FASTAI': [{}, {'bs': 256, 'emb_drop': 0.5411770367537934, 'epochs': 43, 'layers': [800, 400], 'lr': 0.01519848858318159, 'ps': 0.23782946566604385, 'ag_args': {'name_suffix': '_r191', 'priority': -4}}, {'bs': 2048, 'emb_drop': 0.05070411322605811, 'epochs': 29, 'layers': [200, 100], 'lr': 0.08974235041576624, 'ps': 0.10393466140748028, 'ag_args': {'name_suffix': '_r102', 'priority': -11}}],
+ 'RF': [{'criterion': 'gini', 'ag_args': {'name_suffix': 'Gini', 'problem_types': ['binary', 'multiclass']}}, {'criterion': 'entropy', 'ag_args': {'name_suffix': 'Entr', 'problem_types': ['binary', 'multiclass']}}, {'criterion': 'squared_error', 'ag_args': {'name_suffix': 'MSE', 'problem_types': ['regression', 'quantile']}}],
+ 'XT': [{'criterion': 'gini', 'ag_args': {'name_suffix': 'Gini', 'problem_types': ['binary', 'multiclass']}}, {'criterion': 'entropy', 'ag_args': {'name_suffix': 'Entr', 'problem_types': ['binary', 'multiclass']}}, {'criterion': 'squared_error', 'ag_args': {'name_suffix': 'MSE', 'problem_types': ['regression', 'quantile']}}],
+}
+AutoGluon will fit 3 stack levels (L1 to L3) ...
+Fitting 106 L1 models, fit_strategy="sequential" ...
+Fitting model: LightGBMXT_BAG_L1 ... Training model for up to 4397.40s of the 9896.61s of remaining time.
+Will use sequential fold fitting strategy because import of ray failed. Reason: ray==2.47.1 detected. 2.10.0 <= ray < 2.45.0 is required. You can use pip to install certain version of ray `pip install "ray>=2.10.0,<2.45.0"`
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+[1000] valid_set's rmse: 0.0559825
+ -0.056  = Validation score   (-root_mean_squared_error)
+ 96.59s  = Training   runtime
+ 8.15s  = Validation runtime
+Fitting model: LightGBM_BAG_L1 ... Training model for up to 4287.30s of the 9786.51s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 42.96s  = Training   runtime
+ 2.22s  = Validation runtime
+Fitting model: RandomForestMSE_BAG_L1 ... Training model for up to 4241.49s of the 9740.70s of remaining time.
+ -0.0562  = Validation score   (-root_mean_squared_error)
+ 1227.86s  = Training   runtime
+ 23.27s  = Validation runtime
+Fitting model: CatBoost_BAG_L1 ... Training model for up to 2988.49s of the 8487.71s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ Ran out of time, early stopping on iteration 2072.
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 1461.22s  = Training   runtime
+ 0.37s  = Validation runtime
+Fitting model: ExtraTreesMSE_BAG_L1 ... Training model for up to 1526.22s of the 7025.43s of remaining time.
+ -0.056  = Validation score   (-root_mean_squared_error)
+ 220.73s  = Training   runtime
+ 17.84s  = Validation runtime
+Fitting model: NeuralNetFastAI_BAG_L1 ... Training model for up to 1285.85s of the 6785.06s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 1174.38s  = Training   runtime
+ 4.09s  = Validation runtime
+Fitting model: XGBoost_BAG_L1 ... Training model for up to 106.16s of the 5605.37s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 56.51s  = Training   runtime
+ 1.61s  = Validation runtime
+Fitting model: NeuralNetTorch_BAG_L1 ... Training model for up to 47.47s of the 5546.68s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ Time limit exceeded... Skipping NeuralNetTorch_BAG_L1.
+Fitting model: LightGBMLarge_BAG_L1 ... Training model for up to 37.18s of the 5536.39s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ Ran out of time, early stopping on iteration 70. Best iteration is:
+ [70] valid_set's rmse: 0.0588758
+ Ran out of time, early stopping on iteration 72. Best iteration is:
+ [72] valid_set's rmse: 0.058796
+ Ran out of time, early stopping on iteration 77. Best iteration is:
+ [77] valid_set's rmse: 0.0584695
+ Ran out of time, early stopping on iteration 76. Best iteration is:
+ [76] valid_set's rmse: 0.0579784
+ Ran out of time, early stopping on iteration 81. Best iteration is:
+ [81] valid_set's rmse: 0.0570957
+ Ran out of time, early stopping on iteration 85. Best iteration is:
+ [85] valid_set's rmse: 0.0566661
+ Ran out of time, early stopping on iteration 96. Best iteration is:
+ [96] valid_set's rmse: 0.0568013
+ Ran out of time, early stopping on iteration 110. Best iteration is:
+ [110] valid_set's rmse: 0.056061
+ -0.0576  = Validation score   (-root_mean_squared_error)
+ 33.77s  = Training   runtime
+ 1.86s  = Validation runtime
+Fitting model: CatBoost_r177_BAG_L1 ... Training model for up to 0.83s of the 5500.04s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ Warning: Model has no time left to train, skipping model... (Time Left = -0.1s)
+ Time limit exceeded... Skipping CatBoost_r177_BAG_L1.
+Fitting model: WeightedEnsemble_L2 ... Training model for up to 439.74s of the 5498.95s of remaining time.
+ Ensemble Weights: {'NeuralNetFastAI_BAG_L1': 0.333, 'LightGBM_BAG_L1': 0.222, 'CatBoost_BAG_L1': 0.222, 'RandomForestMSE_BAG_L1': 0.111, 'ExtraTreesMSE_BAG_L1': 0.111}
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 0.5s  = Training   runtime
+ 0.01s  = Validation runtime
+Fitting 106 L2 models, fit_strategy="sequential" ...
+Fitting model: LightGBMXT_BAG_L2 ... Training model for up to 3664.68s of the 5498.32s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.056  = Validation score   (-root_mean_squared_error)
+ 99.11s  = Training   runtime
+ 6.17s  = Validation runtime
+Fitting model: LightGBM_BAG_L2 ... Training model for up to 3558.37s of the 5392.02s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 58.08s  = Training   runtime
+ 2.4s  = Validation runtime
+Fitting model: RandomForestMSE_BAG_L2 ... Training model for up to 3497.03s of the 5330.68s of remaining time.
+ -0.056  = Validation score   (-root_mean_squared_error)
+ 2200.97s  = Training   runtime
+ 25.11s  = Validation runtime
+Fitting model: CatBoost_BAG_L2 ... Training model for up to 1267.79s of the 3101.43s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ Ran out of time, early stopping on iteration 742.
+ Ran out of time, early stopping on iteration 956.
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 842.63s  = Training   runtime
+ 0.32s  = Validation runtime
+Fitting model: ExtraTreesMSE_BAG_L2 ... Training model for up to 424.00s of the 2257.64s of remaining time.
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 311.24s  = Training   runtime
+ 19.52s  = Validation runtime
+Fitting model: NeuralNetFastAI_BAG_L2 ... Training model for up to 89.78s of the 1923.42s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ Time limit exceeded... Skipping NeuralNetFastAI_BAG_L2.
+Fitting model: XGBoost_BAG_L2 ... Training model for up to 85.33s of the 1918.98s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0752  = Validation score   (-root_mean_squared_error)
+ 74.29s  = Training   runtime
+ 2.85s  = Validation runtime
+Fitting model: NeuralNetTorch_BAG_L2 ... Training model for up to 7.35s of the 1840.99s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ Time limit exceeded... Skipping NeuralNetTorch_BAG_L2.
+Fitting model: LightGBMLarge_BAG_L2 ... Training model for up to 1.31s of the 1834.95s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ Warning: Model has no time left to train, skipping model... (Time Left = -0.2s)
+ Time limit exceeded... Skipping LightGBMLarge_BAG_L2.
+Fitting model: WeightedEnsemble_L3 ... Training model for up to 366.47s of the 1833.53s of remaining time.
+ Ensemble Weights: {'LightGBM_BAG_L2': 0.286, 'RandomForestMSE_BAG_L2': 0.286, 'ExtraTreesMSE_BAG_L2': 0.214, 'CatBoost_BAG_L2': 0.143, 'LightGBMXT_BAG_L2': 0.071}
+ -0.0558  = Validation score   (-root_mean_squared_error)
+ 0.37s  = Training   runtime
+ 0.01s  = Validation runtime
+Fitting 106 L3 models, fit_strategy="sequential" ...
+Fitting model: LightGBMXT_BAG_L3 ... Training model for up to 1833.11s of the 1832.99s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 106.99s  = Training   runtime
+ 7.28s  = Validation runtime
+Fitting model: LightGBM_BAG_L3 ... Training model for up to 1717.81s of the 1717.69s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 48.75s  = Training   runtime
+ 1.94s  = Validation runtime
+Fitting model: RandomForestMSE_BAG_L3 ... Training model for up to 1666.31s of the 1666.20s of remaining time.
+ Warning: Reducing model 'n_estimators' from 300 -> 253 due to low time. Expected time usage reduced from 1970.9s -> 1665.8s...
+ -0.0561  = Validation score   (-root_mean_squared_error)
+ 1658.36s  = Training   runtime
+ 20.78s  = Validation runtime
+Fitting model: WeightedEnsemble_L4 ... Training model for up to 360.00s of the -15.63s of remaining time.
+ Ensemble Weights: {'NeuralNetFastAI_BAG_L1': 0.286, 'RandomForestMSE_BAG_L2': 0.214, 'ExtraTreesMSE_BAG_L2': 0.143, 'RandomForestMSE_BAG_L3': 0.143, 'LightGBM_BAG_L1': 0.071, 'CatBoost_BAG_L1': 0.071, 'LightGBM_BAG_L3': 0.071}
+ -0.0558  = Validation score   (-root_mean_squared_error)
+ 0.95s  = Training   runtime
+ 0.01s  = Validation runtime
+AutoGluon training complete, total runtime = 9915.62s ... Best model: WeightedEnsemble_L4 | Estimated inference throughput: 1270.1 rows/s (57529 batch size)
+TabularPredictor saved. To load, use: predictor = TabularPredictor.load("/kaggle/working/AutogluonModels/ag-20251026_194909/ds_sub_fit/sub_fit_ho")
+Deleting DyStack predictor artifacts (clean_up_fits=True) ...
+Leaderboard on holdout data (DyStack):
+                     model  score_holdout  score_val              eval_metric  pred_time_test  pred_time_val     fit_time  pred_time_test_marginal  pred_time_val_marginal  fit_time_marginal  stack_level  can_infer  fit_order
+0   NeuralNetFastAI_BAG_L1      -0.055756  -0.055900  root_mean_squared_error        6.889948       4.089401  1174.382581                 6.889948                4.089401        1174.382581            1       True          6
+1      WeightedEnsemble_L2      -0.055769  -0.055871  root_mean_squared_error       24.492234      47.803962  4127.657992                 0.006371                0.008394           0.501040            2       True          9
+2      WeightedEnsemble_L4      -0.055786  -0.055817  root_mean_squared_error       67.412599     138.513970  9608.413489                 0.006033                0.008486           0.952530            4       True         20
+3          LightGBM_BAG_L2      -0.055788  -0.055894  root_mean_squared_error       41.253361      61.819371  4372.109249                 3.427792                2.401503          58.081402            2       True         11
+4          LightGBM_BAG_L1      -0.055790  -0.055899  root_mean_squared_error        2.362347       2.216111    42.962601                 2.362347                2.216111          42.962601            1       True          2
+5          CatBoost_BAG_L2      -0.055802  -0.055926  root_mean_squared_error       38.225005      59.735612  5156.657271                 0.399436                0.317744         842.629423            2       True         13
+6      WeightedEnsemble_L3      -0.055806  -0.055836  root_mean_squared_error       60.249229     112.947337  7826.428893                 0.004843                0.008308           0.371059            3       True         16
+7          CatBoost_BAG_L1      -0.055807  -0.055921  root_mean_squared_error        0.540467       0.373377  1461.223080                 0.540467                0.373377        1461.223080            1       True          4
+8          LightGBM_BAG_L3      -0.055807  -0.055871  root_mean_squared_error       64.860716     117.720908  7949.099920                 1.970512                1.935157          48.748166            3       True         18
+9           XGBoost_BAG_L1      -0.055811  -0.055917  root_mean_squared_error        2.813845       1.609689    56.514469                 2.813845                1.609689          56.514469            1       True          7
+10       LightGBMXT_BAG_L2      -0.055836  -0.055962  root_mean_squared_error       45.828354      65.592831  4413.134667                 8.002785                6.174963          99.106820            2       True         10
+11       LightGBMXT_BAG_L3      -0.055839  -0.055941  root_mean_squared_error       69.884894     123.062668  8007.345941                 6.994689                7.276917         106.994187            3       True         17
+12       LightGBMXT_BAG_L1      -0.055852  -0.055980  root_mean_squared_error        8.411351       8.154223    96.586906                 8.411351                8.154223          96.586906            1       True          1
+13    ExtraTreesMSE_BAG_L2      -0.055881  -0.055938  root_mean_squared_error       40.720305      78.938308  4625.266390                 2.894736               19.520440         311.238542            2       True         14
+14    ExtraTreesMSE_BAG_L1      -0.055887  -0.056031  root_mean_squared_error        7.553182      17.842300   220.725258                 7.553182               17.842300         220.725258            1       True          5
+15  RandomForestMSE_BAG_L2      -0.055957  -0.056002  root_mean_squared_error       45.519637      84.524379  6515.001647                 7.694068               25.106511        2200.973799            2       True         12
+16  RandomForestMSE_BAG_L3      -0.055989  -0.056083  root_mean_squared_error       65.436054     136.570328  9558.712793                 2.545850               20.784576        1658.361039            3       True         19
+17  RandomForestMSE_BAG_L1      -0.056057  -0.056230  root_mean_squared_error        7.139918      23.274378  1227.863431                 7.139918               23.274378        1227.863431            1       True          3
+18    LightGBMLarge_BAG_L1      -0.057254  -0.057602  root_mean_squared_error        2.114510       1.858389    33.769521                 2.114510                1.858389          33.769521            1       True          8
+19          XGBoost_BAG_L2      -0.059046  -0.075152  root_mean_squared_error       40.471387      62.264591  4388.321768                 2.645818                2.846723          74.293921            2       True         15
+ 0  = Optimal   num_stack_levels (Stacked Overfitting Occurred: True)
+ 9993s  = DyStack   runtime | 29607s  = Remaining runtime
+Starting main fit with num_stack_levels=0.
+ For future fit calls on this dataset, you can skip DyStack to save time: `predictor.fit(..., dynamic_stacking=False, num_stack_levels=0)`
+Beginning AutoGluon training ... Time limit = 29607s
+AutoGluon will save models to "/kaggle/working/AutogluonModels/ag-20251026_194909"
+Train Data Rows:    517754
+Train Data Columns: 21
+Label Column:       accident_risk
+Problem Type:       regression
+Preprocessing data ...
+Using Feature Generators to preprocess the data ...
+Fitting AutoMLPipelineFeatureGenerator...
+ Available Memory:                    29260.39 MB
+ Train Data (Original)  Memory Usage: 177.59 MB (0.6% of available memory)
+ Inferring data type of each feature based on column values. Set feature_metadata_in to manually specify special dtypes of the features.
+ Stage 1 Generators:
+  Fitting AsTypeFeatureGenerator...
+   Note: Converting 4 features to boolean dtype as they only contain 2 unique values.
+ Stage 2 Generators:
+  Fitting FillNaFeatureGenerator...
+ Stage 3 Generators:
+  Fitting IdentityFeatureGenerator...
+  Fitting CategoryFeatureGenerator...
+   Fitting CategoryMemoryMinimizeFeatureGenerator...
+ Stage 4 Generators:
+  Fitting DropUniqueFeatureGenerator...
+ Stage 5 Generators:
+  Fitting DropDuplicatesFeatureGenerator...
+ Types of features in original data (raw dtype, special dtypes):
+  ('bool', [])   :  4 | ['road_signs_present', 'public_road', 'holiday', 'school_season']
+  ('float', [])  : 10 | ['curvature', 'tabm_residual', 'realmlp', 'xgb_residual', 'single_tabm', ...]
+  ('int', [])    :  3 | ['num_lanes', 'speed_limit', 'num_reported_accidents']
+  ('object', []) :  4 | ['road_type', 'lighting', 'weather', 'time_of_day']
+ Types of features in processed data (raw dtype, special dtypes):
+  ('category', [])  :  4 | ['road_type', 'lighting', 'weather', 'time_of_day']
+  ('float', [])     : 10 | ['curvature', 'tabm_residual', 'realmlp', 'xgb_residual', 'single_tabm', ...]
+  ('int', [])       :  3 | ['num_lanes', 'speed_limit', 'num_reported_accidents']
+  ('int', ['bool']) :  4 | ['road_signs_present', 'public_road', 'holiday', 'school_season']
+ 2.0s = Fit runtime
+ 21 features in original data used to generate 21 features in processed data.
+ Train Data (Processed) Memory Usage: 55.30 MB (0.2% of available memory)
+Data preprocessing and feature engineering runtime = 2.28s ...
+AutoGluon will gauge predictive performance using evaluation metric: 'root_mean_squared_error'
+ This metric's sign has been flipped to adhere to being higher_is_better. The metric score can be multiplied by -1 to get the metric value.
+ To change this, specify the eval_metric parameter of Predictor()
+Large model count detected (110 configs) ... Only displaying the first 3 models of each family. To see all, set `verbosity=3`.
+User-specified model hyperparameters to be fit:
+{
+ 'NN_TORCH': [{}, {'activation': 'elu', 'dropout_prob': 0.10077639529843717, 'hidden_size': 108, 'learning_rate': 0.002735937344002146, 'num_layers': 4, 'use_batchnorm': True, 'weight_decay': 1.356433327634438e-12, 'ag_args': {'name_suffix': '_r79', 'priority': -2}}, {'activation': 'elu', 'dropout_prob': 0.11897478034205347, 'hidden_size': 213, 'learning_rate': 0.0010474382260641949, 'num_layers': 4, 'use_batchnorm': False, 'weight_decay': 5.594471067786272e-10, 'ag_args': {'name_suffix': '_r22', 'priority': -7}}],
+ 'GBM': [{'extra_trees': True, 'ag_args': {'name_suffix': 'XT'}}, {}, {'learning_rate': 0.03, 'num_leaves': 128, 'feature_fraction': 0.9, 'min_data_in_leaf': 3, 'ag_args': {'name_suffix': 'Large', 'priority': 0, 'hyperparameter_tune_kwargs': None}}],
+ 'CAT': [{}, {'depth': 6, 'grow_policy': 'SymmetricTree', 'l2_leaf_reg': 2.1542798306067823, 'learning_rate': 0.06864209415792857, 'max_ctr_complexity': 4, 'one_hot_max_size': 10, 'ag_args': {'name_suffix': '_r177', 'priority': -1}}, {'depth': 8, 'grow_policy': 'Depthwise', 'l2_leaf_reg': 2.7997999596449104, 'learning_rate': 0.031375015734637225, 'max_ctr_complexity': 2, 'one_hot_max_size': 3, 'ag_args': {'name_suffix': '_r9', 'priority': -5}}],
+ 'XGB': [{}, {'colsample_bytree': 0.6917311125174739, 'enable_categorical': False, 'learning_rate': 0.018063876087523967, 'max_depth': 10, 'min_child_weight': 0.6028633586934382, 'ag_args': {'name_suffix': '_r33', 'priority': -8}}, {'colsample_bytree': 0.6628423832084077, 'enable_categorical': False, 'learning_rate': 0.08775715546881824, 'max_depth': 5, 'min_child_weight': 0.6294123374222513, 'ag_args': {'name_suffix': '_r89', 'priority': -16}}],
+ 'FASTAI': [{}, {'bs': 256, 'emb_drop': 0.5411770367537934, 'epochs': 43, 'layers': [800, 400], 'lr': 0.01519848858318159, 'ps': 0.23782946566604385, 'ag_args': {'name_suffix': '_r191', 'priority': -4}}, {'bs': 2048, 'emb_drop': 0.05070411322605811, 'epochs': 29, 'layers': [200, 100], 'lr': 0.08974235041576624, 'ps': 0.10393466140748028, 'ag_args': {'name_suffix': '_r102', 'priority': -11}}],
+ 'RF': [{'criterion': 'gini', 'ag_args': {'name_suffix': 'Gini', 'problem_types': ['binary', 'multiclass']}}, {'criterion': 'entropy', 'ag_args': {'name_suffix': 'Entr', 'problem_types': ['binary', 'multiclass']}}, {'criterion': 'squared_error', 'ag_args': {'name_suffix': 'MSE', 'problem_types': ['regression', 'quantile']}}],
+ 'XT': [{'criterion': 'gini', 'ag_args': {'name_suffix': 'Gini', 'problem_types': ['binary', 'multiclass']}}, {'criterion': 'entropy', 'ag_args': {'name_suffix': 'Entr', 'problem_types': ['binary', 'multiclass']}}, {'criterion': 'squared_error', 'ag_args': {'name_suffix': 'MSE', 'problem_types': ['regression', 'quantile']}}],
+}
+Fitting 106 L1 models, fit_strategy="sequential" ...
+Fitting model: LightGBMXT_BAG_L1 ... Training model for up to 29604.26s of the 29604.25s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.056  = Validation score   (-root_mean_squared_error)
+ 100.07s  = Training   runtime
+ 8.67s  = Validation runtime
+Fitting model: LightGBM_BAG_L1 ... Training model for up to 29494.62s of the 29494.61s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 45.76s  = Training   runtime
+ 2.32s  = Validation runtime
+Fitting model: RandomForestMSE_BAG_L1 ... Training model for up to 29445.84s of the 29445.83s of remaining time.
+ -0.0562  = Validation score   (-root_mean_squared_error)
+ 1475.93s  = Training   runtime
+ 25.86s  = Validation runtime
+Fitting model: CatBoost_BAG_L1 ... Training model for up to 27940.30s of the 27940.29s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 1835.69s  = Training   runtime
+ 0.44s  = Validation runtime
+Fitting model: ExtraTreesMSE_BAG_L1 ... Training model for up to 26103.42s of the 26103.41s of remaining time.
+ -0.056  = Validation score   (-root_mean_squared_error)
+ 261.97s  = Training   runtime
+ 19.35s  = Validation runtime
+Fitting model: NeuralNetFastAI_BAG_L1 ... Training model for up to 25818.73s of the 25818.72s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+No improvement since epoch 2: early stopping
+No improvement since epoch 3: early stopping
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 2480.62s  = Training   runtime
+ 4.81s  = Validation runtime
+Fitting model: XGBoost_BAG_L1 ... Training model for up to 23331.08s of the 23331.07s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 66.11s  = Training   runtime
+ 1.88s  = Validation runtime
+Fitting model: NeuralNetTorch_BAG_L1 ... Training model for up to 23262.37s of the 23262.36s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0564  = Validation score   (-root_mean_squared_error)
+ 2208.34s  = Training   runtime
+ 2.88s  = Validation runtime
+Fitting model: LightGBMLarge_BAG_L1 ... Training model for up to 21050.37s of the 21050.36s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 83.05s  = Training   runtime
+ 5.19s  = Validation runtime
+Fitting model: CatBoost_r177_BAG_L1 ... Training model for up to 20960.96s of the 20960.95s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 250.39s  = Training   runtime
+ 0.29s  = Validation runtime
+Fitting model: NeuralNetTorch_r79_BAG_L1 ... Training model for up to 20709.56s of the 20709.55s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.056  = Validation score   (-root_mean_squared_error)
+ 6421.55s  = Training   runtime
+ 3.65s  = Validation runtime
+Fitting model: LightGBM_r131_BAG_L1 ... Training model for up to 14283.34s of the 14283.33s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 163.81s  = Training   runtime
+ 14.15s  = Validation runtime
+Fitting model: NeuralNetFastAI_r191_BAG_L1 ... Training model for up to 14104.07s of the 14104.06s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ Ran out of time, stopping training early. (Stopping on epoch 34)
+ Ran out of time, stopping training early. (Stopping on epoch 36)
+ Ran out of time, stopping training early. (Stopping on epoch 37)
+No improvement since epoch 3: early stopping
+No improvement since epoch 2: early stopping
+No improvement since epoch 4: early stopping
+No improvement since epoch 13: early stopping
+No improvement since epoch 5: early stopping
+ -0.056  = Validation score   (-root_mean_squared_error)
+ 9294.73s  = Training   runtime
+ 12.0s  = Validation runtime
+Fitting model: CatBoost_r9_BAG_L1 ... Training model for up to 4793.06s of the 4793.05s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 513.48s  = Training   runtime
+ 2.74s  = Validation runtime
+Fitting model: LightGBM_r96_BAG_L1 ... Training model for up to 4275.96s of the 4275.95s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+[1000] valid_set's rmse: 0.0558879
+[2000] valid_set's rmse: 0.0558786
+[3000] valid_set's rmse: 0.0558785
+[1000] valid_set's rmse: 0.0559873
+[2000] valid_set's rmse: 0.0559732
+[3000] valid_set's rmse: 0.0559716
+[1000] valid_set's rmse: 0.0557362
+[2000] valid_set's rmse: 0.0557173
+[3000] valid_set's rmse: 0.0557138
+[1000] valid_set's rmse: 0.0560207
+[2000] valid_set's rmse: 0.0560106
+[3000] valid_set's rmse: 0.0560102
+[1000] valid_set's rmse: 0.0560564
+[2000] valid_set's rmse: 0.0560395
+[3000] valid_set's rmse: 0.0560376
+[1000] valid_set's rmse: 0.0561331
+[2000] valid_set's rmse: 0.056115
+[3000] valid_set's rmse: 0.0561124
+[1000] valid_set's rmse: 0.0557163
+[2000] valid_set's rmse: 0.0557032
+[3000] valid_set's rmse: 0.0557029
+[1000] valid_set's rmse: 0.056111
+[2000] valid_set's rmse: 0.0560968
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 474.59s  = Training   runtime
+ 65.74s  = Validation runtime
+Fitting model: NeuralNetTorch_r22_BAG_L1 ... Training model for up to 3733.91s of the 3733.90s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ Ran out of time, stopping training early. (Stopping on epoch 29)
+ Ran out of time, stopping training early. (Stopping on epoch 30)
+ Ran out of time, stopping training early. (Stopping on epoch 32)
+ Ran out of time, stopping training early. (Stopping on epoch 36)
+ Ran out of time, stopping training early. (Stopping on epoch 38)
+ Ran out of time, stopping training early. (Stopping on epoch 44)
+ -0.0561  = Validation score   (-root_mean_squared_error)
+ 3407.83s  = Training   runtime
+ 3.64s  = Validation runtime
+Fitting model: XGBoost_r33_BAG_L1 ... Training model for up to 321.65s of the 321.64s of remaining time.
+ Fitting 8 child models (S1F1 - S1F8) | Fitting with SequentialLocalFoldFittingStrategy (sequential: cpus=2, gpus=0)
+ -0.056  = Validation score   (-root_mean_squared_error)
+ 263.26s  = Training   runtime
+ 16.83s  = Validation runtime
+Fitting model: ExtraTrees_r42_BAG_L1 ... Training model for up to 40.28s of the 40.27s of remaining time.
+ Warning: Reducing model 'n_estimators' from 300 -> 47 due to low time. Expected time usage reduced from 251.9s -> 39.8s...
+ Not enough time to generate out-of-fold predictions for model. Estimated time required was 28.78s compared to 17.09s of available time.
+ Time limit exceeded... Skipping ExtraTrees_r42_BAG_L1.
+Fitting model: WeightedEnsemble_L2 ... Training model for up to 2960.43s of the 4.37s of remaining time.
+ Ensemble Weights: {'NeuralNetFastAI_BAG_L1': 0.444, 'LightGBM_r131_BAG_L1': 0.222, 'RandomForestMSE_BAG_L1': 0.111, 'ExtraTreesMSE_BAG_L1': 0.111, 'NeuralNetTorch_r79_BAG_L1': 0.111}
+ -0.0559  = Validation score   (-root_mean_squared_error)
+ 1.16s  = Training   runtime
+ 0.01s  = Validation runtime
+AutoGluon training complete, total runtime = 29603.48s ... Best model: WeightedEnsemble_L2 | Estimated inference throughput: 2290.4 rows/s (64720 batch size)
+TabularPredictor saved. To load, use: predictor = TabularPredictor.load("/kaggle/working/AutogluonModels/ag-20251026_194909")
+Out[11]:
+<autogluon.tabular.predictor.predictor.TabularPredictor at 0x77fcc55d9890>
+Evaluation
+In [12]:
+# COMPARE MODELS
+predictor.leaderboard()
+Out[12]:
+model score_val eval_metric pred_time_val fit_time pred_time_val_marginal fit_time_marginal stack_level can_infer fit_order
+0 WeightedEnsemble_L2 -0.055854 root_mean_squared_error 67.828162 10805.035723 0.009845 1.162894 2 True 18
+1 NeuralNetFastAI_BAG_L1 -0.055876 root_mean_squared_error 4.809159 2480.619678 4.809159 2480.619678 1 True 6
+2 LightGBM_BAG_L1 -0.055886 root_mean_squared_error 2.322446 45.763477 2.322446 45.763477 1 True 2
+3 LightGBM_r131_BAG_L1 -0.055887 root_mean_squared_error 14.149432 163.805940 14.149432 163.805940 1 True 12
+4 CatBoost_r9_BAG_L1 -0.055899 root_mean_squared_error 2.739601 513.479397 2.739601 513.479397 1 True 14
+5 CatBoost_BAG_L1 -0.055909 root_mean_squared_error 0.444220 1835.691494 0.444220 1835.691494 1 True 4
+6 XGBoost_BAG_L1 -0.055909 root_mean_squared_error 1.877052 66.109137 1.877052 66.109137 1 True 7
+7 CatBoost_r177_BAG_L1 -0.055912 root_mean_squared_error 0.287413 250.389869 0.287413 250.389869 1 True 10
+8 LightGBMLarge_BAG_L1 -0.055921 root_mean_squared_error 5.187998 83.046461 5.187998 83.046461 1 True 9
+9 LightGBM_r96_BAG_L1 -0.055940 root_mean_squared_error 65.740508 474.594668 65.740508 474.594668 1 True 15
+10 XGBoost_r33_BAG_L1 -0.055966 root_mean_squared_error 16.829522 263.255150 16.829522 263.255150 1 True 17
+11 NeuralNetFastAI_r191_BAG_L1 -0.055968 root_mean_squared_error 11.995533 9294.733563 11.995533 9294.733563 1 True 13
+12 LightGBMXT_BAG_L1 -0.055970 root_mean_squared_error 8.673133 100.067698 8.673133 100.067698 1 True 1
+13 NeuralNetTorch_r79_BAG_L1 -0.055975 root_mean_squared_error 3.645182 6421.553496 3.645182 6421.553496 1 True 11
+14 ExtraTreesMSE_BAG_L1 -0.055997 root_mean_squared_error 19.351517 261.968233 19.351517 261.968233 1 True 5
+15 NeuralNetTorch_r22_BAG_L1 -0.056113 root_mean_squared_error 3.636045 3407.825244 3.636045 3407.825244 1 True 16
+16 RandomForestMSE_BAG_L1 -0.056187 root_mean_squared_error 25.863027 1475.925482 25.863027 1475.925482 1 True 3
+17 NeuralNetTorch_BAG_L1 -0.056368 root_mean_squared_error 2.883707 2208.340834 2.883707 2208.340834 1 True 8
+In [13]:
+%%time
+# CHECK FEATURE IMPORTANCES 
+
+importance_df = predictor.feature_importance(merge_train[:100])
+
+importance_df.style.background_gradient(subset=['importance', 'stddev'], cmap='Blues')
+Computing feature importance via permutation shuffling for 21 features using 100 rows with 5 shuffle sets...
+ 1115.58s = Expected runtime (223.12s per shuffle set)
+ 22.15s = Actual runtime (Completed 5 of 5 shuffle sets)
+CPU times: user 20.5 s, sys: 5.2 s, total: 25.7 s
+Wall time: 22.2 s
+Out[13]:
+  importance stddev p_value n p99_high p99_low
+single_ydf 0.029423 0.003343 0.000020 5 0.036305 0.022540
+nn_stacking 0.019298 0.002973 0.000066 5 0.025419 0.013176
+tabm_residual 0.012649 0.001179 0.000009 5 0.015077 0.010220
+realmlp 0.009566 0.001652 0.000103 5 0.012967 0.006165
+xgb_rich 0.009065 0.001310 0.000051 5 0.011761 0.006368
+xgb_residual 0.005146 0.001796 0.001525 5 0.008844 0.001448
+single_tabm 0.003445 0.000686 0.000179 5 0.004856 0.002033
+xgb_diff_seed20 0.002433 0.000555 0.000303 5 0.003575 0.001290
+score 0.000629 0.000305 0.004976 5 0.001257 0.000001
+lighting 0.000445 0.000130 0.000781 5 0.000712 0.000177
+time_of_day 0.000408 0.000075 0.000132 5 0.000563 0.000253
+curvature 0.000392 0.000169 0.003242 5 0.000739 0.000045
+num_lanes 0.000382 0.000113 0.000829 5 0.000615 0.000149
+speed_limit 0.000365 0.000114 0.001011 5 0.000600 0.000130
+num_reported_accidents 0.000327 0.000141 0.003281 5 0.000617 0.000037
+holiday 0.000318 0.000097 0.000920 5 0.000518 0.000118
+road_type 0.000318 0.000060 0.000141 5 0.000441 0.000195
+road_signs_present 0.000289 0.000115 0.002454 5 0.000525 0.000052
+public_road 0.000272 0.000149 0.007501 5 0.000578 -0.000034
+weather 0.000205 0.000048 0.000330 5 0.000304 0.000107
+school_season 0.000180 0.000060 0.001290 5 0.000303 0.000056
+In [14]:
+# PLOT FEATURE IMPORTANCE
+
+imp = importance_df['importance'].sort_values(ascending=True)
+
+plt.figure(figsize=(6, 8))
+imp.plot(kind='barh', color='steelblue')
+plt.title('Feature Importance (AutoGluon)')
+plt.xlabel('Importance Score')
+plt.ylabel('Feature')
+plt.show()
+In [15]:
+# CHECKING BEST MODEL 
+
+best_model = predictor.model_best
+
+print(f'Best Model : {best_model}')
+Best Model : WeightedEnsemble_L2
+In [16]:
+%%time
+# CHECK SUBMISSION
+
+# TEST DATA PREDICTION
+y_test = predictor.predict(merge_test, model = 'WeightedEnsemble_L2')
+
+submission = pd.read_csv(r'/kaggle/input/playground-series-s5e10/sample_submission.csv')
+
+submission['accident_risk'] = y_test
+
+submission
+CPU times: user 2min 34s, sys: 980 ms, total: 2min 35s
+Wall time: 1min 11s
+Out[16]:
+id accident_risk
+0 517754 0.296585
+1 517755 0.121694
+2 517756 0.180611
+3 517757 0.307741
+4 517758 0.398571
+... ... ...
+172580 690334 0.102367
+172581 690335 0.517541
+172582 690336 0.250620
+172583 690337 0.126271
+172584 690338 0.486267
+172585 rows × 2 columns
+In [17]:
+# GET OOF (OUT-OF-FOLD) PREDICTION
+
+# GET OOF
+oof_predictions = predictor.predict_oof(model = 'WeightedEnsemble_L2')
+
+# CONVERT TO DATAFRAME
+y_pred = oof_predictions.to_frame(name = 'oof_prediction')  # ---> RETURN DATAFRAME
+oof_df = pd.DataFrame(y_pred)
+
+oof_df
+Out[17]:
+oof_prediction
+0 0.129672
+1 0.324482
+2 0.387003
+3 0.132350
+4 0.470305
+... ...
+517749 0.320775
+517750 0.240497
+517751 0.294555
+517752 0.495298
+517753 0.190109
+517754 rows × 1 columns
+In [18]:
+# SAVE SUBMISSION
+submission.to_csv(r'autogluon16.csv', index = False)
+oof_df.to_csv(r'oof_autogluon16.csv', index = False)
+In [19]:
+# EVALUATION
+
+rmse = mean_squared_error(merge_train['accident_risk'], oof_predictions, squared = False)
+r2   = r2_score(merge_train['accident_risk'], oof_predictions)
+
+print(f'RMSE : {rmse}')
+print(f'R2   : {r2}"')
+RMSE : 0.0558542939554937
+R2   : 0.8873534465567556"
+In [20]:
+# RESIDUAL PLOT
+
+y_true = merge_train['accident_risk']
+
+plt.figure(figsize = (12, 5))
+
+# ACTUAL VS PREDICTED DATA
+plt.subplot(1, 2, 1)
+plt.scatter(x = y_true, y = y_pred, alpha = 0.6)
+plt.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], 'k--', lw=2)
+
+plt.xlabel('Predicted Values')
+plt.ylabel('Actual Values')
+plt.title('Actual vs Predicted Data')
+
+# RESIDUAL PLOT
+residual = y_true - y_pred['oof_prediction'].values
+
+plt.subplot(1, 2, 2)
+plt.scatter(x = y_pred, y = residual, alpha = 0.6)
+plt.axhline(y=0, color='r', linestyle='--')  # garis nol sebagai referensi
+plt.xlabel("Predicted values")
+plt.ylabel("Residuals (y_true - y_pred)")
+plt.title("Residual Plot")
+
+plt.show()
+In [21]:
+# DISTRIBUTION COMPARISON
+
+plt.figure(figsize = (12, 5))
+
+plt.subplot(1, 2, 1)
+sns.kdeplot(merge_train['accident_risk'], label = 'True Label', fill = False)
+sns.kdeplot(oof_predictions, label = 'Predicted Label (OOF)', fill = False)
+plt.title('True vs Predicted Accident Risk Distribution')
+plt.legend()
+
+plt.subplot(1, 2, 2)
+sns.kdeplot(y_test, label = 'Test Acccident Risk', fill = False)
+plt.title('Test Accident Risk Distribution')
+plt.legend()
+
+plt.show()

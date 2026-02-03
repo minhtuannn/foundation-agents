@@ -1,0 +1,451 @@
+=== OVERVIEW ===
+Kaggle uses cookies from Google to deliver and enhance the quality of its services and to analyze traffic.
+Learn more
+OK, Got it.
+CRITICAL ASSESSMENT OF FUNCTIONAL ANNOTATION · RESEARCH PREDICTION COMPETITION · A MONTH TO GO
+Join Competition
+more_horiz
+CAFA 6 Protein Function Prediction
+Predict the biological function of a protein
+Overview
+Data
+Code
+Models
+Discussion
+Leaderboard
+Rules
+Overview
+Proteins are large molecules that are responsible for many activities in our cells, tissues, organs, and bodies and they also play a central role in the structure and function of cells. Proteins are composed of 20 types of smaller molecules known as amino acids, which are ordered in a long chain known as the protein amino acid sequence. Each protein has its own sequence that determines its structure and its function. You will build a model that predicts what a protein does based on its amino acid sequence. These predictions will help researchers understand how proteins function, and could lead to the development of new medical treatments and therapies.
+Start
+2 months ago
+Close
+a month to go
+Merger & Entry
+Description
+link
+keyboard_arrow_up
+At the end of this competition, we will write a scientific article describing this event. If you would like to be considered as a co-author, please opt-in in this form. The organizers reserve the right to select co-authors based on contribution merit.
+With every breath, meal, and workout, your body sends signals using complex protein interactions. Nearly every biological process, like transporting oxygen and building muscle mass, relies on proteins. However, we still don’t fully understand what many individual proteins do. Learning how proteins function is key to understanding how our cells work and creating new disease treatments.
+Current approaches for understanding a protein’s function are to compare it with proteins whose functions are known, search scientific papers for clues, or use machine learning to analyze data from multiple sources. While these methods are helpful, they still struggle with complex biology. Proteins often have multiple roles, and their functions can change depending on the situation.
+In this competition, you’ll train a model to predict Gene Ontology (GO) terms for a set of proteins based on their amino acid sequences. These GO terms describe what the protein does, which biological processes it’s involved in, and where in the cell it operates. You’ll need to predict multiple labels at once while sorting through messy biological data.
+If your model performs well, it could help scientists narrow down protein roles faster, prioritize lab experiments, and spot connections that might otherwise go unnoticed. Knowing what a protein does is a small step for a model, but a giant leap for medicine.
+Context
+link
+keyboard_arrow_up
+Proteins are responsible for many activities in our tissues, organs, and bodies and they also play a central role in the structure and function of cells. Proteins are large molecules composed of 20 types of building-blocks known as amino acids. The human body makes tens of thousands of different proteins, and each protein is composed of dozens or hundreds of amino acids that are linked sequentially. This amino-acid sequence determines the 3D structure and conformational dynamics of the protein, and that, in turn, determines its biological function. Due to ongoing genome sequencing projects, we are inundated with large amounts of genomic sequence data from thousands of species, which informs us of the amino-acid sequence data of proteins for which these genes code. The accurate assignment of biological function to the protein is key to understanding life at the molecular level. However, assigning function to any specific protein can be made difficult due to the multiple functions many proteins have, along with their ability to interact with multiple partners. More knowledge of the functions assigned to proteins—potentially aided by data science—could lead to curing diseases and improving human and animal health and wellness in areas as varied as medicine and agriculture.
+Research groups have developed many ways to determine the function of proteins, including numerous methods based on comparing unsolved sequences with databases of proteins whose functions are known. Other efforts aim to mine the scientific literature associated with some of these proteins, while even more methods combine sophisticated machine-learning algorithms with an understanding of biological processes to decipher what these proteins do. However, there are still many challenges in this field, which are driven by ambiguity, complexity, and data integration.
+Evaluation
+link
+keyboard_arrow_up
+Important Note
+This is a prospective (i.e., future) data competition. Many proteins in the Test data do not currently have any assigned functions. Proteins having one or more of their functions published by researchers during the curation phase of the competition will comprise the future test set. Final leaderboard scores will be calculated after the curation phase of the competition.
+Background
+The organizers provide a set of protein sequences on which the participants are asked to predict Gene Ontology (GO) terms in each of the three subontologies: Molecular Function (MF), Biological Process (BP), and Cellular Component (CC). This set of sequences is referred to as the test superset.
+The proteins from the test superset that (1) originally had no experimentally assigned functions in a particular subontology and accumulate experimental annotations, or (2) originally had experimentally assigned functions in all three subontologies and accumulate experimental annotations in any subontology between the submission deadline and the time of evaluation in that subontology, are referred as the test set for that subontology. There will be three different test sets, one for each subontology, and the participants will be scored on each. The final performance accuracy will be computed by combining the three scores, as described below under Evaluation Metrics.
+The organizers also provide the training set containing protein sequences that have at least one experimentally determined GO term in at least one subontology, together with those experimental annotations. These proteins may also appear in the test superset.
+Evaluation Metrics
+Submissions will be evaluated on proteins that have accumulated experimentally-validated functional annotations in any subontology between the submission deadline and the time of evaluation. For example, a protein that had no experimental terms in, say, the Molecular Function (MF) subontology of GO and has accumulated experimental annotations in MF after the submission deadline will be included in the test set for evaluating the MF term predictions. In addition, a protein that already had experimental terms in all three subontologies before the submission deadline and has accumulated experimental annotations in MF after the submission deadline will also be included in the test set for evaluating the MF term predictions. The same holds for the Biological Process (BP) or Cellular Component (CC) subontologies of GO. The proteins that qualify will create three different test sets, one for each subontology of GO. The same protein can appear in more than one test set if it accumulates experimentally-validated annotations in more than a single subontology.
+The maximum F1-measure based on the weighted precision and recall will be calculated on each of the three test sets, and the final performance measure will be an arithmetic mean of the three maximum F-measures (for MF, BP, and CC). The formulas for computing weighted F1-measures are provided in the supplement (page 31) of the following paper: Jiang Y, et al. An expanded evaluation of protein function prediction methods shows an improvement in accuracy. Genome Biol. (2016) 17(1): 184, in the full evaluation mode. The weights (i.e., information content ic(f), where f is a term in any subontology) for each term f of each subontology are provided by the challenge organizers. Note that we equivalently refer to those weights as ia(f), called information accretion for the functional term f. The rationale for using weighted precision and recall is that GO is hierarchical and thus, the terms on top of the hierarchy are implied by their descendants. The weight for a term is determined by the logarithm of the frequency of occurrence of that term in a large pool of proteins. The root terms appear in every protein's annotation and thus, their weights are 0. Terms deep in the ontology tend to appear less frequently, be harder to predict, and thus their weights are larger (Clark & Radivojac, 2013). However, this does not always hold true, as highlighted in the following discussion.
+Using the terminology from Jiang et al. (2016), the evaluation will be carried out for no-knowledge and limited-knowledge protein targets combined, in the full evaluation mode, using maximum F-measures of information-accretion weighted precision and recall, one for each subontology. Note that in this competition, we also include the evaluation of proteins that already had experimental terms in all three subontologies, and have accumulated more experimental terms after the submission deadline, this is known as partial-knowledge protein targets. The three maximum F-measures of the three subontologies (Molecular Function, Biological Process, and Cellular Component) will be combined as an arithmetic mean for each subtype of knowledge gain. Finally, the three F-measures from the three subtypes no-knowledge, limited-knowledge, and partial-knowledge will be combined again as an arithmetic mean to compute the final performance. The evaluation code is available on this GitHub repository.
+Leaderboard
+The participants are cautioned that the leaderboard was designed to display method performance on a relatively small selection of proteins from the test superset (see Data), provided to us by the UniProtKB team, but not available in UniProtKB or other public databases. These proteins will not be included in the test set for the subontologies used for the leaderboard evaluation. The final test set will consist of proteins that will have accumulated functional terms after the submission deadline, and therefore, some distribution shift between the sample of proteins used for the leaderboard and the final evaluation sample is to be expected. Overall, the participants are encouraged to maximize the generalization performance and use the leaderboard only as a rough indicator of their model's performance.
+Submission File
+The list of predictions contains a list of pairs between protein targets and GO terms, followed by the probabilistic estimate of the relationship (one association per line). The target name must correspond to the target ID listed in the test set (in the FASTA header for each sequence). The GO ID must correspond to valid terms in GO's version listed in the Data section—invalid terms are automatically excluded from evaluation. Molecular Function (MF), Biological Process (BP), and Cellular Component (CC) subontologies of GO are to be combined in the prediction files, but they will be evaluated independently and combined at the end as described above. The score must be in the interval (0, 1.000] and contain up to 3 (three) significant figures. A score of 0 is not allowed; that is, the team should simply not list such pairs. In case the predictions in the submitted files are not propagated to the root of ontology, the predictions will be recursively propagated by assigning each parent term a score that is the maximum score among its children's scores. Finally, to limit prediction file sizes, one target cannot be associated with more than 1500 terms for MF, BP, and CC subontologies combined.
+For any protein ID in the test superset, you must list a set of GO terms and assign your estimated probability. If a protein ID is not listed in your submitted file, the organizers will assume that all predictions are 0. The file should not contain a header; columns must be tab-separated. An example submission file may look as follows:
+P9WHI7   GO:0009274   0.931   
+P9WHI7   GO:0071944   0.540
+P9WHI7   GO:0005575   0.324
+P04637   GO:1990837   0.23
+P04637   GO:0031625   0.989
+P04637   GO:0043565   0.64
+P04637   GO:0001091   0.49
+etc.
+The participants can manually investigate the UniProtKB entries for P9WHI7 and P04637 to familiarize themselves with biological databases.
+Optional Free Text Prediction
+Optionally, predictors may also include text in English that describes the function of any of the proteins in the test superset. The free text prediction task is optional. It will not be evaluated during the time of competition, it will not be included in the leaderboard calculation, and it will not be considered for winning prizes. Text predictions will be evaluated at a later time than GO term predictions, once a sufficient number of human-written textual paragraphs accumulate in UniProt (e.g., 9-12 months after the submission deadline). The assessment will be used to inform future directions of protein function prediction.
+Each protein target is allowed up to five lines of free text that will combine to make the text paragraph. Each line of text may only contain ASCII printable characters (ASCII codes: 33-126), with the space (ASCII code: 32) character used as a (word) delimiter. ASCII printable characters include letters, digits, punctuation marks and symbols. The text paragraph cannot have any tabs in it. The list of text predictions should be in the following format: target name, followed by the word “Text” in the second field, followed by a probabilistic estimate of the text line, and lastly the text string. The text prediction for each protein is limited to 3,000 characters over all lines used for that protein, including spaces (longer submissions will be truncated to the first 3,000 characters). The breakdown of the entire textual description into up to five lines is to allow for differential confidence levels for different textual assertions, with up to five different confidence levels per protein. All limitations are imposed to control the overall size of the submission files and allow for an efficient accuracy assessment by the organizers.
+Only one file can be submitted for both GO term and text prediction tasks; that is, GO term predictions should be combined with text predictions in a single submission file. If participants opt in for text prediction, an example submission file will look as follows:
+P9WHI7   GO:0009274   0.931   
+P9WHI7   GO:0071944   0.540
+P9WHI7   GO:0005575   0.324
+P9WHI7   Text    0.123  P9WHI7 is involved in homologous recombinational repair, a high-fidelity pathway for fixing double-strand breaks. This process uses an intact homologous DNA molecule as a template to accurately restore the damaged DNA sequence (PMID: 1234567)
+P04637   GO:1990837    0.23
+P04637   GO:0031625    0.989
+P04637   GO:0043565   0.64
+P04637   GO:0001091    0.49
+P04637   Text        0.234 Multifunctional transcription factor that induces cell cycle arrest, DNA repair or apoptosis upon binding to its target DNA sequence
+P04637   Text        0.570 Interaction with BANP was reported to enhance phosphorylation on Ser-15 upon ultraviolet irradiation   
+P04637   Text        0.570 Regulates the circadian clock by repressing CLOCK-BMAL1-mediated transcriptional activation of PER22
+Teams that choose to participate in the text prediction, but not in GO term prediction, can simply include only those lines that contain the word "Text" in the second field. They will not be scored in the GO term prediction.
+Evaluation of Textual Predictions
+The evaluation of textual predictions will contain two phases, which may depend on the number of participating teams and proteins that accumulate new textual descriptions between the submission deadline and the time of evaluation. In phase 1, large language models will be used to evaluate the accuracy of text paragraphs against human-written paragraphs; for example, in UniProt. The best teams will be identified using conventional metrics for text summarization. In phase 2, we anticipate that the human evaluators will compare paragraphs from the best teams identified in phase 1 against human descriptions to obtain the final rankings. Some of the lower-scoring teams in phase 1 may be randomly included in the human evaluation for calibration.
+It is important to mention two different scenarios in which textual predictions will be evaluated. In the first scenario, a large body of literature may already exist about the function of a given protein in the public domain, but it may not have yet been summarized in UniProt at the time of the submission deadline. In this case, the evaluation is effectively testing for the quality of text summarization as it is a classical problem in the natural language processing community. When possible, the predictors should also include the traceable evidence for particular statements; e.g., using PubMed IDs of the corresponding publications as in the example submission above. In the second scenario, there may not be any literature in the public domain about the function of a particular protein. In those cases, the predictors must predict function based on sequence and any other available data (e.g., expression), from which text needs to be generated. The second scenario is different and potentially more difficult than the first scenario. It will be separated from text summarization to the extent possible during evaluation (e.g., participants can combine the two scenarios, which will need sophistication during assessment). Participants should note that protein function prediction is carried out in an open world; that is, certain predictions (of GO terms or sentences) may be correct, but the experimental data may not support them at the time of assessment.
+Timeline
+link
+keyboard_arrow_up
+October 15, 2025 - Start Date.
+January 26, 2026 - Entry Deadline. You must accept the competition rules before this date in order to compete.
+January 26, 2026 - Team Merger Deadline. This is the last day participants may join or merge teams.
+February 2, 2026 - Final Submission Deadline.
+June 1, 2026 - Final Evaluation Date.
+All deadlines are at 11:59 PM UTC on the corresponding day unless otherwise noted. The competition organizers reserve the right to update the contest timeline if they deem it necessary.
+Note that following the final submission deadline (February 1, 2026), there will be periodic updates to the leaderboard to reflect future data updates that will be evaluated against selected submissions. We anticipate 2-3 interim updates before the final evaluation. June 1, 2026 will be the competition end date and the final evaluation date.
+Prizes
+link
+keyboard_arrow_up
+1st Place - $ 15,000
+2nd Place - $ 10,000
+3rd Place - $ 8,000
+4th Place - $ 7,000
+5th Place - $ 5,000
+6th Place - $ 5,000
+About CAFA competitions
+link
+keyboard_arrow_up
+To learn about the previous CAFA competition on Kaggle, check out this link.
+The Critical Assessment of Functional Annotation (CAFA) is a challenge designed to provide a large-scale assessment of computational methods dedicated to predicting protein function, using a prospective evaluation mechanism. The CAFA organizers provide a large number of protein sequences (target set). The predictors then predict the function of these proteins by associating them with Gene Ontology (GO) terms or other functional annotations (varying challenge to challenge). Following the prediction deadline, the organizers wait for several months. During that time, some proteins whose functions were not supported by experimental evidence before the prediction deadline will gain such experimental support (e.g., a paper reporting on what the protein does is published during the wait time). Those proteins constitute the benchmark (test) set, against which the methods are tested.
+CAFA is a community-wide effort whose goal is to help understand the state of affairs in computational protein function prediction and drive the field forward. The challenge started in 2010 and is held every three years. See more at our website.
+Introductions to CAFA and protein function prediction are available in the following papers:
+Radivojac P. A (not so) quick introduction to protein function prediction (2013). This text is intended primarily for computer scientists with little background in biology. pdf
+Friedberg I, Radivojac P. Community-wide evaluation of computational function prediction. Methods in Molecular Biology (2017) 1446:133-146. pdf
+More thorough reading describing CAFA1-3 challenges and summarizing all results:
+Radivojac P, et al. A large-scale evaluation of computational protein function prediction. Nat Methods (2013) 10(3):221-227. pdf
+Jiang Y, et al. An expanded evaluation of protein function prediction methods shows an improvement in accuracy. Genome Biol. (2016) 17(1):184. pdf
+Zhou N, et al. The CAFA challenge reports improved protein function prediction and new functional annotations for hundreds of genes through experimental screens. Genome Biol. (2019) 20(1):244. pdf
+The knowledge about protein function is notoriously incomplete. Even when a paper reports on the function of a protein, and it is considered accurate, it still may not be comprehensive. That is, some other functions of this macromolecule may not have been investigated and even if they are, there is no guarantee that the researchers covered all possible environmental conditions (e.g., temperature), all possible binding partners, all possible pathogen invasions, etc. These have been reported to be open world annotations; that is, the absence of evidence for a function cannot be considered the evidence for absence of that function. It is therefore to be understood that the assessment of prediction accuracy is only an approximation of the true accuracy.
+The effects of incomplete annotations on performance evaluation vary metric to metric and have been previously discussed and studied by
+Huttenhower C, et al. The impact of incomplete knowledge on evaluation: an experimental benchmark for protein function prediction. Bioinformatics (2009) 25(18):2404–2410. pdf
+Dessimoz C, et al. CAFA and the open world of protein function predictions. Trends Genet. (2013) 29(11):609–610. pdf
+Jiang Y, et al. The impact of incomplete knowledge on the evaluation of protein function prediction: a structured-output learning perspective. Bioinformatics (2014) 30(17):i609-i616. pdf
+Competition Host
+link
+keyboard_arrow_up
+The Function Community of Special Interest (Function-COSI) brings together computational biologists, experimental biologists, and biocurators who are dealing with the important problem of gene and gene product function prediction to share ideas and create collaborations. The Function-COSI holds annual meetings at the Intelligent Systems for Molecular Biology (ISMB) conference and conducts the multi-year Critical Assessment of protein Function Annotation (CAFA) experiment, an ongoing, global, community-driven effort to evaluate and improve the computational annotation of protein function.
+CAFA is co-chaired by Iddo Friedberg (Iowa State University) and Predrag Radivojac (Northeastern University). Additional academic co-organizers of this Kaggle competition include M. Clara De Paolis Kaluza (Northeastern University), An Phan (Iowa State University), Parnal Joshi (Iowa State University), UniProt (European Bioinformatics Institute), and Damiano Piovesan (University of Padova).
+Acknowledgments
+link
+keyboard_arrow_up
+We gratefully acknowledge the support of Iowa State University who is hosting this competition. We also acknowledge the support of Northeastern University, University of Padova, UniProt, and the International Society for Computational Biology.
+Citation
+link
+keyboard_arrow_up
+Iddo Friedberg, Predrag Radivojac, Paul D Thomas, An Phan, M. Clara De Paolis Kaluza, Damiano Piovesan, Parnal Joshi, Chris Mungall, Martyna Plomecka, Walter Reade, and María Cruz. CAFA 6 Protein Function Prediction. https://kaggle.com/competitions/cafa-6-protein-function-prediction, 2025. Kaggle.
+Cite
+Competition Host
+Critical Assessment of Functional Annotation
+Prizes & Awards
+$50,000
+Awards Points & Medals
+Participation
+7,717 Entrants
+1,654 Participants
+1,442 Teams
+19,513 Submissions
+Tags
+Tabular
+Biology
+Healthcare
+Custom Metric
+Table of Contents
+collapse_all
+Overview
+Description
+Context
+Evaluation
+Timeline
+Prizes
+About CAFA competitions
+Competition Host
+Acknowledgments
+Citation
+
+=== DATA ===
+Kaggle uses cookies from Google to deliver and enhance the quality of its services and to analyze traffic.
+Learn more
+OK, Got it.
+CRITICAL ASSESSMENT OF FUNCTIONAL ANNOTATION · RESEARCH PREDICTION COMPETITION · A MONTH TO GO
+Join Competition
+more_horiz
+CAFA 6 Protein Function Prediction
+Predict the biological function of a protein
+Overview
+Data
+Code
+Models
+Discussion
+Leaderboard
+Rules
+Dataset Description
+Dataset Description
+Background
+The Gene Ontology (GO) is a concept hierarchy that describes the biological function of genes and gene products at different levels of abstraction (Ashburner et al., 2000). It is a good model to describe the multi-faceted nature of protein function.
+GO is a directed acyclic graph. The nodes in this graph are functional descriptors (terms or classes) connected by relational ties between them (is_a, part_of, etc.). For example, terms “protein binding activity” and “binding activity” are related by an is_a relationship; however, the edge in the graph is often reversed to point from binding towards protein binding.
+This graph contains three subgraphs (subontologies): Molecular Function (MF), Biological Process (BP), and Cellular Component (CC), defined by their root nodes. Biologically, each subgraph represents a different aspect of the protein's function: what it does on a molecular level (MF), which biological processes it participates in (BP), and where in the cell it is located (CC). See the Gene Ontology Overview for more details.
+The protein's function is therefore represented by a subset of one or more of the subontologies.
+These annotations are supported by evidence codes, which can be broadly divided into experimental (e.g., as documented in a paper published by a research team of biologists) and non-experimental. Non-experimental terms are usually inferred by computational means. We recommend you read more about the different types of GO evidence codes.
+We will use experimentally determined term–protein assignments as class labels for each protein. That is, if a protein is labeled with a term, it means that this protein has this function validated by experimental evidence. By processing these annotated terms, we can generate a dataset of proteins and their ground truth labels for each term. The absence of a term annotation does not necessarily mean a protein does not have this function, only that this annotation does not exist (yet) in the GO annotation database. A protein may be annotated by one or more terms from the same subontology, and by terms from more than one subontology.
+Ashburner M, et al. Gene ontology: tool for the unification of biology. The Gene Ontology Consortium. Nat Genet (2000) 25(1):25–29.
+Training Set
+For the training set, we include all proteins with annotated terms that have been validated by experimental or high-throughput evidence, traceable author statement (evidence code TAS), or inferred by curator (IC). More information about evidence codes can be found here.
+We use annotations from the UniProtKB release of 18 June 2025. The training set contains proteins from eukaryotes and a few non-eukaryotic species (13 bacteria and 1 archaea). The list of selected species is provided below.
+The participants are not required to use these data and are also welcome to use any other data available to them.
+Test Superset
+The test superset is a set of protein sequences on which the participants are asked to predict GO terms and optionally a free-text paragraph describing the protein’s functions.
+Test Set
+The test set is unknown at the beginning of the competition. It will contain protein sequences (and their functions) from the test superset that gained experimental annotations between the submission deadline and the time of evaluation.
+File Descriptions
+Gene Ontology: The ontology data is in the file go-basic.obo. This structure is the 2025-06-01 release of the GO graph. This file is in OBO format, for which there exist many parsing libraries. For example, the obonet package is available for Python. The nodes in this graph are indexed by the term name. The roots of the three ontologies are:
+subontology_roots = {
+    'BPO': 'GO:0008150',
+    'CCO': 'GO:0005575',
+    'MFO': 'GO:0003674'
+}
+Training sequences: train_sequences.fasta contains the protein sequences for the training dataset.
+These files are in FASTA format, a standard format for describing protein sequences. The proteins were all retrieved from the UniProt dataset curated at the European Bioinformatics Institute.
+The header contains the protein's UniProt accession ID and additional information about the protein. All protein sequences from selected species were extracted from the Swiss-Prot database, from the 2025_03 release on 18 June 2025. The list of selected taxa can be found in testsuperset-taxon-list.tsv.
+The train_sequences.fasta file will indicate from which database the sequence originates. For example:
+sp|P9WHI7|RECN_MYCT
+indicates the protein with UniProt ID P9WHI7 and gene name RECN_MYCT was taken from Swiss-Prot (sp). All sequences in this competition were taken from Swiss-Prot.
+This file contains only sequences for proteins with annotations in the dataset (labeled proteins).
+Labels: train_terms.tsv contains the list of annotated terms (ground truth) for the proteins in train_sequences.fasta. The first column indicates the protein's UniProt accession ID, the second is the GO term ID, and the third indicates in which ontology the term appears.
+Taxonomy: train_taxonomy.tsv contains the list of proteins and the species to which they belong, represented by a taxonomic identifier (taxon ID). The first column is the protein UniProt accession ID and the second is the taxon ID.
+Information accretion: IA.tsv contains the information accretion (weights) for each GO term. These weights are used to compute weighted precision and recall, as described in the Evaluation section.
+Test sequences: testsuperset.fasta contains protein sequences on which the participants are asked to submit predictions (GO term predictions and optionally free-text predictions). The header for each sequence contains the protein's UniProt accession ID and the taxon ID of the species this protein belongs to.
+Only a small subset of those sequences will accumulate functional annotations and will constitute the test set.
+The file testsuperset-taxon-list.tsv provides the set of taxon IDs for the proteins in the test superset.
+Files
+train_sequences.fasta – amino acid sequences for proteins in the training set
+train_terms.tsv – the training set of proteins and corresponding annotated GO terms
+train_taxonomy.tsv – taxon IDs for proteins in the training set
+go-basic.obo – ontology graph structure
+testsuperset.fasta – amino acid sequences for proteins on which predictions should be made
+testsuperset-taxon-list.tsv – taxon IDs for proteins in the test superset
+IA.tsv – information accretion for each term (used to weight precision and recall)
+sample_submission.tsv – sample submission file in the correct format
+Files
+8 files
+Size
+199.29 MB
+Type
+tsv, fasta, obo
+License
+CC BY-SA 4.0
+IA.tsv(992.56 kB)
+get_app
+fullscreen
+chevron_right
+Competition Rules
+To see this data you need to agree to the competition rules.
+Please sign in or register to accept the rules.
+Sign In
+Data Explorer
+199.29 MB
+arrow_right
+folder
+Test
+arrow_right
+folder
+Train
+calendar_view_week
+IA.tsv
+calendar_view_week
+sample_submission.tsv
+Summary
+arrow_right
+folder
+8 files
+arrow_right
+calendar_view_week
+12 columns
+get_app
+Download All
+DOWNLOAD DATA
+navigate_next
+minimize
+content_copy
+help
+text_snippet
+Metadata
+License
+CC BY-SA 4.0
+
+=== RULES ===
+Kaggle uses cookies from Google to deliver and enhance the quality of its services and to analyze traffic.
+Learn more
+OK, Got it.
+CRITICAL ASSESSMENT OF FUNCTIONAL ANNOTATION · RESEARCH PREDICTION COMPETITION · A MONTH TO GO
+Join Competition
+more_horiz
+CAFA 6 Protein Function Prediction
+Predict the biological function of a protein
+Overview
+Data
+Code
+Models
+Discussion
+Leaderboard
+Rules
+Competition Rules
+create
+keyboard_arrow_up
+ENTRY IN THIS COMPETITION CONSTITUTES YOUR ACCEPTANCE OF THESE OFFICIAL COMPETITION RULES.
+See Section 3.18 for defined terms
+The Competition named below is a skills-based competition to promote and further the field of data science. You must register via the Competition Website to enter. To enter the Competition, you must agree to these Official Competition Rules, which incorporate by reference the provisions and content of the Competition Website and any Specific Competition Rules herein (collectively, the "Rules"). Please read these Rules carefully before entry to ensure you understand and agree. You further agree that Submission in the Competition constitutes agreement to these Rules. You may not submit to the Competition and are not eligible to receive the prizes associated with this Competition unless you agree to these Rules. These Rules form a binding legal agreement between you and the Competition Sponsor with respect to the Competition. Your competition Submissions must conform to the requirements stated on the Competition Website. Your Submissions will be scored based on the evaluation metric described on the Competition Website. Subject to compliance with the Competition Rules, Prizes, if any, will be awarded to Participants with the best scores, based on the merits of the data science models submitted. See below for the complete Competition Rules. For Competitions designated as hackathons by the Competition Sponsor (“Hackathons”), your Submissions will be judged by the Competition Sponsor based on the evaluation rubric set forth on the Competition Website (“Evaluation Rubric”). The Prizes, if any, will be awarded to Participants with the highest ranking(s) as determined by the Competition Sponsor based on such rubric.
+You cannot sign up to Kaggle from multiple accounts and therefore you cannot enter or submit from multiple accounts.
+1. COMPETITION-SPECIFIC TERMS
+1. COMPETITION TITLE
+CAFA 6 Protein Function Prediction
+2. COMPETITION SPONSOR
+Iowa State University of Science and Technology
+3. COMPETITION SPONSOR ADDRESS
+1805 Collaboration Place, Suite 2100, Ames, IA 50010
+4. COMPETITION WEBSITE
+https://www.kaggle.com/competitions/cafa-6-protein-function-prediction
+5. TOTAL PRIZES AVAILABLE: $50,000
+1st Place - $ 15,000
+2nd Place - $ 10,000
+3rd Place - $ 8,000
+4th Place - $ 7,000
+5th Place - $ 5,000
+6th Place - $ 5,000
+6. WINNER LICENSE TYPE
+Open Source, MIT. For additional winner's obligations, see Section 8.4.
+7. DATA ACCESS AND USE
+Competition Use and Non-Commercial & Academic Research
+2. COMPETITION-SPECIFIC RULES
+In addition to the provisions of the General Competition Rules below, you understand and agree to these Competition-Specific Rules required by the Competition Sponsor:
+1. TEAM LIMITS
+a. The maximum Team size is five (5). b. Team mergers are allowed and can be performed by the Team leader. In order to merge, the combined Team must have a total Submission count less than or equal to the maximum allowed as of the Team Merger Deadline. The maximum allowed is the number of Submissions per day multiplied by the number of days the competition has been running. For Hackathons, each team is allowed one (1) Submission; any Submissions submitted by Participants before merging into a Team will be unsubmitted.
+2. SUBMISSION LIMITS
+a. You may submit a maximum of five (5) Submissions per day. b. You may select up to two (2) Final Submissions for judging. c. For Hackathons, each Team may submit one (1) Submission only.
+3. COMPETITION TIMELINE
+a. Competition Timeline dates (including Entry Deadline, Final Submission Deadline, Start Date, and Team Merger Deadline, as applicable) are reflected on the competition’s Overview > Timeline page.
+4. COMPETITION DATA
+a. Data Access and Use.
+Competition Use and Non-Commercial & Academic Research: You may access and use the Competition Data for non-commercial purposes only, including for participating in the Competition and on Kaggle.com forums, and for academic research and education. The Competition Sponsor reserves the right to disqualify any Participant who uses the Competition Data other than as permitted by the Competition Website and these Rules.
+b. Data Security.
+You agree to use reasonable and suitable measures to prevent persons who have not formally agreed to these Rules from gaining access to the Competition Data. You agree not to transmit, duplicate, publish, redistribute or otherwise provide or make available the Competition Data to any party not participating in the Competition. You agree to notify Kaggle immediately upon learning of any possible unauthorized transmission of or unauthorized access to the Competition Data and agree to work with Kaggle to rectify any unauthorized transmission or access.
+5. WINNER LICENSE
+a. Under Section 2.8 (Winners Obligations) of the General Rules below, you hereby grant and will grant the Competition Sponsor the following license(s) with respect to your Submission if you are a Competition winner:
+Open Source: You hereby license and will license your winning Submission and the source code used to generate the Submission under an Open Source Initiative-approved license (see www.opensource.org) that in no event limits commercial use of such code or model containing or depending on such code.
+For generally commercially available software that you used to generate your Submission that is not owned by you, but that can be procured by the Competition Sponsor without undue expense, you do not need to grant the license in the preceding Section for that software.
+In the event that input data or pretrained models with an incompatible license are used to generate your winning solution, you do not need to grant an open source license in the preceding Section for that data and/or model(s).
+b. You may be required by the Sponsor to provide a detailed description of how the winning Submission was generated, to the Competition Sponsor’s specifications, as outlined in Section 2.8, Winner’s Obligations. This may include a detailed description of methodology, where one must be able to reproduce the approach by reading the description, and includes a detailed explanation of the architecture, preprocessing, loss function, training details, hyper-parameters, etc. The description should also include a link to a code repository with complete and detailed instructions so that the results obtained can be reproduced.
+6. EXTERNAL DATA AND TOOLS
+a. You may use data other than the Competition Data (“External Data”) to develop and test your Submissions. However, you will ensure the External Data is either publicly available and equally accessible to use by all Participants of the Competition for purposes of the competition at no cost to the other Participants, or satisfies the Reasonableness criteria as outlined in Section 2.6.b below. The ability to use External Data under this Section does not limit your other obligations under these Competition Rules, including but not limited to Section 2.8 (Winners Obligations).
+b. The use of external data and models is acceptable unless specifically prohibited by the Host. Because of the potential costs or restrictions (e.g., “geo restrictions”) associated with obtaining rights to use external data or certain software and associated tools, their use must be “reasonably accessible to all” and of “minimal cost”. Also, regardless of the cost challenges as they might affect all Participants during the course of the competition, the costs of potentially procuring a license for software used to generate a Submission, must also be considered. The Host will employ an assessment of whether or not the following criteria can exclude the use of the particular LLM, data set(s), or tool(s):
+Are Participants being excluded from a competition because of the "excessive" costs for access to certain LLMs, external data, or tools that might be used by other Participants. The Host will assess the excessive cost concern by applying a “Reasonableness” standard (the “Reasonableness Standard”). The Reasonableness Standard will be determined and applied by the Host in light of things like cost thresholds and accessibility.
+By way of example only, a small subscription charge to use additional elements of a large language model such as Gemini Advanced are acceptable if meeting the Reasonableness Standard of Sec. 8.2. Purchasing a license to use a proprietary dataset that exceeds the cost of a prize in the competition would not be considered reasonable.
+c. Automated Machine Learning Tools (“AMLT”)
+Individual Participants and Teams may use automated machine learning tool(s) (“AMLT”) (e.g., Google toML, H2O Driverless AI, etc.) to create a Submission, provided that the Participant or Team ensures that they have an appropriate license to the AMLT such that they are able to comply with the Competition Rules.
+7. ELIGIBILITY
+a. Unless otherwise stated in the Competition-Specific Rules above or prohibited by internal policies of the Competition Entities, employees, interns, contractors, officers and directors of Competition Entities may enter and participate in the Competition, but are not eligible to win any Prizes. "Competition Entities" means the Competition Sponsor, Kaggle Inc., and their respective parent companies, subsidiaries and affiliates. If you are such a Participant from a Competition Entity, you are subject to all applicable internal policies of your employer with respect to your participation.
+8. WINNER’S OBLIGATIONS
+a. As a condition to being awarded a Prize, a Prize winner must fulfill the following obligations:
+Deliver to the Competition Sponsor the final model's software code as used to generate the winning Submission and associated documentation. The delivered software code should follow these documentation guidelines, must be capable of generating the winning Submission, and contain a description of resources required to build and/or run the executable code successfully. For avoidance of doubt, delivered software code should include training code, inference code, and a description of the required computational environment. For Hackathons, the Submission deliverables will be as described on the Competition Website, which may be information or materials that are not software code.
+a. To the extent that the final model’s software code includes generally commercially available software that is not owned by you, but that can be procured by the Competition Sponsor without undue expense, then instead of delivering the code for that software to the Competition Sponsor, you must identify that software, method for procuring it, and any parameters or other information necessary to replicate the winning Submission; Individual Participants and Teams who create a Submission using an AMLT may win a Prize. However, for clarity, the potential winner’s Submission must still meet the requirements of these Rules, including but not limited to Section 2.5 (Winners License), Section 2.8 (Winners Obligations), and Section 3.14 (Warranty, Indemnity, and Release).”
+b. Individual Participants and Teams who create a Submission using an AMLT may win a Prize. However, for clarity, the potential winner’s Submission must still meet the requirements of these Rules,
+Grant to the Competition Sponsor the license to the winning Submission stated in the Competition Specific Rules above, and represent that you have the unrestricted right to grant that license;
+Sign and return all Prize acceptance documents as may be required by Competition Sponsor or Kaggle, including without limitation: (a) eligibility certifications; (b) licenses, releases and other agreements required under the Rules; and (c) U.S. tax forms (such as IRS Form W-9 if U.S. resident, IRS Form W-8BEN if foreign resident, or future equivalents).
+Winner requirements regarding solution usability:
+In addition to all other conditions set by Kaggle for winning solutions, the winning solution should have tracked versions via an established version control service (GitHub, Bitbucket, GitLab, and others upon request). The release associated with the winning CAFA submission must be archived on a platform such as Zenodo, and be usable.
+9. GOVERNING LAW
+a. Unless otherwise provided in the Competition Specific Rules above, all claims arising out of or relating to these Rules will be governed by California law, excluding its conflict of laws rules, and will be litigated exclusively in the Federal or State courts of Story County, Iowa, USA. The parties consent to personal jurisdiction in those courts. If any provision of these Rules is held to be invalid or unenforceable, all remaining provisions of the Rules will remain in full force and effect.
+3. GENERAL COMPETITION RULES - BINDING AGREEMENT
+1. ELIGIBILITY
+a. To be eligible to enter the Competition, you must be:
+a registered account holder at Kaggle.com;
+the older of 18 years old or the age of majority in your jurisdiction of residence (unless otherwise agreed to by Competition Sponsor and appropriate parental/guardian consents have been obtained by Competition Sponsor);
+not a resident of Crimea, so-called Donetsk People's Republic (DNR) or Luhansk People's Republic (LNR), Cuba, Iran, Syria, or North Korea; and
+not a person or representative of an entity under U.S. export controls or sanctions (see: https://www.treasury.gov/resourcecenter/sanctions/Programs/Pages/Programs.aspx).
+b. Competitions are open to residents of the United States and worldwide, except that if you are a resident of Crimea, so-called Donetsk People's Republic (DNR) or Luhansk People's Republic (LNR), Cuba, Iran, Syria, North Korea, or are subject to U.S. export controls or sanctions, you may not enter the Competition. Other local rules and regulations may apply to you, so please check your local laws to ensure that you are eligible to participate in skills-based competitions. The Competition Host reserves the right to forego or award alternative Prizes where needed to comply with local laws. If a winner is located in a country where prizes cannot be awarded, then they are not eligible to receive a prize.
+c. If you are entering as a representative of a company, educational institution or other legal entity, or on behalf of your employer, these rules are binding on you, individually, and the entity you represent or where you are an employee. If you are acting within the scope of your employment, or as an agent of another party, you warrant that such party or your employer has full knowledge of your actions and has consented thereto, including your potential receipt of a Prize. You further warrant that your actions do not violate your employer's or entity's policies and procedures.
+d. The Competition Sponsor reserves the right to verify eligibility and to adjudicate on any dispute at any time. If you provide any false information relating to the Competition concerning your identity, residency, mailing address, telephone number, email address, ownership of right, or information required for entering the Competition, you may be immediately disqualified from the Competition.
+2. SPONSOR AND HOSTING PLATFORM
+a. The Competition is sponsored by Competition Sponsor named above. The Competition is hosted on behalf of Competition Sponsor by Kaggle Inc. ("Kaggle"). Kaggle is an independent contractor of Competition Sponsor, and is not a party to this or any agreement between you and Competition Sponsor. You understand that Kaggle has no responsibility with respect to selecting the potential Competition winner(s) or awarding any Prizes. Kaggle will perform certain administrative functions relating to hosting the Competition, and you agree to abide by the provisions relating to Kaggle under these Rules. As a Kaggle.com account holder and user of the Kaggle competition platform, remember you have accepted and are subject to the Kaggle Terms of Service at www.kaggle.com/terms in addition to these Rules.
+3. COMPETITION PERIOD
+a. For the purposes of Prizes, the Competition will run from the Start Date and time to the Final Submission Deadline (such duration the “Competition Period”). The Competition Timeline is subject to change, and Competition Sponsor may introduce additional hurdle deadlines during the Competition Period. Any updated or additional deadlines will be publicized on the Competition Website. It is your responsibility to check the Competition Website regularly to stay informed of any deadline changes. YOU ARE RESPONSIBLE FOR DETERMINING THE CORRESPONDING TIME ZONE IN YOUR LOCATION.
+4. COMPETITION ENTRY
+a. NO PURCHASE NECESSARY TO ENTER OR WIN. To enter the Competition, you must register on the Competition Website prior to the Entry Deadline, and follow the instructions for developing and entering your Submission through the Competition Website. Your Submissions must be made in the manner and format, and in compliance with all other requirements, stated on the Competition Website (the "Requirements"). Submissions must be received before any Submission deadlines stated on the Competition Website. Submissions not received by the stated deadlines will not be eligible to receive a Prize. b. Except as expressly allowed in Hackathons as set forth on the Competition Website, submissions may not use or incorporate information from hand labeling or human prediction of the validation dataset or test data records. c. If the Competition is a multi-stage competition with temporally separate training and/or test data, one or more valid Submissions may be required during each Competition stage in the manner described on the Competition Website in order for the Submissions to be Prize eligible. d. Submissions are void if they are in whole or part illegible, incomplete, damaged, altered, counterfeit, obtained through fraud, or late. Competition Sponsor reserves the right to disqualify any entrant who does not follow these Rules, including making a Submission that does not meet the Requirements.
+5. INDIVIDUALS AND TEAMS
+a. Individual Account. You may make Submissions only under one, unique Kaggle.com account. You will be disqualified if you make Submissions through more than one Kaggle account, or attempt to falsify an account to act as your proxy. You may submit up to the maximum number of Submissions per day as specified on the Competition Website. b. Teams. If permitted under the Competition Website guidelines, multiple individuals may collaborate as a Team; however, you may join or form only one Team. Each Team member must be a single individual with a separate Kaggle account. You must register individually for the Competition before joining a Team. You must confirm your Team membership to make it official by responding to the Team notification message sent to your Kaggle account. Team membership may not exceed the Maximum Team Size stated on the Competition Website. c. Team Merger. Teams (or individual Participants) may request to merge via the Competition Website. Team mergers may be allowed provided that: (i) the combined Team does not exceed the Maximum Team Size; (ii) the number of Submissions made by the merging Teams does not exceed the number of Submissions permissible for one Team at the date of the merger request; (iii) the merger is completed before the earlier of: any merger deadline or the Competition deadline; and (iv) the proposed combined Team otherwise meets all the requirements of these Rules. d. Private Sharing. No private sharing outside of Teams. Privately sharing code or data outside of Teams is not permitted. It's okay to share code if made available to all Participants on the forums.
+6. SUBMISSION CODE REQUIREMENTS
+a. Private Code Sharing. Unless otherwise specifically permitted under the Competition Website or Competition Specific Rules above, during the Competition Period, you are not allowed to privately share source or executable code developed in connection with or based upon the Competition Data or other source or executable code relevant to the Competition (“Competition Code”). This prohibition includes sharing Competition Code between separate Teams, unless a Team merger occurs. Any such sharing of Competition Code is a breach of these Competition Rules and may result in disqualification. b. Public Code Sharing. You are permitted to publicly share Competition Code, provided that such public sharing does not violate the intellectual property rights of any third party. If you do choose to share Competition Code or other such code, you are required to share it on Kaggle.com on the discussion forum or notebooks associated specifically with the Competition for the benefit of all competitors. By so sharing, you are deemed to have licensed the shared code under an Open Source Initiative-approved license (see www.opensource.org) that in no event limits commercial use of such Competition Code or model containing or depending on such Competition Code. c. Use of Open Source. Unless otherwise stated in the Specific Competition Rules above, if open source code is used in the model to generate the Submission, then you must only use open source code licensed under an Open Source Initiative-approved license (see www.opensource.org) that in no event limits commercial use of such code or model containing or depending on such code.
+7. DETERMINING WINNERS
+a. Each Submission will be scored and/or ranked by the evaluation metric, or Evaluation Rubric (in the case of Hackathon Competitions),stated on the Competition Website. During the Competition Period, the current ranking will be visible on the Competition Website's Public Leaderboard. The potential winner(s) are determined solely by the leaderboard ranking on the Private Leaderboard, subject to compliance with these Rules. The Public Leaderboard will be based on the public test set and the Private Leaderboard will be based on the private test set. There will be no leaderboards for Hackathon Competitions. b. In the event of a tie, the Submission that was entered first to the Competition will be the winner. In the event a potential winner is disqualified for any reason, the Submission that received the next highest score rank will be chosen as the potential winner. For Hackathon Competitions, each of the top Submissions will get a unique ranking and there will be no tiebreakers.
+8. NOTIFICATION OF WINNERS & DISQUALIFICATION
+a. The potential winner(s) will be notified by email. b. If a potential winner (i) does not respond to the notification attempt within one (1) week from the first notification attempt or (ii) notifies Kaggle within one week after the Final Submission Deadline that the potential winner does not want to be nominated as a winner or does not want to receive a Prize, then, in each case (i) and (ii) such potential winner will not receive any Prize, and an alternate potential winner will be selected from among all eligible entries received based on the Competition’s judging criteria. c. In case (i) and (ii) above Kaggle may disqualify the Participant. However, in case (ii) above, if requested by Kaggle, such potential winner may provide code and documentation to verify the Participant’s compliance with these Rules. If the potential winner provides code and documentation to the satisfaction of Kaggle, the Participant will not be disqualified pursuant to this paragraph. d. Competition Sponsor reserves the right to disqualify any Participant from the Competition if the Competition Sponsor reasonably believes that the Participant has attempted to undermine the legitimate operation of the Competition by cheating, deception, or other unfair playing practices or abuses, threatens or harasses any other Participants, Competition Sponsor or Kaggle. e. A disqualified Participant may be removed from the Competition leaderboard, at Kaggle's sole discretion. If a Participant is removed from the Competition Leaderboard, additional winning features associated with the Kaggle competition platform, for example Kaggle points or medals, may also not be awarded. f. The final leaderboard list will be publicly displayed at Kaggle.com. Determinations of Competition Sponsor are final and binding.
+9. PRIZES
+a. Prize(s) are as described on the Competition Website and are only available for winning during the time period described on the Competition Website. The odds of winning any Prize depends on the number of eligible Submissions received during the Competition Period and the skill of the Participants. b. All Prizes are subject to Competition Sponsor's review and verification of the Participant’s eligibility and compliance with these Rules, and the compliance of the winning Submissions with the Submissions Requirements. In the event that the Submission demonstrates non-compliance with these Competition Rules, Competition Sponsor may at its discretion take either of the following actions: (i) disqualify the Submission(s); or (ii) require the potential winner to remediate within one week after notice all issues identified in the Submission(s) (including, without limitation, the resolution of license conflicts, the fulfillment of all obligations required by software licenses, and the removal of any software that violates the software restrictions). c. A potential winner may decline to be nominated as a Competition winner in accordance with Section 3.8. d. Potential winners must return all required Prize acceptance documents within two (2) weeks following notification of such required documents, or such potential winner will be deemed to have forfeited the prize and another potential winner will be selected. Prize(s) will be awarded within approximately thirty (30) days after receipt by Competition Sponsor or Kaggle of the required Prize acceptance documents. Transfer or assignment of a Prize is not allowed. e. You are not eligible to receive any Prize if you do not meet the Eligibility requirements in Section 2.7 and Section 3.1 above. f. If a Team wins a monetary Prize, the Prize money will be allocated in even shares between the eligible Team members, unless the Team unanimously opts for a different Prize split and notifies Kaggle before Prizes are issued.
+10. TAXES
+a. ALL TAXES IMPOSED ON PRIZES ARE THE SOLE RESPONSIBILITY OF THE WINNERS. Payments to potential winners are subject to the express requirement that they submit all documentation requested by Competition Sponsor or Kaggle for compliance with applicable state, federal, local and foreign (including provincial) tax reporting and withholding requirements. Prizes will be net of any taxes that Competition Sponsor is required by law to withhold. If a potential winner fails to provide any required documentation or comply with applicable laws, the Prize may be forfeited and Competition Sponsor may select an alternative potential winner. Any winners who are U.S. residents will receive an IRS Form-1099 in the amount of their Prize.
+11. GENERAL CONDITIONS
+a. All federal, state, provincial and local laws and regulations apply.
+12. PUBLICITY
+a. You agree that Competition Sponsor, Kaggle and its affiliates may use your name and likeness for advertising and promotional purposes without additional compensation, unless prohibited by law.
+13. PRIVACY
+a. You acknowledge and agree that Competition Sponsor and Kaggle may collect, store, share and otherwise use personally identifiable information provided by you during the Kaggle account registration process and the Competition, including but not limited to, name, mailing address, phone number, and email address (“Personal Information”). Kaggle acts as an independent controller with regard to its collection, storage, sharing, and other use of this Personal Information, and will use this Personal Information in accordance with its Privacy Policy <www.kaggle.com/privacy>, including for administering the Competition. As a Kaggle.com account holder, you have the right to request access to, review, rectification, portability or deletion of any personal data held by Kaggle about you by logging into your account and/or contacting Kaggle Support at <www.kaggle.com/contact>. b. As part of Competition Sponsor performing this contract between you and the Competition Sponsor, Kaggle will transfer your Personal Information to Competition Sponsor, which acts as an independent controller with regard to this Personal Information. As a controller of such Personal Information, Competition Sponsor agrees to comply with all U.S. and foreign data protection obligations with regard to your Personal Information. Kaggle will transfer your Personal Information to Competition Sponsor in the country specified in the Competition Sponsor Address listed above, which may be a country outside the country of your residence. Such country may not have privacy laws and regulations similar to those of the country of your residence.
+14. WARRANTY, INDEMNITY AND RELEASE
+a. You warrant that your Submission is your own original work and, as such, you are the sole and exclusive owner and rights holder of the Submission, and you have the right to make the Submission and grant all required licenses. You agree not to make any Submission that: (i) infringes any third party proprietary rights, intellectual property rights, industrial property rights, personal or moral rights or any other rights, including without limitation, copyright, trademark, patent, trade secret, privacy, publicity or confidentiality obligations, or defames any person; or (ii) otherwise violates any applicable U.S. or foreign state or federal law. b. To the maximum extent permitted by law, you indemnify and agree to keep indemnified Competition Entities at all times from and against any liability, claims, demands, losses, damages, costs and expenses resulting from any of your acts, defaults or omissions and/or a breach of any warranty set forth herein. To the maximum extent permitted by law, you agree to defend, indemnify and hold harmless the Competition Entities from and against any and all claims, actions, suits or proceedings, as well as any and all losses, liabilities, damages, costs and expenses (including reasonable attorneys fees) arising out of or accruing from: (a) your Submission or other material uploaded or otherwise provided by you that infringes any third party proprietary rights, intellectual property rights, industrial property rights, personal or moral rights or any other rights, including without limitation, copyright, trademark, patent, trade secret, privacy, publicity or confidentiality obligations, or defames any person; (b) any misrepresentation made by you in connection with the Competition; (c) any non-compliance by you with these Rules or any applicable U.S. or foreign state or federal law; (d) claims brought by persons or entities other than the parties to these Rules arising from or related to your involvement with the Competition; and (e) your acceptance, possession, misuse or use of any Prize, or your participation in the Competition and any Competition-related activity. c. You hereby release Competition Entities from any liability associated with: (a) any malfunction or other problem with the Competition Website; (b) any error in the collection, processing, or retention of any Submission; or (c) any typographical or other error in the printing, offering or announcement of any Prize or winners.
+15. INTERNET
+a. Competition Entities are not responsible for any malfunction of the Competition Website or any late, lost, damaged, misdirected, incomplete, illegible, undeliverable, or destroyed Submissions or entry materials due to system errors, failed, incomplete or garbled computer or other telecommunication transmission malfunctions, hardware or software failures of any kind, lost or unavailable network connections, typographical or system/human errors and failures, technical malfunction(s) of any telephone network or lines, cable connections, satellite transmissions, servers or providers, or computer equipment, traffic congestion on the Internet or at the Competition Website, or any combination thereof, which may limit a Participant’s ability to participate.
+16. RIGHT TO CANCEL, MODIFY OR DISQUALIFY
+a. If for any reason the Competition is not capable of running as planned, including infection by computer virus, bugs, tampering, unauthorized intervention, fraud, technical failures, or any other causes which corrupt or affect the administration, security, fairness, integrity, or proper conduct of the Competition, Competition Sponsor reserves the right to cancel, terminate, modify or suspend the Competition. Competition Sponsor further reserves the right to disqualify any Participant who tampers with the submission process or any other part of the Competition or Competition Website. Any attempt by a Participant to deliberately damage any website, including the Competition Website, or undermine the legitimate operation of the Competition is a violation of criminal and civil laws. Should such an attempt be made, Competition Sponsor and Kaggle each reserves the right to seek damages from any such Participant to the fullest extent of the applicable law.
+17. NOT AN OFFER OR CONTRACT OF EMPLOYMENT
+a. Under no circumstances will the entry of a Submission, the awarding of a Prize, or anything in these Rules be construed as an offer or contract of employment with Competition Sponsor or any of the Competition Entities. You acknowledge that you have submitted your Submission voluntarily and not in confidence or in trust. You acknowledge that no confidential, fiduciary, agency, employment or other similar relationship is created between you and Competition Sponsor or any of the Competition Entities by your acceptance of these Rules or your entry of your Submission.
+18. DEFINITIONS
+a. "Competition Data" are the data or datasets available from the Competition Website for the purpose of use in the Competition, including any prototype or executable code provided on the Competition Website. The Competition Data will contain private and public test sets. Which data belongs to which set will not be made available to Participants. b. An “Entry” is when a Participant has joined, signed up, or accepted the rules of a competition. Entry is required to make a Submission to a competition. c. A “Final Submission” is the Submission selected by the user, or automatically selected by Kaggle in the event not selected by the user, that is/are used for final placement on the competition leaderboard. d. A “Participant” or “Participant User” is an individual who participates in a competition by entering the competition and making a Submission. e. The “Private Leaderboard” is a ranked display of Participants’ Submission scores against the private test set. The Private Leaderboard determines the final standing in the competition. f. The “Public Leaderboard” is a ranked display of Participants’ Submission scores against a representative sample of the test data. This leaderboard is visible throughout the competition. g. A “Sponsor” is responsible for hosting the competition, which includes but is not limited to providing the data for the competition, determining winners, and enforcing competition rules. h. A “Submission” is anything provided by the Participant to the Sponsor to be evaluated for competition purposes and determine leaderboard position. A Submission may be made as a model, notebook, prediction file, or other format as determined by the Sponsor. i. A “Team” is one or more Participants participating together in a Kaggle competition, by officially merging together as a Team within the competition platform.
+Rules
+Competition Rules
+ENTRY IN THIS COMPETITION CONSTITUTES YOUR ACCEPTANCE OF THESE OFFICIAL COMPETITION RULES.
+1. COMPETITION-SPECIFIC TERMS
+1. COMPETITION TITLE
+2. COMPETITION SPONSOR
+3. COMPETITION SPONSOR ADDRESS
+4. COMPETITION WEBSITE
+5. TOTAL PRIZES AVAILABLE: $50,000
+6. WINNER LICENSE TYPE
+7. DATA ACCESS AND USE
+2. COMPETITION-SPECIFIC RULES
+1. TEAM LIMITS
+2. SUBMISSION LIMITS
+3. COMPETITION TIMELINE
+4. COMPETITION DATA
+5. WINNER LICENSE
+6. EXTERNAL DATA AND TOOLS
+7. ELIGIBILITY
+8. WINNER’S OBLIGATIONS
+9. GOVERNING LAW
+3. GENERAL COMPETITION RULES - BINDING AGREEMENT
+1. ELIGIBILITY
+2. SPONSOR AND HOSTING PLATFORM
+3. COMPETITION PERIOD
+4. COMPETITION ENTRY
+5. INDIVIDUALS AND TEAMS
+6. SUBMISSION CODE REQUIREMENTS
+7. DETERMINING WINNERS
+8. NOTIFICATION OF WINNERS & DISQUALIFICATION
+9. PRIZES
+10. TAXES
+11. GENERAL CONDITIONS
+12. PUBLICITY
+13. PRIVACY
+14. WARRANTY, INDEMNITY AND RELEASE
+15. INTERNET
+16. RIGHT TO CANCEL, MODIFY OR DISQUALIFY
+17. NOT AN OFFER OR CONTRACT OF EMPLOYMENT
+18. DEFINITIONS
+
+=== CODE ===
+Top 10 Notebook Links:
+https://www.kaggle.com/code/taylorsamarel/cafa-6-protein-function-starter-eda-model
+https://www.kaggle.com/code/siddhvr/cafa5-using-protbert-embeds
+https://www.kaggle.com/code/nihilisticneuralnet/protbert-ensemble
+https://www.kaggle.com/code/analyticaobscura/cafa-6-decoding-protein-mysteries
+https://www.kaggle.com/code/analyticaobscura/cafa-6-protein-function-prediction
+https://www.kaggle.com/code/guntasdhanjal/cafa-6-proven-ensemble-submission
+https://www.kaggle.com/code/khoatran512/ktdk-int3405e2-final
+https://www.kaggle.com/code/seddiktrk/cafa-6-blend-goa-negative-propagation
+https://www.kaggle.com/code/subarnasaikia/cafa-6-base-model-lb-0-209
+https://www.kaggle.com/code/sasaleaf/merge-of-2submission-lb-0-25
+

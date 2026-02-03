@@ -1,0 +1,514 @@
+Imports and configs
+In [1]:
+!pip install -q scikit-learn==1.5.2
+unfold_moreShow hidden output
+In [2]:
+from lightgbm import LGBMClassifier, log_evaluation, early_stopping
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import LabelEncoder
+from sklearn.base import clone
+from xgboost import XGBClassifier
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import numpy as np
+import warnings
+import joblib
+import optuna
+import shutil
+import glob
+import json
+import gc
+
+warnings.filterwarnings("ignore")
+In [3]:
+class CFG:
+    train_path = "/kaggle/input/playground-series-s5e6/train.csv"
+    test_path = "/kaggle/input/playground-series-s5e6/test.csv"
+    sample_sub_path = "/kaggle/input/playground-series-s5e6/sample_submission.csv"
+
+    original_path = "/kaggle/input/fertilizer-prediction/Fertilizer Prediction.csv"
+    
+    target = "Fertilizer Name"
+    n_folds = 5
+    seed = 42
+Data loading and preprocessing
+In [4]:
+train = pd.read_csv(CFG.train_path, index_col="id")
+test = pd.read_csv(CFG.test_path, index_col="id")
+original = pd.read_csv(CFG.original_path)
+
+features = test.columns.tolist()
+train[features] = train[features].astype(str).astype("category")
+test[features] = test[features].astype(str).astype("category")
+original[features] = original[features].astype(str).astype("category")
+
+label_encoder = LabelEncoder()
+train[CFG.target] = label_encoder.fit_transform(train[CFG.target])
+original[CFG.target] = label_encoder.transform(original[CFG.target])
+
+X = train.drop(CFG.target, axis=1)
+y = train[CFG.target]
+X_test = test
+
+X_original = original.drop(CFG.target, axis=1)
+y_original = original[CFG.target]
+In [5]:
+mutual_info = mutual_info_classif(X, y, random_state=CFG.seed, discrete_features=True)
+
+mutual_info = pd.Series(mutual_info)
+mutual_info.index = X.columns
+mutual_info = pd.DataFrame(mutual_info.sort_values(ascending=False), columns=['Mutual Information'])
+mutual_info.style.bar(subset=['Mutual Information'], cmap='RdYlGn')
+Out[5]:
+  Mutual Information
+Moisture 0.003308
+Phosphorous 0.002984
+Nitrogen 0.002373
+Crop Type 0.002088
+Potassium 0.001367
+Humidity 0.001015
+Temparature 0.000966
+Soil Type 0.000617
+In [6]:
+mutual_info = mutual_info_classif(X_original, y_original, random_state=CFG.seed, discrete_features=True)
+
+mutual_info = pd.Series(mutual_info)
+mutual_info.index = X_original.columns
+mutual_info = pd.DataFrame(mutual_info.sort_values(ascending=False), columns=['Mutual Information'])
+mutual_info.style.bar(subset=['Mutual Information'], cmap='RdYlGn')
+Out[6]:
+  Mutual Information
+Phosphorous 0.001362
+Moisture 0.001355
+Nitrogen 0.001068
+Potassium 0.000626
+Humidity 0.000494
+Temparature 0.000432
+Crop Type 0.000320
+Soil Type 0.000107
+Training base models
+In [7]:
+def map3(y_true, y_pred_probs):
+    y_true = [[x] for x in y_true]
+    y_pred_probs = np.argsort(y_pred_probs, axis=1)[:, -3:][:, ::-1].tolist()
+    
+    def ap3(y_true, y_pred_probs):
+        y_pred_probs = y_pred_probs[:3]
+
+        score = 0.0
+        num_hits = 0.0
+
+        for i,p in enumerate(y_pred_probs):
+            if p in y_true and p not in y_pred_probs[:i]:
+                num_hits += 1.0
+                score += num_hits / (i+1.0)
+
+        if not y_true:
+            return 0.0
+
+        return score
+    
+    return np.mean([ap3(a,p) for a,p in zip(y_true, y_pred_probs)])
+In [8]:
+class Trainer:
+    def __init__(self, model, config=CFG):
+        self.model = model
+        self.config = config
+
+    def fit_predict(self, X, y, X_test, X_original=None, y_original=None, fit_args={}):
+        print(f"Training {self.model.__class__.__name__}\n")
+        
+        scores = []        
+        oof_pred_probs = np.zeros((X.shape[0], 7))
+        test_pred_probs = np.zeros((X_test.shape[0], 7))
+        
+        skf = StratifiedKFold(n_splits=self.config.n_folds, random_state=self.config.seed, shuffle=True)
+        for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_train, y_val = y[train_idx], y[val_idx]
+
+            if X_original is not None and y_original is not None:
+                X_train = pd.concat([X_train, X_original])
+                y_train = pd.concat([y_train, y_original])
+            
+            model = clone(self.model)
+            
+            if fit_args:
+                model.fit(X_train, y_train, **fit_args, eval_set=[(X_val, y_val)])
+            else:
+                model.fit(X_train, y_train)
+            
+            y_pred_probs = model.predict_proba(X_val)
+            oof_pred_probs[val_idx] = y_pred_probs
+            
+            temp_test_pred_probs = model.predict_proba(X_test)
+            test_pred_probs += temp_test_pred_probs / self.config.n_folds
+            
+            score = map3(y_val, y_pred_probs)
+            scores.append(score)
+            
+            del model, X_train, y_train, X_val, y_val, y_pred_probs
+            gc.collect()
+            
+            if fit_args:
+                print(f"\n--- Fold {fold_idx + 1} - MAP@3: {score:.6f}\n\n")
+            else:
+                print(f"--- Fold {fold_idx + 1} - MAP@3: {score:.6f}")
+                            
+        overall_score = map3(y, oof_pred_probs)
+            
+        print(f"\n------ Overall MAP@3: {overall_score:.6f} | Average MAP@3: {np.mean(scores):.6f} ± {np.std(scores):.6f}")
+        
+        return oof_pred_probs, test_pred_probs, scores
+
+    def tune(self, X, y):        
+        scores = []        
+        
+        skf = StratifiedKFold(n_splits=self.config.n_folds, random_state=self.config.seed, shuffle=True)
+        for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_train, y_val = y[train_idx], y[val_idx]
+            
+            model = clone(self.model)
+            model.fit(X_train, y_train)
+            
+            y_pred_probs = model.predict_proba(X_val)            
+            score = map3(y_val, y_pred_probs)
+            scores.append(score)
+            
+            del model, X_train, y_train, X_val, y_val, y_pred_probs
+            gc.collect()
+            
+        return np.mean(scores)
+unfold_moreShow hidden code
+In [10]:
+scores = {}
+oof_pred_probs = {}
+test_pred_probs = {}
+LightGBM (gbdt)
+In [11]:
+lgbm_model = LGBMClassifier(**lgbm_params)
+lgbm_trainer = Trainer(lgbm_model)
+
+fit_args = {
+    "callbacks": [
+        log_evaluation(period=1000), 
+        early_stopping(stopping_rounds=100)
+    ]
+}
+
+oof_pred_probs["LightGBM (gbdt)"], test_pred_probs["LightGBM (gbdt)"], scores["LightGBM (gbdt)"] = lgbm_trainer.fit_predict(X, y, X_test, X_original, y_original, fit_args)
+Training LGBMClassifier
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+1 warning generated.
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's multi_logloss: 1.8953
+Early stopping, best iteration is:
+[1888] valid_0's multi_logloss: 1.89006
+
+--- Fold 1 - MAP@3: 0.366839
+
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's multi_logloss: 1.89528
+Early stopping, best iteration is:
+[1867] valid_0's multi_logloss: 1.88987
+
+--- Fold 2 - MAP@3: 0.366103
+
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's multi_logloss: 1.89374
+[2000] valid_0's multi_logloss: 1.88771
+Early stopping, best iteration is:
+[2028] valid_0's multi_logloss: 1.88769
+
+--- Fold 3 - MAP@3: 0.368080
+
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's multi_logloss: 1.89582
+[2000] valid_0's multi_logloss: 1.89061
+Early stopping, best iteration is:
+[1910] valid_0's multi_logloss: 1.89055
+
+--- Fold 4 - MAP@3: 0.365113
+
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's multi_logloss: 1.89431
+Early stopping, best iteration is:
+[1870] valid_0's multi_logloss: 1.88898
+
+--- Fold 5 - MAP@3: 0.366594
+
+
+
+------ Overall MAP@3: 0.366546 | Average MAP@3: 0.366546 ± 0.000968
+LightGBM (goss)
+In [12]:
+lgb_goss_model = LGBMClassifier(**lgbm_goss_params)
+lgb_goss_trainer = Trainer(lgb_goss_model)
+
+fit_args = {
+    "callbacks": [
+        log_evaluation(period=1000), 
+        early_stopping(stopping_rounds=100)
+    ]
+}
+
+oof_pred_probs["LightGBM (goss)"], test_pred_probs["LightGBM (goss)"], scores["LightGBM (goss)"] = lgb_goss_trainer.fit_predict(X, y, X_test, X_original, y_original, fit_args)
+Training LGBMClassifier
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's multi_logloss: 1.90762
+[2000] valid_0's multi_logloss: 1.89665
+[3000] valid_0's multi_logloss: 1.89233
+Early stopping, best iteration is:
+[3707] valid_0's multi_logloss: 1.89157
+
+--- Fold 1 - MAP@3: 0.364141
+
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's multi_logloss: 1.90777
+[2000] valid_0's multi_logloss: 1.89653
+[3000] valid_0's multi_logloss: 1.89178
+Early stopping, best iteration is:
+[3893] valid_0's multi_logloss: 1.89088
+
+--- Fold 2 - MAP@3: 0.365792
+
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's multi_logloss: 1.90664
+[2000] valid_0's multi_logloss: 1.89506
+[3000] valid_0's multi_logloss: 1.8903
+Early stopping, best iteration is:
+[3871] valid_0's multi_logloss: 1.88926
+
+--- Fold 3 - MAP@3: 0.366259
+
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's multi_logloss: 1.90785
+[2000] valid_0's multi_logloss: 1.8968
+[3000] valid_0's multi_logloss: 1.89245
+Early stopping, best iteration is:
+[3718] valid_0's multi_logloss: 1.8917
+
+--- Fold 4 - MAP@3: 0.363751
+
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's multi_logloss: 1.90686
+[2000] valid_0's multi_logloss: 1.89573
+[3000] valid_0's multi_logloss: 1.89121
+Early stopping, best iteration is:
+[3574] valid_0's multi_logloss: 1.89056
+
+--- Fold 5 - MAP@3: 0.365104
+
+
+
+------ Overall MAP@3: 0.365010 | Average MAP@3: 0.365010 ± 0.000951
+XGBoost
+In [13]:
+xgb_model = XGBClassifier(**xgb_params)
+xgb_trainer = Trainer(xgb_model)
+
+fit_args = {
+    "verbose": 1000
+}
+
+oof_pred_probs["XGBoost"], test_pred_probs["XGBoost"], scores["XGBoost"] = xgb_trainer.fit_predict(X, y, X_test, X_original, y_original, fit_args)
+Training XGBClassifier
+
+[0] validation_0-mlogloss:1.94553
+[912] validation_0-mlogloss:1.88990
+
+--- Fold 1 - MAP@3: 0.366436
+
+
+[0] validation_0-mlogloss:1.94553
+[894] validation_0-mlogloss:1.88908
+
+--- Fold 2 - MAP@3: 0.366754
+
+
+[0] validation_0-mlogloss:1.94553
+[946] validation_0-mlogloss:1.88769
+
+--- Fold 3 - MAP@3: 0.368023
+
+
+[0] validation_0-mlogloss:1.94553
+[870] validation_0-mlogloss:1.89012
+
+--- Fold 4 - MAP@3: 0.365927
+
+
+[0] validation_0-mlogloss:1.94552
+[882] validation_0-mlogloss:1.88863
+
+--- Fold 5 - MAP@3: 0.366706
+
+
+
+------ Overall MAP@3: 0.366769 | Average MAP@3: 0.366769 ± 0.000693
+AutoGluon
+In [14]:
+oof_preds_files = glob.glob(f'/kaggle/input/s05e06-fertilizer-optimization-autogluon/*_oof_pred_probs_*.pkl')
+test_preds_files = glob.glob(f'/kaggle/input/s05e06-fertilizer-optimization-autogluon/*_test_pred_probs_*.pkl')
+
+ag_oof_preds = joblib.load(oof_preds_files[0])
+ag_test_preds = joblib.load(test_preds_files[0])
+
+ag_scores = []
+split = StratifiedKFold(n_splits=CFG.n_folds, random_state=CFG.seed, shuffle=True).split(X, y)
+for _, val_idx in split:
+    y_val = y[val_idx]
+    y_preds = ag_oof_preds[val_idx]
+    score = map3(y_val, y_preds)
+    ag_scores.append(score)
+    
+oof_pred_probs["AutoGluon"], test_pred_probs["AutoGluon"], scores["AutoGluon"] = ag_oof_preds, ag_test_preds, ag_scores
+LogisticRegression
+unfold_moreShow hidden code
+100%|██████████| 56/56 [11:26<00:00, 12.26s/it]
+In [16]:
+lr_model = Augmented(
+    make_pipeline(
+        OneHotEncoder(handle_unknown='ignore'),
+        LogisticRegression(C=1e-2, max_iter=10000, random_state=0)
+    ), X_o_e, y_o, weight_arg='logisticregression__sample_weight', 
+    weight=4.0
+)
+
+lr_trainer = Trainer(lr_model)
+oof_pred_probs["LogisticRegression"], test_pred_probs["LogisticRegression"], scores["LogisticRegression"] = lr_trainer.fit_predict(X_e, y, X_test_e)
+Training AugmentedModel
+
+--- Fold 1 - MAP@3: 0.374382
+--- Fold 2 - MAP@3: 0.373953
+--- Fold 3 - MAP@3: 0.376254
+--- Fold 4 - MAP@3: 0.373357
+--- Fold 5 - MAP@3: 0.375070
+
+------ Overall MAP@3: 0.374603 | Average MAP@3: 0.374603 ± 0.000997
+Ensembling with LogisticRegression
+In [17]:
+X = pd.DataFrame(np.concatenate(list(oof_pred_probs.values()), axis=1))
+X_test = pd.DataFrame(np.concatenate(list(test_pred_probs.values()), axis=1))
+In [18]:
+joblib.dump(X, "oof_pred_probs.pkl")
+joblib.dump(X_test, "test_pred_probs.pkl")
+Out[18]:
+['test_pred_probs.pkl']
+In [19]:
+lr_model = LogisticRegression(
+    random_state=42, 
+    max_iter=1000, 
+    solver='liblinear', 
+    penalty='l2', 
+    C=32.89802104596641,
+    tol=0.0029878837974181643,
+    fit_intercept=True
+) 
+lr_trainer = Trainer(lr_model)
+_, lr_test_pred_probs, scores["Ensemble"] = lr_trainer.fit_predict(X, y, X_test)
+Training LogisticRegression
+
+--- Fold 1 - MAP@3: 0.376622
+--- Fold 2 - MAP@3: 0.376541
+--- Fold 3 - MAP@3: 0.378674
+--- Fold 4 - MAP@3: 0.375822
+--- Fold 5 - MAP@3: 0.377367
+
+------ Overall MAP@3: 0.377005 | Average MAP@3: 0.377005 ± 0.000967
+In [20]:
+final_predictions = []
+for i in np.argsort(lr_test_pred_probs)[:, -3:][:, ::-1]:
+    prediction = label_encoder.inverse_transform(i)
+    final_predictions.append(" ".join(prediction))
+In [21]:
+sub = pd.read_csv(CFG.sample_sub_path)
+sub[CFG.target] = final_predictions
+sub.to_csv(f"sub_logistic-regression_{np.mean(scores['Ensemble']):.6f}.csv", index=False)
+sub.head()
+Out[21]:
+id Fertilizer Name
+0 750000 10-26-26 20-20 DAP
+1 750001 17-17-17 28-28 10-26-26
+2 750002 20-20 Urea DAP
+3 750003 14-35-14 17-17-17 Urea
+4 750004 Urea 20-20 28-28
+Results
+In [22]:
+scores = pd.DataFrame(scores)
+mean_scores = scores.mean().sort_values(ascending=False)
+order = scores.mean().sort_values(ascending=False).index.tolist()
+
+min_score = mean_scores.min()
+max_score = mean_scores.max()
+padding = (max_score - min_score) * 0.5
+lower_limit = min_score - padding
+upper_limit = max_score + padding
+
+fig, axs = plt.subplots(1, 2, figsize=(15, scores.shape[1] * 0.4))
+
+boxplot = sns.boxplot(data=scores, order=order, ax=axs[0], orient="h", color="grey")
+axs[0].set_title(f"Fold MAP@3")
+axs[0].set_xlabel("")
+axs[0].set_ylabel("")
+
+barplot = sns.barplot(x=mean_scores.values, y=mean_scores.index, ax=axs[1], color="grey")
+axs[1].set_title(f"Mean MAP@3")
+axs[1].set_xlabel("")
+axs[1].set_xlim(left=lower_limit, right=upper_limit)
+axs[1].set_ylabel("")
+
+for i, (score, model) in enumerate(zip(mean_scores.values, mean_scores.index)):
+    color = "cyan" if "ensemble" in model.lower() else "grey"
+    barplot.patches[i].set_facecolor(color)
+    boxplot.patches[i].set_facecolor(color)
+    barplot.text(score, i, round(score, 6), va="center")
+
+plt.tight_layout()
+plt.show()
+In [23]:
+shutil.rmtree("catboost_info", ignore_errors=True)

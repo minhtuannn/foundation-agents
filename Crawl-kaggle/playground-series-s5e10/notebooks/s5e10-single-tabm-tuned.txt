@@ -1,0 +1,173 @@
+In [1]:
+!pip install -qq pytabkit
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 352.2/352.2 kB 3.9 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.7/9.7 MB 57.4 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 363.4/363.4 MB 4.8 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 13.8/13.8 MB 84.6 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 24.6/24.6 MB 53.0 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 883.7/883.7 kB 45.9 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 664.8/664.8 MB 2.6 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 211.5/211.5 MB 6.1 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 56.3/56.3 MB 24.0 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 127.9/127.9 MB 3.1 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 207.5/207.5 MB 6.4 MB/s eta 0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 21.1/21.1 MB 23.0 MB/s eta 0:00:00
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+category-encoders 2.7.0 requires scikit-learn<1.6.0,>=1.0.0, but you have scikit-learn 1.7.2 which is incompatible.
+cesium 0.12.4 requires numpy<3.0,>=2.0, but you have numpy 1.26.4 which is incompatible.
+sklearn-compat 0.1.3 requires scikit-learn<1.7,>=1.2, but you have scikit-learn 1.7.2 which is incompatible.
+In [2]:
+import warnings
+warnings.simplefilter('ignore')
+In [3]:
+import pandas as pd, numpy as np
+
+train = pd.read_csv('/kaggle/input/playground-series-s5e10/train.csv')
+test = pd.read_csv('/kaggle/input/playground-series-s5e10/test.csv')
+orig = pd.read_csv('/kaggle/input/simulated-roads-accident-data/synthetic_road_accidents_100k.csv')
+print('Train Shape:', train.shape)
+print('Test Shape:', test.shape)
+print('Orig Shape:', orig.shape)
+
+train.head(3)
+Train Shape: (517754, 14)
+Test Shape: (172585, 13)
+Orig Shape: (100000, 13)
+Out[3]:
+id road_type num_lanes curvature speed_limit lighting weather road_signs_present public_road time_of_day holiday school_season num_reported_accidents accident_risk
+0 0 urban 2 0.06 35 daylight rainy False True afternoon False True 1 0.13
+1 1 urban 4 0.99 35 daylight clear True False evening True True 0 0.35
+2 2 rural 4 0.63 70 dim clear False True morning True False 2 0.30
+In [4]:
+TARGET = 'accident_risk'
+BASE = [col for col in train.columns if col not in ['id', TARGET]]
+CATS = ['road_type', 'lighting', 'weather', 'road_signs_present', 'public_road', 'time_of_day', 'holiday', 'school_season']
+
+print(f'{len(BASE)} Base Features:{BASE}')
+12 Base Features:['road_type', 'num_lanes', 'curvature', 'speed_limit', 'lighting', 'weather', 'road_signs_present', 'public_road', 'time_of_day', 'holiday', 'school_season', 'num_reported_accidents']
+In [5]:
+ORIG = []
+
+for col in BASE:
+    tmp = orig.groupby(col)[TARGET].mean()
+    new_col_name = f"orig_{col}"
+    tmp.name = new_col_name
+    train = train.merge(tmp, on=col, how='left')
+    test = test.merge(tmp, on=col, how='left')
+    ORIG.append(new_col_name)
+
+print(len(ORIG), 'Orig Features Created!!')
+12 Orig Features Created!!
+In [6]:
+META = []
+
+for df in [train, test, orig]:
+    base_risk = (
+        0.3 * df["curvature"] + 
+        0.2 * (df["lighting"] == "night").astype(int) + 
+        0.1 * (df["weather"] != "clear").astype(int) + 
+        0.2 * (df["speed_limit"] >= 60).astype(int) + 
+        0.1 * (np.array(df["num_reported_accidents"]) > 2).astype(int)
+    )
+    df['Meta'] = base_risk
+
+META.append('Meta')
+In [7]:
+train['orig_curvature'] = train['orig_curvature'].fillna(orig[TARGET].mean())
+test['orig_curvature'] = test['orig_curvature'].fillna(orig[TARGET].mean())
+In [8]:
+FEATURES = BASE + ORIG + META
+print(len(FEATURES), 'Features.')
+25 Features.
+In [9]:
+X = train[FEATURES]
+y = train[TARGET]
+X_test = test[FEATURES]
+In [10]:
+from sklearn.model_selection import KFold
+
+N_SPLITS = 5
+kf = KFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+In [11]:
+# from pytabkit import TabM_HPO_Regressor
+
+# model = TabM_HPO_Regressor(
+#         device='cuda',
+#         random_state=42,
+#         n_cv=1,
+#         # n_refit=0,
+#         n_epochs=10, 
+#         val_metric_name='rmse',
+#         verbosity=2
+#     )
+    
+# model.fit(X, y, cat_col_names=CATS)
+In [12]:
+import os, sys
+from contextlib import contextmanager
+
+@contextmanager
+def suppress_stdout():
+    with open(os.devnull, "w") as devnull:
+        old_stdout = sys.stdout
+        sys.stdout = devnull
+        try:
+            yield
+        finally:
+            sys.stdout = old_stdout
+In [13]:
+params = {'batch_size': 'auto',
+          'patience': 16,
+          'allow_amp': True,
+          'arch_type': 'tabm-mini',
+          'tabm_k': 32,
+          'gradient_clipping_norm': 1.0, 
+          'share_training_batches': False,
+          'lr': 0.0029993695720154537,
+          'weight_decay': 0.023742083301699905,
+          'n_blocks': 3,
+          'd_block': 448, 
+          'dropout': 0.0, 
+          'num_emb_type': 'pwl',
+          'd_embedding': 32,
+          'num_emb_n_bins': 119,
+         }
+In [14]:
+from pytabkit import TabM_D_Regressor
+from sklearn.metrics import root_mean_squared_error
+In [15]:
+oof_preds = np.zeros(len(X))
+test_preds = np.zeros(len(test))
+
+for fold, (train_idx, val_idx) in enumerate(kf.split(X, y)):
+    print(f'--- Fold {fold+1}/{N_SPLITS} ---')
+    
+    X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+    y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+    with suppress_stdout():
+        model = TabM_D_Regressor(**params)
+        model.fit(X_train, y_train, X_val, y_val, cat_col_names=CATS)
+    
+    oof_preds[val_idx] = model.predict(X_val)
+    test_preds += model.predict(X_test)
+
+    print(f"Fold {fold+1} RMSE: {root_mean_squared_error(y_val, oof_preds[val_idx]):.5f}")
+
+test_preds /= N_SPLITS
+
+print(f"Overall OOF RMSE: {root_mean_squared_error(y, oof_preds):.5f}")
+--- Fold 1/5 ---
+Fold 1 RMSE: 0.05612
+--- Fold 2/5 ---
+Fold 2 RMSE: 0.05593
+--- Fold 3/5 ---
+Fold 3 RMSE: 0.05602
+--- Fold 4/5 ---
+Fold 4 RMSE: 0.05590
+--- Fold 5/5 ---
+Fold 5 RMSE: 0.05584
+Overall OOF RMSE: 0.05596
+In [16]:
+pd.DataFrame({'id': train.id, TARGET: oof_preds}).to_csv('oof_tabm_plus_origcol_tuned.csv', index=False)
+pd.DataFrame({'id': test.id, TARGET: test_preds}).to_csv('test_tabm_plus_origcol_tuned.csv', index=False)

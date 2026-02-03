@@ -1,0 +1,737 @@
+In [1]:
+# This Python 3 environment comes with many helpful analytics libraries installed
+# It is defined by the kaggle/python Docker image: https://github.com/kaggle/docker-python
+# For example, here's several helpful packages to load
+
+import numpy as np # linear algebra
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+
+# Input data files are available in the read-only "../input/" directory
+# For example, running this (by clicking run or pressing Shift+Enter) will list all files under the input directory
+
+import os
+for dirname, _, filenames in os.walk('/kaggle/input'):
+    for filename in filenames:
+        print(os.path.join(dirname, filename))
+
+# You can write up to 20GB to the current directory (/kaggle/working/) that gets preserved as output when you create a version using "Save & Run All" 
+# You can also write temporary files to /kaggle/temp/, but they won't be saved outside of the current session
+/kaggle/input/bigquery-ai-hackathon/survey.txt
+🧠 Conceito de Sensores Físicos Quânticos
+Sensores quânticos utilizam os princípios da mecânica quântica — como superposição, entrelaçamento e coerência — para medir grandezas físicas com precisão extrema. Eles superam os limites dos sensores clássicos ao detectar variações mínimas em campos magnéticos, gravitacionais, temperatura, pressão e até partículas exóticas.
+unfold_moreShow hidden cell
+unfold_moreShow hidden cell
+In [4]:
+import pandas as pd
+import matplotlib.pyplot as plt
+import folium
+
+# Simulação de dados extraídos do survey.txt
+data = {
+    'Team Member': ['Alice', 'Bob', 'Carlos', 'Diana', 'Eva', 'Fábio'],
+    'Country': ['USA', 'USA', 'Brazil', 'Germany', 'Brazil', 'India'],
+    'BigQuery_AI_Experience': [12, 8, 15, 10, 20, 5],
+    'Google_Cloud_Experience': [18, 10, 24, 12, 30, 8]
+}
+
+df = pd.DataFrame(data)
+
+# Agrupando por país e calculando médias
+country_stats = df.groupby('Country')[['BigQuery_AI_Experience', 'Google_Cloud_Experience']].mean().sort_values(by='BigQuery_AI_Experience', ascending=False)
+
+# 📊 Gráfico de barras
+country_stats.plot(kind='bar', figsize=(10,6), title='Média de Experiência por País')
+plt.ylabel('Meses de Experiência')
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# 🌍 Mapa interativo com folium
+# Coordenadas aproximadas dos países
+country_coords = {
+    'USA': [37.0902, -95.7129],
+    'Brazil': [-14.2350, -51.9253],
+    'Germany': [51.1657, 10.4515],
+    'India': [20.5937, 78.9629]
+}
+
+# Criando mapa
+m = folium.Map(location=[0, 0], zoom_start=2)
+
+for country, row in country_stats.iterrows():
+    lat, lon = country_coords[country]
+    popup_text = f"{country}<br>BigQuery AI: {row['BigQuery_AI_Experience']:.1f} meses<br>Google Cloud: {row['Google_Cloud_Experience']:.1f} meses"
+    folium.CircleMarker(location=[lat, lon],
+                        radius=row['BigQuery_AI_Experience'] / 2,
+                        color='blue',
+                        fill=True,
+                        fill_color='blue',
+                        popup=popup_text).add_to(m)
+
+# Exibir mapa
+m.save("mapa_experiencia.html")
+unfold_moreShow hidden cell
+In [6]:
+df.to_csv("dados_sensores_quanticos.csv", index=False)
+In [7]:
+df
+Out[7]:
+Team Member Country BigQuery_AI_Experience Google_Cloud_Experience
+0 Alice USA 12 18
+1 Bob USA 8 10
+2 Carlos Brazil 15 24
+3 Diana Germany 10 12
+4 Eva Brazil 20 30
+5 Fábio India 5 8
+In [8]:
+pip install plotly --upgrade
+Requirement already satisfied: plotly in /usr/local/lib/python3.11/dist-packages (5.24.1)
+Collecting plotly
+  Downloading plotly-6.3.1-py3-none-any.whl.metadata (8.5 kB)
+Requirement already satisfied: narwhals>=1.15.1 in /usr/local/lib/python3.11/dist-packages (from plotly) (1.44.0)
+Requirement already satisfied: packaging in /usr/local/lib/python3.11/dist-packages (from plotly) (25.0)
+Downloading plotly-6.3.1-py3-none-any.whl (9.8 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.8/9.8 MB 71.2 MB/s eta 0:00:00
+Installing collected packages: plotly
+  Attempting uninstall: plotly
+    Found existing installation: plotly 5.24.1
+    Uninstalling plotly-5.24.1:
+      Successfully uninstalled plotly-5.24.1
+Successfully installed plotly-6.3.1
+Note: you may need to restart the kernel to use updated packages.
+In [9]:
+pip install kaleido==0.2.1
+Collecting kaleido==0.2.1
+  Downloading kaleido-0.2.1-py2.py3-none-manylinux1_x86_64.whl.metadata (15 kB)
+Downloading kaleido-0.2.1-py2.py3-none-manylinux1_x86_64.whl (79.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 79.9/79.9 MB 17.5 MB/s eta 0:00:00
+Installing collected packages: kaleido
+  Attempting uninstall: kaleido
+    Found existing installation: kaleido 1.1.0
+    Uninstalling kaleido-1.1.0:
+      Successfully uninstalled kaleido-1.1.0
+Successfully installed kaleido-0.2.1
+Note: you may need to restart the kernel to use updated packages.
+In [10]:
+!pip install -U kaleido
+unfold_moreShow hidden output
+In [11]:
+import plotly.express as px
+
+# Dados de exemplo
+dados = {
+    "Categoria": ["A", "B", "C", "D"],
+    "Valor": [10, 15, 7, 12]
+}
+
+# Criar o gráfico de barras
+fig_bar = px.bar(dados, x="Categoria", y="Valor", title="Gráfico de Barras")
+
+# Exportar para HTML
+fig_bar.write_html("grafico_barras.html")
+In [12]:
+import pandas as pd
+import plotly.express as px
+import plotly.io as pio # Import plotly.io
+
+# 🔬 Dados estruturados
+data = {
+    'Área': [
+        'Medicina e Saúde', 'Medicina e Saúde', 'Medicina e Saúde',
+        'Espaço e Navegação', 'Espaço e Navegação', 'Espaço e Navegação',
+        'Defesa e Segurança', 'Defesa e Segurança', 'Defesa e Segurança',
+        'Clima e Meio Ambiente', 'Clima e Meio Ambiente', 'Clima e Meio Ambiente'
+    ],
+    'País': [
+        'EUA', 'Alemanha', 'Japão',
+        'EUA', 'China', 'França',
+        'EUA', 'Israel', 'Reino Unido',
+        'Alemanha', 'Brasil', 'Canadá'
+    ],
+    'Latitude': [
+        37.0902, 51.1657, 36.2048,
+        37.0902, 35.8617, 46.2276,
+        37.0902, 31.0461, 55.3781,
+        51.1657, -14.2350, 56.1304
+    ],
+    'Longitude': [
+        -95.7129, 10.4515, 138.2529,
+        -95.7129, 104.1954, 2.2137,
+        -95.7129, 34.8516, -3.4360,
+        10.4515, -51.9253, -106.3468
+    ]
+}
+
+df = pd.DataFrame(data)
+
+# 📊 Gráfico de barras interativo
+fig_bar = px.bar(df, x='País', color='Área',
+                 title='Países por Área de Aplicação de Sensores Quânticos',
+                 labels={'País': 'Países', 'Área': 'Área de Aplicação'},
+                 height=500)
+fig_bar.show()
+
+# 🥧 Gráfico de pizza por área
+area_counts = df['Área'].value_counts().reset_index()
+area_counts.columns = ['Área', 'Quantidade']
+fig_pie = px.pie(area_counts, names='Área', values='Quantidade',
+                 title='Distribuição das Áreas de Aplicação')
+fig_pie.show()
+
+# 🌍 Gráfico de dispersão geográfica
+fig_geo = px.scatter_geo(df,
+                         lat='Latitude', lon='Longitude',
+                         text='País',
+                         color='Área',
+                         title='Distribuição Geográfica das Áreas de Sensores Quânticos',
+                         projection='natural earth')
+fig_geo.update_traces(marker=dict(size=10))
+
+
+# Exibir mapa -
+# Use write_html() to save the figure to an HTML file
+pio.write_html(fig_geo, 'mapa_experiencia.html')
+fig_geo.show()
+EUA
+Alemanha
+Japão
+China
+França
+Israel
+Reino Unido
+Brasil
+Canadá
+0
+0.5
+1
+1.5
+2
+2.5
+3
+Área de Aplicação
+Medicina e Saúde
+Espaço e Navegação
+Defesa e Segurança
+Clima e Meio Ambiente
+Países por Área de Aplicação de Sensores Quânticos
+Países
+count
+25%
+25%
+25%
+25%
+Medicina e Saúde
+Espaço e Navegação
+Defesa e Segurança
+Clima e Meio Ambiente
+Distribuição das Áreas de Aplicação
+EUA
+Alemanha
+Japão
+EUA
+China
+França
+EUA
+Israel
+Reino Unido
+Alemanha
+Brasil
+Canadá
+Área
+Medicina e Saúde
+Espaço e Navegação
+Defesa e Segurança
+Clima e Meio Ambiente
+Distribuição Geográfica das Áreas de Sensores Quânticos
+In [13]:
+import folium
+import pandas as pd
+
+# 🔬 Dados estruturados com descrições
+data = {
+    'Área': [
+        'Medicina e Saúde', 'Medicina e Saúde', 'Medicina e Saúde',
+        'Espaço e Navegação', 'Espaço e Navegação', 'Espaço e Navegação',
+        'Defesa e Segurança', 'Defesa e Segurança', 'Defesa e Segurança',
+        'Clima e Meio Ambiente', 'Clima e Meio Ambiente', 'Clima e Meio Ambiente'
+    ],
+    'País': [
+        'EUA', 'Alemanha', 'Japão',
+        'EUA', 'China', 'França',
+        'EUA', 'Israel', 'Reino Unido',
+        'Alemanha', 'Brasil', 'Canadá'
+    ],
+    'Latitude': [
+        37.0902, 51.1657, 36.2048,
+        37.0902, 35.8617, 46.2276,
+        37.0902, 31.0461, 55.3781,
+        51.1657, -14.2350, 56.1304
+    ],
+    'Longitude': [
+        -95.7129, 10.4515, 138.2529,
+        -95.7129, 104.1954, 2.2137,
+        -95.7129, 34.8516, -3.4360,
+        10.4515, -51.9253, -106.3468
+    ],
+    'Cor': [
+        '#e74c3c', '#e74c3c', '#e74c3c',         # vermelho suave
+        '#3498db', '#3498db', '#3498db',         # azul claro
+        '#2ecc71', '#2ecc71', '#2ecc71',         # verde vibrante
+        '#f39c12', '#f39c12', '#f39c12'          # laranja dourado
+    ],
+    'Descrição': [
+        'Aplicações médicas como ressonância magnética e monitoramento neural.',
+        'Aplicações médicas como ressonância magnética e monitoramento neural.',
+        'Aplicações médicas como ressonância magnética e monitoramento neural.',
+        'Sensores gravitacionais e interferômetros para navegação espacial.',
+        'Sensores gravitacionais e interferômetros para navegação espacial.',
+        'Sensores gravitacionais e interferômetros para navegação espacial.',
+        'Sensores magnéticos ultra-sensíveis e relógios quânticos militares.',
+        'Sensores magnéticos ultra-sensíveis e relógios quânticos militares.',
+        'Sensores magnéticos ultra-sensíveis e relógios quânticos militares.',
+        'Monitoramento atmosférico e detecção de radiação ambiental.',
+        'Monitoramento atmosférico e detecção de radiação ambiental.',
+        'Monitoramento atmosférico e detecção de radiação ambiental.'
+    ]
+}
+
+df = pd.DataFrame(data)
+
+# 🌍 Criar mapa base
+m = folium.Map(location=[20, 0], zoom_start=2, tiles='CartoDB positron')
+
+# Adicionar marcadores com popups explicativas
+for _, row in df.iterrows():
+    popup_text = f"""
+    <b>País:</b> {row['País']}<br>
+    <b>Área de Aplicação:</b> {row['Área']}<br>
+    <b>Descrição:</b> {row['Descrição']}
+    """
+    folium.CircleMarker(
+        location=[row['Latitude'], row['Longitude']],
+        radius=7,
+        color=row['Cor'],
+        fill=True,
+        fill_color=row['Cor'],
+        fill_opacity=0.8,
+        popup=folium.Popup(popup_text, max_width=300)
+    ).add_to(m)
+
+# 📘 Legenda fixa com cores atualizadas
+legend_html = '''
+<div style="position: fixed; 
+     bottom: 30px; left: 30px; width: 270px; height: 160px; 
+     background-color: white; z-index:9999; font-size:14px;
+     border:2px solid grey; padding: 10px;">
+<b>Legenda - Áreas de Aplicação da Física Quântica</b><br>
+<i class="fa fa-circle" style="color:#e74c3c"></i> Medicina e Saúde<br>
+<i class="fa fa-circle" style="color:#3498db"></i> Espaço e Navegação<br>
+<i class="fa fa-circle" style="color:#2ecc71"></i> Defesa e Segurança<br>
+<i class="fa fa-circle" style="color:#f39c12"></i> Clima e Meio Ambiente
+</div>
+'''
+m.get_root().html.add_child(folium.Element(legend_html))
+
+# 💾 Salvar mapa
+m.save("mapa_fisica_quantica_explicativo.html")
+m
+Out[13]:
+Make this Notebook Trusted to load map: File -> Trust Notebook
+In [14]:
+import folium
+from folium.plugins import MarkerCluster
+
+# 🌍 Coordenadas dos países líderes
+country_coords = {
+    'EUA': [37.0902, -95.7129],
+    'Alemanha': [51.1657, 10.4515],
+    'Japão': [36.2048, 138.2529],
+    'China': [35.8617, 104.1954],
+    'França': [46.2276, 2.2137],
+    'Israel': [31.0461, 34.8516],
+    'Reino Unido': [55.3781, -3.4360],
+    'Brasil': [-14.2350, -51.9253],
+    'Canadá': [56.1304, -106.3468]
+}
+
+# 🧠 Áreas de aplicação e países envolvidos
+areas = {
+    'Medicina e Saúde': {
+        'descrição': 'Ressonância magnética, Monitoramento biomédico',
+        'cor': 'red',
+        'países': ['EUA', 'Alemanha', 'Japão']
+    },
+    'Espaço e Navegação': {
+        'descrição': 'Interferômetros atômicos, Sensores gravitacionais',
+        'cor': 'blue',
+        'países': ['EUA', 'China', 'França']
+    },
+    'Defesa e Segurança': {
+        'descrição': 'Sensores magnéticos, Relógios quânticos',
+        'cor': 'green',
+        'países': ['EUA', 'Israel', 'Reino Unido']
+    },
+    'Clima e Meio Ambiente': {
+        'descrição': 'Monitoramento atmosférico, Sensores de radiação',
+        'cor': 'orange',
+        'países': ['Alemanha', 'Brasil', 'Canadá']
+    }
+}
+
+# 🗺️ Criar mapa base
+m = folium.Map(location=[20, 0], zoom_start=2, tiles='CartoDB positron')
+
+# Agrupar marcadores
+marker_cluster = MarkerCluster().add_to(m)
+
+# Adicionar marcadores por área
+for area, info in areas.items():
+    for pais in info['países']:
+        lat, lon = country_coords[pais]
+        popup_text = f"<b>{pais}</b><br><b>Área:</b> {area}<br><b>Aplicações:</b> {info['descrição']}"
+        folium.Marker(
+            location=[lat, lon],
+            popup=folium.Popup(popup_text, max_width=300),
+            icon=folium.Icon(color=info['cor'], icon='info-sign')
+        ).add_to(marker_cluster)
+
+# 💡 Legenda simulada com marcadores fixos
+legend_html = '''
+<div style="position: fixed; 
+     bottom: 30px; left: 30px; width: 250px; height: 150px; 
+     background-color: white; z-index:9999; font-size:14px;
+     border:2px solid grey; padding: 10px;">
+<b>Legenda - Áreas de Aplicação</b><br>
+<i class="fa fa-map-marker fa-2x" style="color:red"></i> Medicina e Saúde<br>
+<i class="fa fa-map-marker fa-2x" style="color:blue"></i> Espaço e Navegação<br>
+<i class="fa fa-map-marker fa-2x" style="color:green"></i> Defesa e Segurança<br>
+<i class="fa fa-map-marker fa-2x" style="color:orange"></i> Clima e Meio Ambiente
+</div>
+'''
+m.get_root().html.add_child(folium.Element(legend_html))
+
+# 💾 Salvar mapa
+m.save("mapa_sensores_quanticos_interativo.html")
+m
+Out[14]:
+Make this Notebook Trusted to load map: File -> Trust Notebook
+Simulando um Circuito Quântico
+In [15]:
+import numpy as np
+
+# Import Qiskit
+from qiskit import QuantumCircuit, transpile
+from qiskit_aer import AerSimulator
+from qiskit.visualization import plot_histogram, plot_state_city
+import qiskit.quantum_info as qi
+In [16]:
+simulator = AerSimulator()
+In [17]:
+# Create circuit
+circ = QuantumCircuit(2)
+circ.h(0)
+circ.cx(0, 1)
+circ.measure_all()
+
+# Transpile for simulator
+simulator = AerSimulator()
+circ = transpile(circ, simulator)
+
+# Run and get counts
+result = simulator.run(circ).result()
+counts = result.get_counts(circ)
+plot_histogram(counts, title='Bell-State counts')
+Out[17]:
+In [18]:
+# Run and get memory
+result = simulator.run(circ, shots=10, memory=True).result()
+memory = result.get_memory(circ)
+print(memory)
+['11', '00', '11', '00', '11', '00', '11', '00', '11', '11']
+In [19]:
+# Increase shots to reduce sampling variance
+shots = 10000
+
+
+
+# Statevector simulation method
+sim_statevector = AerSimulator(method='statevector')
+job_statevector = sim_statevector.run(circ, shots=shots)
+counts_statevector = job_statevector.result().get_counts(0)
+
+# Stabilizer simulation method
+sim_stabilizer = AerSimulator(method='stabilizer')
+job_stabilizer = sim_stabilizer.run(circ, shots=shots)
+counts_stabilizer = job_stabilizer.result().get_counts(0)
+
+
+# Extended Stabilizer method
+sim_extstabilizer = AerSimulator(method='extended_stabilizer')
+job_extstabilizer = sim_extstabilizer.run(circ, shots=shots)
+counts_extstabilizer = job_extstabilizer.result().get_counts(0)
+
+# Density Matrix simulation method
+sim_density = AerSimulator(method='density_matrix')
+job_density = sim_density.run(circ, shots=shots)
+counts_density = job_density.result().get_counts(0)
+
+# Matrix Product State simulation method
+sim_mps = AerSimulator(method='matrix_product_state')
+job_mps = sim_mps.run(circ, shots=shots)
+counts_mps = job_mps.result().get_counts(0)
+
+
+plot_histogram([ counts_statevector,counts_stabilizer ,counts_extstabilizer, counts_density, counts_mps],
+               title='Counts for different simulation methods',
+               legend=[ 'statevector',
+                       'density_matrix','stabilizer','extended_stabilizer', 'matrix_product_state'])
+Out[19]:
+Método de simulação automática
+In [20]:
+# automatic
+sim_automatic = AerSimulator(method='automatic')
+job_automatic = sim_automatic.run(circ, shots=shots)
+counts_automatic = job_automatic.result().get_counts(0)
+
+plot_histogram([counts_automatic], title='Counts for automatic simulation method',legend=[ 'automatic'])
+Out[20]:
+Simulação de GPU
+In [21]:
+from qiskit_aer import AerError
+
+# Initialize a GPU backend
+# Note that the cloud instance for tutorials does not have a GPU
+# so this will raise an exception.
+try:
+    simulator_gpu = AerSimulator(method='statevector', device='GPU')
+
+except AerError as e:
+    print(e)
+In [22]:
+from qiskit_aer import AerError
+
+# Initialize a GPU backend
+# Note that the cloud instance for tutorials does not have a GPU
+# so this will raise an exception.
+try:
+    simulator_gpu = AerSimulator(method='tensor_network', device='GPU')
+
+except AerError as e:
+    print(e)
+"Invalid simulation method tensor_network. Available methods are: ('automatic', 'statevector', 'density_matrix', 'stabilizer', 'matrix_product_state', 'extended_stabilizer', 'unitary', 'superop')"
+Precisão de simulação
+In [23]:
+simulator = AerSimulator(method='statevector')
+simulator.set_options(precision='single')
+
+# Run and get counts
+result = simulator.run(circ).result()
+counts = result.get_counts(circ)
+print(counts)
+{'11': 525, '00': 499}
+Salvando o vetor de estado final
+In [24]:
+# Construct quantum circuit without measure
+circ = QuantumCircuit(2)
+circ.h(0)
+circ.cx(0, 1)
+circ.save_statevector()
+
+# Transpile for simulator
+simulator = AerSimulator(method='statevector')
+circ = transpile(circ, simulator)
+
+# Run and get statevector
+result = simulator.run(circ).result()
+statevector = result.get_statevector(circ)
+plot_state_city(statevector, title='Bell state')
+Out[24]:
+In [25]:
+# Construct quantum circuit without measure
+circ = QuantumCircuit(2)
+circ.h(0)
+circ.cx(0, 1)
+circ.save_unitary()
+
+# Transpile for simulator
+simulator = AerSimulator(method = 'unitary')
+circ = transpile(circ, simulator)
+
+# Run and get unitary
+result = simulator.run(circ).result()
+unitary = result.get_unitary(circ)
+print("Circuit unitary:\n", np.asarray(unitary).round(5))
+Circuit unitary:
+ [[ 0.70711+0.j  0.70711-0.j  0.     +0.j  0.     +0.j]
+ [ 0.     +0.j  0.     +0.j  0.70711+0.j -0.70711+0.j]
+ [ 0.     +0.j  0.     +0.j  0.70711+0.j  0.70711-0.j]
+ [ 0.70711+0.j -0.70711+0.j  0.     +0.j  0.     +0.j]]
+Salvando vários estados
+In [26]:
+# Construct quantum circuit without measure
+steps = 5
+circ = QuantumCircuit(1)
+for i in range(steps):
+    circ.save_statevector(label=f'psi_{i}')
+    circ.rx(i * np.pi / steps, 0)
+circ.save_statevector(label=f'psi_{steps}')
+
+# Transpile for simulator
+simulator = AerSimulator(method= 'automatic')
+circ = transpile(circ, simulator)
+
+# Run and get saved data
+result = simulator.run(circ).result()
+data = result.data(0)
+data
+Out[26]:
+{'psi_5': Statevector([-1.+0.00000000e+00j,  0.-5.55111512e-17j],
+             dims=(2,)),
+ 'psi_4': Statevector([-0.30901699+0.j        ,  0.        -0.95105652j],
+             dims=(2,)),
+ 'psi_3': Statevector([0.58778525+0.j        , 0.        -0.80901699j],
+             dims=(2,)),
+ 'psi_2': Statevector([0.95105652+0.j        , 0.        -0.30901699j],
+             dims=(2,)),
+ 'psi_1': Statevector([1.+0.j, 0.+0.j],
+             dims=(2,)),
+ 'psi_0': Statevector([1.+0.j, 0.+0.j],
+             dims=(2,))}
+Configurando o simulador para um estado personalizado
+In [27]:
+# Generate a random statevector
+num_qubits = 2
+psi = qi.random_statevector(2 ** num_qubits, seed=100)
+
+# Set initial state to generated statevector
+circ = QuantumCircuit(num_qubits)
+circ.set_statevector(psi)
+circ.save_state()
+
+# Transpile for simulator
+simulator = AerSimulator(method='statevector')
+circ = transpile(circ, simulator)
+
+# Run and get saved data
+result = simulator.run(circ).result()
+result.data(0)
+Out[27]:
+{'statevector': Statevector([-0.49859823-0.41410205j,  0.12480824+0.46132192j,
+               0.33634191+0.30214216j,  0.234309  +0.3036574j ],
+             dims=(2, 2))}
+In [28]:
+# Use initilize instruction to set initial state
+circ = QuantumCircuit(num_qubits)
+circ.initialize(psi, range(num_qubits))
+circ.save_state()
+
+# Transpile for simulator
+simulator = AerSimulator(method= 'statevector')
+circ = transpile(circ, simulator)
+
+# Run and get result data
+result = simulator.run(circ).result()
+result.data(0)
+Out[28]:
+{'statevector': Statevector([-0.49859823-0.41410205j,  0.12480824+0.46132192j,
+               0.33634191+0.30214216j,  0.234309  +0.3036574j ],
+             dims=(2, 2))}
+Definindo uma matriz de densidade personalizada
+In [29]:
+num_qubits = 2
+rho = qi.random_density_matrix(2 ** num_qubits, seed=100)
+circ = QuantumCircuit(num_qubits)
+circ.set_density_matrix(rho)
+circ.save_state()
+
+# Transpile for simulator
+simulator = AerSimulator(method='density_matrix')
+circ = transpile(circ, simulator)
+
+# Run and get saved data
+result = simulator.run(circ).result()
+result.data(0)
+Out[29]:
+{'density_matrix': DensityMatrix([[ 0.2075308 -3.11427124e-18j,  0.13161422-1.76084787e-02j,
+                  0.0442826 +7.74270413e-02j,  0.04852053-1.30317117e-02j],
+                [ 0.13161422+1.76084787e-02j,  0.20106116-2.89376869e-18j,
+                  0.02568549-3.68981173e-02j,  0.0482903 -4.36791212e-02j],
+                [ 0.0442826 -7.74270413e-02j,  0.02568549+3.68981173e-02j,
+                  0.39731492+6.09745953e-18j, -0.01114025-1.34264228e-01j],
+                [ 0.04852053+1.30317117e-02j,  0.0482903 +4.36791212e-02j,
+                 -0.01114025+1.34264228e-01j,  0.19409312-8.94195941e-20j]],
+               dims=(2, 2))}
+Definindo um estado de estabilizador personalizado
+In [30]:
+# Generate a random Clifford C
+num_qubits = 2
+stab = qi.random_clifford(num_qubits, seed=100)
+
+# Set initial state to stabilizer state C|0>
+circ = QuantumCircuit(num_qubits)
+circ.set_stabilizer(stab)
+circ.save_state()
+
+# Transpile for simulator
+simulator = AerSimulator(method= "stabilizer")
+circ = transpile(circ, simulator)
+
+# Run and get saved data
+result = simulator.run(circ).result()
+result.data(0)
+Out[30]:
+{'stabilizer': StabilizerState(['+XZ', '-YX'])}
+Definindo um unitário personalizado
+In [31]:
+# Generate a random unitary
+num_qubits = 2
+unitary = qi.random_unitary(2 ** num_qubits, seed=100)
+
+# Set initial state to unitary
+circ = QuantumCircuit(num_qubits)
+circ.set_unitary(unitary)
+circ.save_state()
+
+# Transpile for simulator
+simulator = AerSimulator(method='unitary')
+circ = transpile(circ, simulator)
+
+# Run and get saved data
+result = simulator.run(circ).result()
+result.data(0)
+Out[31]:
+{'unitary': Operator([[-0.44885724-0.26721573j,  0.10468034-0.00288681j,
+             0.4631425 +0.15474915j, -0.11151309-0.68210936j],
+           [-0.37279054-0.38484834j,  0.3820592 -0.49653433j,
+             0.14132327-0.17428515j,  0.19643043+0.48111423j],
+           [ 0.2889092 +0.58750499j,  0.39509694-0.22036424j,
+             0.49498355+0.2388685j ,  0.25404989-0.00995706j],
+           [ 0.01830684+0.10524311j,  0.62584001+0.01343146j,
+            -0.52174025-0.37003296j,  0.12232823-0.41548904j]],
+          input_dims=(2, 2), output_dims=(2, 2))}
+In [32]:
+import qiskit
+qiskit.__version__
+Out[32]:
+'2.2.1'
+In [33]:
+# Construct quantum circuit
+circ = QuantumCircuit(3, 3)
+circ.h(0)
+circ.cx(0, 1)
+circ.cx(1, 2)
+circ.measure([0, 1, 2], [0, 1, 2])
+
+sim_ideal = AerSimulator()
+
+# Execute and get counts
+result = sim_ideal.run(transpile(circ, sim_ideal)).result()
+counts = result.get_counts(0)
+plot_histogram(counts, title='Ideal counts for 3-qubit GHZ state')
+Out[33]:
+✅ Conclusão
+Sensores quânticos representam uma revolução tecnológica, com aplicações em medicina, defesa, navegação, clima e física fundamental. Ao explorar estados quânticos altamente sensíveis, esses dispositivos prometem ultrapassar os limites da metrologia clássica, oferecendo maior resolução, segurança e eficiência em ambientes ruidosos.
+📚 Referências Acadêmicas e Sites
+QTECH UFABC – Sensores Quânticos
+SciSimple – Sensores Quânticos e o Futuro da Detecção
+Artigo sobre Sensoriamento Remoto Quântico – ITA

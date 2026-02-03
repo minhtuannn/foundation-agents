@@ -1,0 +1,890 @@
+🌟S5E6 Modeling Process and Pipeline
+In this notebook, I have explained the modeling process for the Tabular Playground Series - June 2025 competition step by step. My goal was to create the simplest yet most effective pipeline to achieve highly accurate predictions. 💡
+unfold_moreShow hidden cell
+🔄 Genel Pipeline Akışı
+unfold_moreShow hidden code
+Out[2]:
+1. Data Loading
+and Cleaning
+2. Exploratory
+Data Analysis (EDA)
+3. Feature
+Engineering
+4. Feature Selection
+with SHAP
+5. Model
+Training
+6. Prediction &
+Evaluation (MAP@3)
+In this competition, your model is evaluated using Mean Average Precision at 3 (MAP@3).
+This means your model should return the correct fertilizer name within the top 3 predictions.
+The earlier a correct prediction appears, the higher the score you get.
+
+🔁 Important: Once a correct label is found in your prediction, any further repeats of that label do not contribute to the score.
+
+✅ Example (correct label = A):
+[A, B, C] → Perfect (1.0)
+[A, A, A] → Still Perfect (1.0)
+[A, B, A] → Still Perfect (1.0)
+[B, A, C] → Partial score
+📦 About
+This competition is actually a synthesized version of a real-world "fertilizer prediction" problem. The data is synthetic but generated based on a real model. The data structure is close to real-world scenarios, but not an exact replica. 🧪 This allows:
+Experiencing a near-real-world scenario
+Avoiding issues like overfitting to some extent
+In other words, it’s a perfect environment for learning and experimenting.
+✅ In the rest of the notebook, I share how I built this process, how I selected features, and how the model was interpreted using SHAP. Good luck with your scores! 🚀
+1. Libraries
+2. Styling
+3. Load and Inspect Dataset
+In [5]:
+# Load datasets
+train = pd.read_csv('/kaggle/input/playground-series-s5e6/train.csv')
+test = pd.read_csv('/kaggle/input/playground-series-s5e6/test.csv')
+
+# Keep original ID columns
+train_id = train['id'].copy()
+test_id = test['id'].copy()
+
+# Display basic information
+print("Training set shape:", train.shape)
+print("Test set shape:", test.shape)
+
+# Check for missing values
+print("\n📊 Missing values in training set:")
+print(train.isna().sum())
+
+print("\n📊 Missing values in test set:")
+print(test.isna().sum())
+
+# Display statistical summary
+print("\n📊 Statistical summary of training data:")
+display(train.describe().T)
+
+# Remove ID columns for analysis
+train_data = train.drop(columns=['id'])
+test_data = test.drop(columns=['id'])
+
+# Identify numeric and categorical columns
+numeric_columns = [col for col in train_data.columns if col not in ['Soil Type', 'Crop Type','Fertilizer Name'] and train_data[col].dtype in [np.int64, np.float64]]
+categorical_columns = [col for col in train_data.columns if col not in numeric_columns + ['Fertilizer Name']]
+target_column = 'Fertilizer Name'
+
+print(f"\n📊 Number of numeric features: {len(numeric_columns)}")
+print(f"📊 Number of categorical features: {len(categorical_columns)}")
+print(f"📊 Target column: {target_column}")
+Training set shape: (750000, 10)
+Test set shape: (250000, 9)
+
+📊 Missing values in training set:
+id                 0
+Temparature        0
+Humidity           0
+Moisture           0
+Soil Type          0
+Crop Type          0
+Nitrogen           0
+Potassium          0
+Phosphorous        0
+Fertilizer Name    0
+dtype: int64
+
+📊 Missing values in test set:
+id             0
+Temparature    0
+Humidity       0
+Moisture       0
+Soil Type      0
+Crop Type      0
+Nitrogen       0
+Potassium      0
+Phosphorous    0
+dtype: int64
+
+📊 Statistical summary of training data:
+count mean std min 25% 50% 75% max
+id 750000.0 374999.500000 216506.495284 0.0 187499.75 374999.5 562499.25 749999.0
+Temparature 750000.0 31.503565 4.025574 25.0 28.00 32.0 35.00 38.0
+Humidity 750000.0 61.038912 6.647695 50.0 55.00 61.0 67.00 72.0
+Moisture 750000.0 45.184147 11.794594 25.0 35.00 45.0 55.00 65.0
+Nitrogen 750000.0 23.093808 11.216125 4.0 13.00 23.0 33.00 42.0
+Potassium 750000.0 9.478296 5.765622 0.0 4.00 9.0 14.00 19.0
+Phosphorous 750000.0 21.073227 12.346831 0.0 10.00 21.0 32.00 42.0
+📊 Number of numeric features: 6
+📊 Number of categorical features: 2
+📊 Target column: Fertilizer Name
+In [6]:
+train_data.head()
+Out[6]:
+Temparature Humidity Moisture Soil Type Crop Type Nitrogen Potassium Phosphorous Fertilizer Name
+0 37 70 36 Clayey Sugarcane 36 4 5 28-28
+1 27 69 65 Sandy Millets 30 6 18 28-28
+2 29 63 32 Sandy Millets 24 12 16 17-17-17
+3 35 62 54 Sandy Barley 39 12 4 10-26-26
+4 35 58 43 Red Paddy 37 2 16 DAP
+In [7]:
+train_data.info()
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 750000 entries, 0 to 749999
+Data columns (total 9 columns):
+ #   Column           Non-Null Count   Dtype 
+---  ------           --------------   ----- 
+ 0   Temparature      750000 non-null  int64 
+ 1   Humidity         750000 non-null  int64 
+ 2   Moisture         750000 non-null  int64 
+ 3   Soil Type        750000 non-null  object
+ 4   Crop Type        750000 non-null  object
+ 5   Nitrogen         750000 non-null  int64 
+ 6   Potassium        750000 non-null  int64 
+ 7   Phosphorous      750000 non-null  int64 
+ 8   Fertilizer Name  750000 non-null  object
+dtypes: int64(6), object(3)
+memory usage: 51.5+ MB
+In [8]:
+print(f'DataFrame contains {train_data.shape[0]} rows (records) and {train_data.shape[1]} columns (attributes).')
+DataFrame contains 750000 rows (records) and 9 columns (attributes).
+3. Exploratory Data Analysis & Feature Engineering
+📊 Dataset Overview:
+📊 Categorical features details:
+
+Soil Type:
+  Unique values: 5
+  Value counts:
+Soil Type
+Sandy     156710
+Black     150956
+Clayey    148382
+Red       148102
+Loamy     145850
+
+Crop Type:
+  Unique values: 11
+  Value counts:
+Crop Type
+Paddy          85754
+Pulses         78180
+Cotton         69171
+Tobacco        68000
+Wheat          66628
+Millets        65291
+Barley         65045
+Sugarcane      64269
+Oil seeds      64184
+Maize          62569
+Ground Nuts    60909
+📊 Dataset Summary:
+Total samples in training set: 750,000
+Total samples in test set: 250,000
+Number of numeric features: 6
+Number of categorical features: 2
+Number of unique fertilizers: 7
+Class balance ratio (min/max): 0.807
+4. Data Preprocessing: Label Encoding and MinMax Scaling for Train and Test Sets
+In [10]:
+# Sütun isimlerini temizleme (fazla boşlukları kaldırma)
+train_data.columns = train_data.columns.str.strip()
+test_data.columns = test_data.columns.str.strip()
+
+# Eğitim ve test veri setleri arasında sütun uyuşmazlıklarını kontrol etme
+missing_in_test = [col for col in train_data.columns if col not in test_data.columns and col != 'Fertilizer Name']
+missing_in_train = [col for col in test_data.columns if col not in train_data.columns and col != 'id']
+
+if missing_in_test or missing_in_train:
+    print("Test veri setinde eksik sütunlar:", missing_in_test)
+    print("Eğitim veri setinde eksik sütunlar:", missing_in_train)
+    # Eksik sütunları sıfırlarla doldurma
+    for col in missing_in_test:
+        test_data[col] = 0
+    for col in missing_in_train:
+        if col != 'id':
+            train_data[col] = 0
+
+# Sayısal ve kategorik sütunları tanımlama
+numeric_columns = ['Temparature', 'Humidity', 'Moisture', 'Nitrogen', 'Potassium', 'Phosphorous']
+categorical_columns = ['Soil Type', 'Crop Type']
+target_column = 'Fertilizer Name'
+
+# Kuantil ve eşit genişlikte bölme sütunlarını belirleme
+label_encode_columns = [
+    'Temparature_quantile', 'Temparature_equal',
+    'Humidity_quantile', 'Humidity_equal',
+    'Moisture_quantile', 'Moisture_equal',
+    'Nitrogen_quantile', 'Nitrogen_equal',
+    'Potassium_quantile', 'Potassium_equal',
+    'Phosphorous_quantile', 'Phosphorous_equal'
+]
+
+# ------------------- KATEGORİK KODLAMA -------------------
+# Soil Type ve Crop Type için Label Encoding
+train_data_encoded = train_data.copy()
+test_data_encoded = test_data.copy()
+
+label_encoders = {}
+
+# Soil Type ve Crop Type için kodlama
+for col in categorical_columns:
+    if col in train_data.columns:
+        le = LabelEncoder()
+        train_data_encoded[col] = le.fit_transform(train_data[col])
+        label_encoders[col] = le
+        if col in test_data.columns:
+            test_data_encoded[col] = le.transform(test_data[col])
+
+# ------------------- KUANTİL VE EŞİT GENİŞLİKTE BÖLME SÜTUNLARI İÇİN LABEL ENCODING -------------------
+# Kuantil ve eşit genişlikte bölme sütunlarına Label Encoding uygulama
+for col in label_encode_columns:
+    if col in train_data_encoded.columns:
+        le = LabelEncoder()
+        train_data_encoded[col] = le.fit_transform(train_data_encoded[col].astype(str))  # Kategorik olarak işlemek için
+        label_encoders[col] = le
+        if col in test_data_encoded.columns:
+            test_data_encoded[col] = le.transform(test_data_encoded[col].astype(str))
+
+# ------------------- KALAN KATEGORİK SÜTUNLARI KONTROL ETME -------------------
+# Hala kategorik (object) veri tipi olan sütunları bulma
+object_columns_train = train_data_encoded.select_dtypes(include=['object']).columns.tolist()
+if object_columns_train:
+    print(f"Uyarı: Bu sütunlar hala kodlama gerektiriyor: {object_columns_train}")
+    # Kalan kategorik sütunları kodlama
+    for col in object_columns_train:
+        if col != 'Fertilizer Name':  # Hedef değişkeni kodlamadan hariç tut
+            le = LabelEncoder()
+            train_data_encoded[col] = le.fit_transform(train_data_encoded[col])
+            if col in test_data_encoded.columns:
+                test_data_encoded[col] = le.transform(test_data_encoded[col])
+
+# ------------------- MİNMAX ÖLÇEKLENDİRME -------------------
+# MinMaxScaler başlatma
+scaler = MinMaxScaler()
+
+# Ölçeklendirmeden hariç tutulacak sütunlar
+exclude_from_scaling = ['id', 'Fertilizer Name'] + label_encode_columns + categorical_columns
+
+# Eğitim veri setinde ölçeklendirilecek sütunlar
+columns_to_scale_train = [col for col in train_data_encoded.columns 
+                         if col not in exclude_from_scaling 
+                         and train_data_encoded[col].dtype in ['int64', 'float64']]
+
+# Test veri setinde ölçeklendirilecek sütunlar
+columns_to_scale_test = [col for col in test_data_encoded.columns 
+                        if col not in ['id'] + label_encode_columns + categorical_columns
+                        and test_data_encoded[col].dtype in ['int64', 'float64']]
+
+# Eğitim veri setini ölçeklendirme
+train_data_scaled = train_data_encoded.copy()
+train_data_scaled[columns_to_scale_train] = scaler.fit_transform(train_data_encoded[columns_to_scale_train])
+
+# Test veri setini ölçeklendirme
+test_data_scaled = test_data_encoded.copy()
+test_data_scaled[columns_to_scale_test] = scaler.transform(test_data_encoded[columns_to_scale_test])
+
+# ------------------- VERİ ÖNİZLEME -------------------
+print("\nEğitim Veri Seti (Ölçeklendirilmiş ve Kodlanmış) (İlk 5 satır):")
+print(train_data_scaled.head())
+print("\nTest Veri Seti (Ölçeklendirilmiş ve Kodlanmış) (İlk 5 satır):")
+print(test_data_scaled.head())
+
+# Ölçeklendirilmiş sütunları kontrol etme
+print("\nÖlçeklendirilmiş sütunlar (eğitim):", columns_to_scale_train)
+print("Ölçeklendirilmiş sütunlar (test):", columns_to_scale_test)
+Uyarı: Bu sütunlar hala kodlama gerektiriyor: ['Fertilizer Name']
+
+Eğitim Veri Seti (Ölçeklendirilmiş ve Kodlanmış) (İlk 5 satır):
+   Temparature  Humidity  Moisture  Soil Type  Crop Type  Nitrogen  Potassium  \
+0     0.923077  0.909091     0.275          1          8  0.842105   0.210526   
+1     0.153846  0.863636     1.000          4          4  0.684211   0.315789   
+2     0.307692  0.590909     0.175          4          4  0.526316   0.631579   
+3     0.769231  0.545455     0.725          4          0  0.921053   0.631579   
+4     0.769231  0.363636     0.450          3          6  0.868421   0.105263   
+
+   Phosphorous Fertilizer Name  
+0     0.119048           28-28  
+1     0.428571           28-28  
+2     0.380952        17-17-17  
+3     0.095238        10-26-26  
+4     0.380952             DAP  
+
+Test Veri Seti (Ölçeklendirilmiş ve Kodlanmış) (İlk 5 satır):
+   Temparature  Humidity  Moisture  Soil Type  Crop Type  Nitrogen  Potassium  \
+0     0.461538  0.909091     0.675          4         10  0.789474   0.578947   
+1     0.153846  0.545455     0.500          3          8  0.684211   0.736842   
+2     0.230769  1.000000     0.075          1          2  0.263158   0.789474   
+3     0.923077  0.136364     0.800          0          2  0.368421   0.894737   
+4     0.461538  0.227273     0.175          3          7  0.236842   1.000000   
+
+   Phosphorous  
+0     0.571429  
+1     0.357143  
+2     0.095238  
+3     0.857143  
+4     0.333333  
+
+Ölçeklendirilmiş sütunlar (eğitim): ['Temparature', 'Humidity', 'Moisture', 'Nitrogen', 'Potassium', 'Phosphorous']
+Ölçeklendirilmiş sütunlar (test): ['Temparature', 'Humidity', 'Moisture', 'Nitrogen', 'Potassium', 'Phosphorous']
+In [11]:
+# Numerical and categorical columns
+numeric_columns = ['Temparature', 'Humidity', 'Moisture', 'Nitrogen', 'Potassium', 'Phosphorous']
+categorical_columns = ['Soil Type', 'Crop Type']
+target_column = 'Fertilizer Name'
+
+# Create copies for feature engineering
+train_data_fe = train_data.copy()
+test_data_fe = test_data.copy()
+
+# 1. Polynomial Features (2nd Degree)
+print("📊 Generating 2nd Degree Polynomial Features...")
+# Squares
+for col in numeric_columns:
+    train_data_fe[f'{col}_Squared'] = train_data_fe[col] ** 2
+    test_data_fe[f'{col}_Squared'] = test_data_fe[col] ** 2
+    print(f"✓ {col}_Squared created")
+
+# Cross products
+for col1, col2 in combinations(numeric_columns, 2):
+    feature_name = f'{col1}_{col2}_Interaction'
+    train_data_fe[feature_name] = train_data_fe[col1] * train_data_fe[col2]
+    test_data_fe[feature_name] = test_data_fe[col1] * test_data_fe[col2]
+    print(f"✓ {feature_name} created")
+
+# NPK interaction
+train_data_fe['NPK_Interaction'] = train_data_fe['Nitrogen'] * train_data_fe['Potassium'] * train_data_fe['Phosphorous']
+test_data_fe['NPK_Interaction'] = test_data_fe['Nitrogen'] * test_data_fe['Potassium'] * test_data_fe['Phosphorous']
+print("✓ NPK_Interaction created")
+
+# 2. Ratio Features
+print("\n📊 Generating Ratio Features...")
+epsilon = 1e-6  # To prevent division by zero
+for col1, col2 in combinations(numeric_columns, 2):
+    feature_name = f'{col1}_{col2}_Ratio'
+    train_data_fe[feature_name] = train_data_fe[col1] / (train_data_fe[col2] + epsilon)
+    test_data_fe[feature_name] = test_data_fe[col1] / (test_data_fe[col2] + epsilon)
+    print(f"✓ {feature_name} created")
+
+# 3. Categorical-Numerical Interactions
+print("\n📊 Generating Categorical-Numerical Interaction Features...")
+for cat_col in categorical_columns:
+    for num_col in numeric_columns:
+        feature_name = f'{num_col}_by_{cat_col}'
+        group_means = train_data_fe.groupby(cat_col)[num_col].mean()
+        train_data_fe[feature_name] = train_data_fe[cat_col].map(group_means)
+        test_data_fe[feature_name] = test_data_fe[cat_col].map(group_means)
+        print(f"✓ {feature_name} created")
+
+# 4. Categorical Combinations
+print("\n📊 Generating Categorical Combination Features...")
+train_data_fe['Soil_Crop_Interaction'] = train_data_fe['Soil Type'].astype(str) + "_" + train_data_fe['Crop Type'].astype(str)
+test_data_fe['Soil_Crop_Interaction'] = test_data_fe['Soil Type'].astype(str) + "_" + test_data_fe['Crop Type'].astype(str)
+
+# Label Encoding for Soil_Crop_Interaction
+le_interaction = LabelEncoder()
+train_data_fe['Soil_Crop_Interaction'] = le_interaction.fit_transform(train_data_fe['Soil_Crop_Interaction'])
+le_interaction.classes_ = np.append(le_interaction.classes_, 'unknown')
+test_data_fe['Soil_Crop_Interaction'] = test_data_fe['Soil_Crop_Interaction'].map(
+    lambda x: x if x in le_interaction.classes_[:-1] else 'unknown'
+)
+test_data_fe['Soil_Crop_Interaction'] = le_interaction.transform(test_data_fe['Soil_Crop_Interaction'])
+print("✓ Soil_Crop_Interaction created")
+
+# 5. High Correlation Check and Removal
+print("\n📊 High Correlation Check...")
+print("By eliminating one of the features with a correlation of 90% or higher, we select the most meaningful features from the generated ones.")
+print("Selecting features with 90% or higher correlation:")
+
+new_numeric_columns = [col for col in train_data_fe.columns 
+                       if train_data_fe[col].dtype in ['int64', 'float64'] 
+                       and col not in ['id', 'Fertilizer Name', 'Fertilizer Name Encoded']]
+correlation_matrix = train_data_fe[new_numeric_columns].corr()
+high_corr_pairs = []
+to_drop = set()
+threshold = 0.9  # Correlation threshold
+
+for i in range(len(correlation_matrix.columns)):
+    for j in range(i+1, len(correlation_matrix.columns)):
+        corr_val = correlation_matrix.iloc[i, j]
+        if abs(corr_val) >= threshold:
+            feat1, feat2 = correlation_matrix.columns[i], correlation_matrix.columns[j]
+            # Select the feature with the longer name to drop
+            to_drop.add(feat2 if len(feat2) > len(feat1) else feat1)
+            high_corr_pairs.append((feat1, feat2, corr_val))
+
+if high_corr_pairs:
+    existing_cols_to_drop = [col for col in to_drop if col in train_data_fe.columns]
+    train_data_fe.drop(columns=existing_cols_to_drop, inplace=True)
+    test_data_fe.drop(columns=existing_cols_to_drop, inplace=True)
+    print(f"Removed highly correlated features: {existing_cols_to_drop}")
+else:
+    print("No feature pairs found with |correlation| >= 0.9.")
+
+# Remaining features
+remaining_features = [col for col in train_data_fe.columns 
+                     if col not in ['id', 'Fertilizer Name', 'Fertilizer Name Encoded']]
+print(f"Remaining feature count and names: {len(remaining_features)} {remaining_features}")
+
+# 6. Logarithmic Transformations (only for skewed columns)
+print("\n📊 Generating Logarithmic Transformation Features...")
+for col in numeric_columns:
+    if abs(skew(train_data_fe[col].dropna())) > 0.5:  # Skewness threshold
+        train_data_fe[f'Log_{col}'] = np.log1p(train_data_fe[col].clip(lower=0))
+        test_data_fe[f'Log_{col}'] = np.log1p(test_data_fe[col].clip(lower=0))
+        print(f"✓ Log_{col} created")
+
+print("\nNewly created columns:", [col for col in train_data_fe.columns if col not in train_data.columns])
+📊 Generating 2nd Degree Polynomial Features...
+✓ Temparature_Squared created
+✓ Humidity_Squared created
+✓ Moisture_Squared created
+✓ Nitrogen_Squared created
+✓ Potassium_Squared created
+✓ Phosphorous_Squared created
+✓ Temparature_Humidity_Interaction created
+✓ Temparature_Moisture_Interaction created
+✓ Temparature_Nitrogen_Interaction created
+✓ Temparature_Potassium_Interaction created
+✓ Temparature_Phosphorous_Interaction created
+✓ Humidity_Moisture_Interaction created
+✓ Humidity_Nitrogen_Interaction created
+✓ Humidity_Potassium_Interaction created
+✓ Humidity_Phosphorous_Interaction created
+✓ Moisture_Nitrogen_Interaction created
+✓ Moisture_Potassium_Interaction created
+✓ Moisture_Phosphorous_Interaction created
+✓ Nitrogen_Potassium_Interaction created
+✓ Nitrogen_Phosphorous_Interaction created
+✓ Potassium_Phosphorous_Interaction created
+✓ NPK_Interaction created
+
+📊 Generating Ratio Features...
+✓ Temparature_Humidity_Ratio created
+✓ Temparature_Moisture_Ratio created
+✓ Temparature_Nitrogen_Ratio created
+✓ Temparature_Potassium_Ratio created
+✓ Temparature_Phosphorous_Ratio created
+✓ Humidity_Moisture_Ratio created
+✓ Humidity_Nitrogen_Ratio created
+✓ Humidity_Potassium_Ratio created
+✓ Humidity_Phosphorous_Ratio created
+✓ Moisture_Nitrogen_Ratio created
+✓ Moisture_Potassium_Ratio created
+✓ Moisture_Phosphorous_Ratio created
+✓ Nitrogen_Potassium_Ratio created
+✓ Nitrogen_Phosphorous_Ratio created
+✓ Potassium_Phosphorous_Ratio created
+
+📊 Generating Categorical-Numerical Interaction Features...
+✓ Temparature_by_Soil Type created
+✓ Humidity_by_Soil Type created
+✓ Moisture_by_Soil Type created
+✓ Nitrogen_by_Soil Type created
+✓ Potassium_by_Soil Type created
+✓ Phosphorous_by_Soil Type created
+✓ Temparature_by_Crop Type created
+✓ Humidity_by_Crop Type created
+✓ Moisture_by_Crop Type created
+✓ Nitrogen_by_Crop Type created
+✓ Potassium_by_Crop Type created
+✓ Phosphorous_by_Crop Type created
+
+📊 Generating Categorical Combination Features...
+✓ Soil_Crop_Interaction created
+
+📊 High Correlation Check...
+By eliminating one of the features with a correlation of 90% or higher, we select the most meaningful features from the generated ones.
+Selecting features with 90% or higher correlation:
+Removed highly correlated features: ['Humidity_Nitrogen_Ratio', 'Temparature_Nitrogen_Interaction', 'Temparature_Phosphorous_Ratio', 'Potassium_Squared', 'Humidity_Squared', 'Humidity_Phosphorous_Interaction', 'Temparature_Potassium_Interaction', 'Humidity_Moisture_Ratio', 'Nitrogen_Squared', 'Humidity_Nitrogen_Interaction', 'Humidity_Moisture_Interaction', 'Humidity_Phosphorous_Ratio', 'Temparature_Nitrogen_Ratio', 'Moisture_Squared', 'Temparature_Squared', 'Phosphorous_Squared', 'Temparature_Phosphorous_Interaction', 'Temparature_Potassium_Ratio', 'Humidity_Potassium_Interaction', 'Humidity_Potassium_Ratio']
+Remaining feature count and names: 38 ['Temparature', 'Humidity', 'Moisture', 'Soil Type', 'Crop Type', 'Nitrogen', 'Potassium', 'Phosphorous', 'Temparature_Humidity_Interaction', 'Temparature_Moisture_Interaction', 'Moisture_Nitrogen_Interaction', 'Moisture_Potassium_Interaction', 'Moisture_Phosphorous_Interaction', 'Nitrogen_Potassium_Interaction', 'Nitrogen_Phosphorous_Interaction', 'Potassium_Phosphorous_Interaction', 'NPK_Interaction', 'Temparature_Humidity_Ratio', 'Temparature_Moisture_Ratio', 'Moisture_Nitrogen_Ratio', 'Moisture_Potassium_Ratio', 'Moisture_Phosphorous_Ratio', 'Nitrogen_Potassium_Ratio', 'Nitrogen_Phosphorous_Ratio', 'Potassium_Phosphorous_Ratio', 'Temparature_by_Soil Type', 'Humidity_by_Soil Type', 'Moisture_by_Soil Type', 'Nitrogen_by_Soil Type', 'Potassium_by_Soil Type', 'Phosphorous_by_Soil Type', 'Temparature_by_Crop Type', 'Humidity_by_Crop Type', 'Moisture_by_Crop Type', 'Nitrogen_by_Crop Type', 'Potassium_by_Crop Type', 'Phosphorous_by_Crop Type', 'Soil_Crop_Interaction']
+
+📊 Generating Logarithmic Transformation Features...
+
+Newly created columns: ['Temparature_Humidity_Interaction', 'Temparature_Moisture_Interaction', 'Moisture_Nitrogen_Interaction', 'Moisture_Potassium_Interaction', 'Moisture_Phosphorous_Interaction', 'Nitrogen_Potassium_Interaction', 'Nitrogen_Phosphorous_Interaction', 'Potassium_Phosphorous_Interaction', 'NPK_Interaction', 'Temparature_Humidity_Ratio', 'Temparature_Moisture_Ratio', 'Moisture_Nitrogen_Ratio', 'Moisture_Potassium_Ratio', 'Moisture_Phosphorous_Ratio', 'Nitrogen_Potassium_Ratio', 'Nitrogen_Phosphorous_Ratio', 'Potassium_Phosphorous_Ratio', 'Temparature_by_Soil Type', 'Humidity_by_Soil Type', 'Moisture_by_Soil Type', 'Nitrogen_by_Soil Type', 'Potassium_by_Soil Type', 'Phosphorous_by_Soil Type', 'Temparature_by_Crop Type', 'Humidity_by_Crop Type', 'Moisture_by_Crop Type', 'Nitrogen_by_Crop Type', 'Potassium_by_Crop Type', 'Phosphorous_by_Crop Type', 'Soil_Crop_Interaction']
+5. XGBoost SHAP Feature Selection: Visualization and Analysis Suite
+In [12]:
+print("🚀 Starting Advanced GPU XGBoost with SHAP Feature Selection...")
+
+# Add 'id' column to feature-engineered datasets
+train_data_fe['id'] = train['id']
+test_data_fe['id'] = test['id']
+
+# Check GPU availability
+try:
+    gpu_available = torch.cuda.is_available()
+    print(f"✅ GPU available - XGBoost will run in GPU mode")
+except:
+    gpu_available = False
+    print("⚠️ GPU not available - Running in CPU mode")
+
+# Advanced XGBoost parameters (optimized for speed)
+xgb_params = {
+    'objective': 'multi:softprob',
+    'tree_method': 'hist',
+    'device': 'cuda' if gpu_available else 'cpu',
+    'n_estimators': 500,
+    'max_depth': 9,
+    'learning_rate': 0.026,
+    'subsample': 0.7,
+    'colsample_bytree': 0.75, 
+    'min_child_weight': 2,
+    'gamma': 0.1,
+    'reg_alpha': 0.94,
+    'reg_lambda': 0.33,
+    'random_state': 42,
+    'eval_metric': 'mlogloss',
+    'n_jobs': 1,
+    'enable_categorical': False 
+}
+
+# Function to calculate MAP@3 score
+def map_at_3(y_true, y_pred_proba, k=3):
+
+    map_score = 0.0
+    y_true = y_true.values if isinstance(y_true, pd.Series) else y_true  # Convert Series to NumPy array
+    for i in range(len(y_true)):
+        top_k_preds = np.argsort(y_pred_proba[i])[-k:][::-1]  # Get top k predictions
+        if y_true[i] in top_k_preds:
+            rank = np.where(top_k_preds == y_true[i])[0][0] + 1
+            map_score += 1.0 / rank
+    return map_score / len(y_true)
+
+# Encode categorical columns using LabelEncoder
+categorical_columns = ['Soil Type', 'Crop Type']
+label_encoders = {}
+for col in categorical_columns:
+    if col in train_data_fe.columns:
+        le = LabelEncoder()
+        train_data_fe[col] = le.fit_transform(train_data_fe[col])
+        label_encoders[col] = le
+        if col in test_data_fe.columns:
+            test_data_fe[col] = le.transform(test_data_fe[col])
+
+# Separate features and target variable
+feature_columns = [col for col in train_data_fe.columns 
+                   if col not in ['id', 'Fertilizer Name', 'Fertilizer Name Encoded']]
+X_train_fe = train_data_fe[feature_columns]
+y_train = train_data_fe['Fertilizer Name']
+
+# Encode target variable
+if 'Fertilizer Name Encoded' not in train_data_fe.columns:
+    le_target = LabelEncoder()
+    y_train_encoded = le_target.fit_transform(y_train)
+    train_data_fe['Fertilizer Name Encoded'] = y_train_encoded
+else:
+    y_train_encoded = train_data_fe['Fertilizer Name Encoded']
+    le_target = LabelEncoder()
+    le_target.fit(y_train)
+
+print(f"📊 Total number of features: {len(feature_columns)}")
+print(f"📊 Number of classes: {len(np.unique(y_train_encoded))}")
+print(f"📊 Dataset size: {X_train_fe.shape}")
+
+# Check class distribution for imbalance
+print("\n📊 Class distribution:")
+print(pd.Series(y_train_encoded).value_counts(normalize=True))
+
+# Split data into training and validation sets
+X_train_split, X_val_split, y_train_split, y_val_split = train_test_split(
+    X_train_fe, y_train_encoded, test_size=0.3, random_state=42, stratify=y_train_encoded
+)
+
+# Train base XGBoost model
+print(f"\n🚀 Training base XGBoost model ({'GPU' if gpu_available else 'CPU'} mode)...")
+base_model = xgb.XGBClassifier(**xgb_params)
+base_model.fit(X_train_split, y_train_split, verbose=False)
+
+# Calculate MAP@3 for base model
+base_pred_proba = base_model.predict_proba(X_val_split)
+base_map_at_3 = map_at_3(y_val_split, base_pred_proba)
+print(f"✅ Base model MAP@3: {base_map_at_3:.4f}")
+
+# Prepare sample for SHAP analysis
+sample_size = 300
+X_sample = X_val_split.sample(n=sample_size, random_state=42)
+print(f"📊 Calculating SHAP values for {sample_size} samples...")
+
+# Create SHAP Explainer
+print("\n🔍 Creating SHAP Explainer...")
+try:
+    explainer = shap.TreeExplainer(base_model, check_additivity=False)
+    shap_values = explainer.shap_values(X_sample)
+    print("✅ Using native XGBoost SHAP")
+except Exception as e:
+    print(f"⚠️ Native SHAP error: {str(e)}")
+    print("🔄 Falling back to XGBoost feature importance...")
+    shap_importance = base_model.feature_importances_
+    feature_importance = pd.DataFrame({
+        'feature': X_sample.columns,
+        'shap_importance': shap_importance,
+        'xgb_importance': shap_importance
+    }).sort_values('shap_importance', ascending=False)
+    shap_values = None
+else:
+    if isinstance(shap_values, list):
+        print("✅ Multi-class SHAP values (list of arrays)")
+        shap_importance = np.mean([np.abs(class_values).mean(axis=0) for class_values in shap_values], axis=0)
+    else:
+        print("✅ Binary/Regression SHAP values (single array)")
+        shap_importance = np.abs(shap_values).mean(axis=0)
+    
+    feature_importance = pd.DataFrame({
+        'feature': X_sample.columns,
+        'shap_importance': shap_importance,
+        'xgb_importance': base_model.feature_importances_
+    }).sort_values('shap_importance', ascending=False)
+
+print("\n📊 Top 20 features (SHAP):")
+print(feature_importance[['feature', 'shap_importance']].head(20))
+
+# Test model performance with different feature counts
+print("\n🔍 Testing model performance with different feature counts (MAP@3)...")
+feature_counts = [10, 12, 15, 20, 25]
+results = []
+
+fast_xgb_params = xgb_params.copy()
+fast_xgb_params.update({
+    'n_estimators': 500,  # Number of boosting rounds
+    'max_depth': 7,  # Maximum tree depth
+})
+
+for n_features in feature_counts:
+    if n_features > len(feature_importance):
+        continue
+        
+    print(f"   Testing: {n_features} features...")
+    selected_features = feature_importance.head(n_features)['feature'].tolist()
+    
+    X_train_selected = X_train_split[selected_features]
+    X_val_selected = X_val_split[selected_features]
+    
+    model_selected = xgb.XGBClassifier(**fast_xgb_params)
+    model_selected.fit(X_train_selected, y_train_split, verbose=False)
+    
+    # Calculate MAP@3
+    y_pred_proba = model_selected.predict_proba(X_val_selected)
+    map_score = map_at_3(y_val_split, y_pred_proba)
+    
+    # Perform cross-validation for MAP@3
+    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    cv_map_scores = []
+    for train_idx, val_idx in cv.split(X_train_selected, y_train_split):
+        X_train_cv = X_train_selected.iloc[train_idx]
+        y_train_cv = y_train_split[train_idx]
+        X_val_cv = X_train_selected.iloc[val_idx]
+        y_val_cv = y_train_split[val_idx]
+        
+        model_cv = xgb.XGBClassifier(**fast_xgb_params)
+        model_cv.fit(X_train_cv, y_train_cv, verbose=False)
+        y_pred_proba_cv = model_cv.predict_proba(X_val_cv)
+        cv_map_scores.append(map_at_3(y_val_cv, y_pred_proba_cv))
+    
+    map_score_cv = np.mean(cv_map_scores)
+    map_std_cv = np.std(cv_map_scores)
+    
+    results.append({
+        'n_features': n_features,
+        'map_at_3': map_score_cv,
+        'std': map_std_cv,
+        'improvement': map_score_cv - base_map_at_3
+    })
+    
+    print(f"   ✅ {n_features:3d} features: CV MAP@3 = {map_score_cv:.4f} (±{map_std_cv:.4f})")
+
+# Determine the optimal number of features
+results_df = pd.DataFrame(results)
+best_result = results_df.loc[results_df['map_at_3'].idxmax()]
+optimal_n_features = int(best_result['n_features'])
+
+print(f"\n🎯 Optimal number of features (MAP@3): {optimal_n_features}")
+print(f"🎯 Best CV MAP@3: {best_result['map_at_3']:.4f} (±{best_result['std']:.4f})")
+print(f"🎯 Improvement over base model: {best_result['improvement']:+.4f}")
+
+# Select final features
+selected_features_final = feature_importance.head(optimal_n_features)['feature'].tolist()
+
+print(f"\n✅ Selected {len(selected_features_final)} features:")
+for i, row in feature_importance.head(optimal_n_features).iterrows():
+    print(f"{i+1:2d}. {row['feature']:<40} (SHAP: {row['shap_importance']:.4f}, XGB: {row['xgb_importance']:.4f})")
+
+# Train final model with selected features
+print(f"\n🚀 Training final model with {optimal_n_features} features...")
+X_train_final = X_train_split[selected_features_final]
+X_val_final = X_val_split[selected_features_final]
+
+final_model = xgb.XGBClassifier(**xgb_params)
+final_model.fit(X_train_final, y_train_split, verbose=False)
+
+# Evaluate final model
+y_pred_proba_final = final_model.predict_proba(X_val_final)
+final_map_at_3 = map_at_3(y_val_split, y_pred_proba_final)
+y_pred_final = final_model.predict(X_val_final)
+final_accuracy = classification_report(y_val_split, y_pred_final, target_names=le_target.classes_, digits=4, output_dict=True)
+
+print(f"✅ Final model MAP@3: {final_map_at_3:.4f}")
+print(f"✅ Improvement: {final_map_at_3 - base_map_at_3:+.4f}")
+print(f"\n📊 Detailed performance report:")
+print(classification_report(y_val_split, y_pred_final, target_names=le_target.classes_, digits=4))
+
+# Create final datasets with selected features
+print(f"\n🚀 Creating datasets with {len(selected_features_final)} selected features...")
+train_data_selected = train_data_fe[['id', 'Fertilizer Name', 'Fertilizer Name Encoded'] + selected_features_final].copy()
+test_data_selected = test_data_fe[['id'] + selected_features_final].copy()
+
+print(f"\n📊 Final dataset sizes:")
+print(f"   Training set: {train_data_selected.shape}")
+print(f"   Test set: {test_data_selected.shape}")
+🚀 Starting Advanced GPU XGBoost with SHAP Feature Selection...
+✅ GPU available - XGBoost will run in GPU mode
+📊 Total number of features: 38
+📊 Number of classes: 7
+📊 Dataset size: (750000, 38)
+
+📊 Class distribution:
+1    0.152581
+0    0.151849
+2    0.149937
+4    0.148211
+3    0.147852
+5    0.126480
+6    0.123089
+Name: proportion, dtype: float64
+
+🚀 Training base XGBoost model (GPU mode)...
+✅ Base model MAP@3: 0.3244
+📊 Calculating SHAP values for 300 samples...
+
+🔍 Creating SHAP Explainer...
+✅ Using native XGBoost SHAP
+✅ Multi-class SHAP values (list of arrays)
+
+📊 Top 20 features (SHAP):
+                              feature  shap_importance
+2                            Moisture         0.031325
+7                         Phosphorous         0.027761
+5                            Nitrogen         0.024512
+1                            Humidity         0.020170
+0                         Temparature         0.017444
+6                           Potassium         0.015844
+37              Soil_Crop_Interaction         0.015798
+4                           Crop Type         0.015646
+34              Nitrogen_by_Crop Type         0.013743
+31           Temparature_by_Crop Type         0.013077
+11     Moisture_Potassium_Interaction         0.012650
+23         Nitrogen_Phosphorous_Ratio         0.011429
+14   Nitrogen_Phosphorous_Interaction         0.011260
+13     Nitrogen_Potassium_Interaction         0.011238
+17         Temparature_Humidity_Ratio         0.011167
+22           Nitrogen_Potassium_Ratio         0.011115
+15  Potassium_Phosphorous_Interaction         0.010881
+19            Moisture_Nitrogen_Ratio         0.010541
+12   Moisture_Phosphorous_Interaction         0.010416
+8    Temparature_Humidity_Interaction         0.010401
+
+🔍 Testing model performance with different feature counts (MAP@3)...
+   Testing: 10 features...
+   ✅  10 features: CV MAP@3 = 0.3262 (±0.0010)
+   Testing: 12 features...
+   ✅  12 features: CV MAP@3 = 0.3241 (±0.0012)
+   Testing: 15 features...
+   ✅  15 features: CV MAP@3 = 0.3218 (±0.0008)
+   Testing: 20 features...
+   ✅  20 features: CV MAP@3 = 0.3188 (±0.0005)
+   Testing: 25 features...
+   ✅  25 features: CV MAP@3 = 0.3176 (±0.0009)
+
+🎯 Optimal number of features (MAP@3): 10
+🎯 Best CV MAP@3: 0.3262 (±0.0010)
+🎯 Improvement over base model: +0.0018
+
+✅ Selected 10 features:
+ 3. Moisture                                 (SHAP: 0.0313, XGB: 0.0313)
+ 8. Phosphorous                              (SHAP: 0.0278, XGB: 0.0312)
+ 6. Nitrogen                                 (SHAP: 0.0245, XGB: 0.0297)
+ 2. Humidity                                 (SHAP: 0.0202, XGB: 0.0258)
+ 1. Temparature                              (SHAP: 0.0174, XGB: 0.0265)
+ 7. Potassium                                (SHAP: 0.0158, XGB: 0.0290)
+38. Soil_Crop_Interaction                    (SHAP: 0.0158, XGB: 0.0254)
+ 5. Crop Type                                (SHAP: 0.0156, XGB: 0.0270)
+35. Nitrogen_by_Crop Type                    (SHAP: 0.0137, XGB: 0.0278)
+32. Temparature_by_Crop Type                 (SHAP: 0.0131, XGB: 0.0266)
+
+🚀 Training final model with 10 features...
+✅ Final model MAP@3: 0.3333
+✅ Improvement: +0.0089
+
+📊 Detailed performance report:
+              precision    recall  f1-score   support
+
+    10-26-26     0.1961    0.2335    0.2132     34166
+    14-35-14     0.1982    0.2556    0.2233     34331
+    17-17-17     0.2043    0.2457    0.2231     33736
+       20-20     0.1935    0.1925    0.1930     33267
+       28-28     0.1906    0.2111    0.2003     33347
+         DAP     0.2046    0.1252    0.1553     28458
+        Urea     0.1961    0.0850    0.1186     27695
+
+    accuracy                         0.1974    225000
+   macro avg     0.1976    0.1927    0.1895    225000
+weighted avg     0.1975    0.1974    0.1924    225000
+
+
+🚀 Creating datasets with 10 selected features...
+
+📊 Final dataset sizes:
+   Training set: (750000, 13)
+   Test set: (250000, 11)
+5. XGBoost Model Training
+📊 Validating ID Columns...
+✓ ID columns added or validated
+
+📊 Encoding Target Variable...
+
+📊 Starting 5-Fold Stratified K-Fold Cross-Validation...
+
+Training Fold 1...
+Fold 1 Results:
+  F1 Score (Macro): 0.1914
+  MCC: 0.0606
+  Accuracy: 0.1982
+  MAP@3: 0.3337
+
+Training Fold 2...
+Fold 2 Results:
+  F1 Score (Macro): 0.1911
+  MCC: 0.0604
+  Accuracy: 0.1980
+  MAP@3: 0.3340
+
+Training Fold 3...
+Fold 3 Results:
+  F1 Score (Macro): 0.1925
+  MCC: 0.0622
+  Accuracy: 0.1995
+  MAP@3: 0.3349
+
+Training Fold 4...
+Fold 4 Results:
+  F1 Score (Macro): 0.1912
+  MCC: 0.0607
+  Accuracy: 0.1982
+  MAP@3: 0.3336
+
+Training Fold 5...
+Fold 5 Results:
+  F1 Score (Macro): 0.1915
+  MCC: 0.0613
+  Accuracy: 0.1988
+  MAP@3: 0.3341
+
+📊 Cross-Validation Results Summary:
+Average F1 Score: 0.1915 (±0.0005)
+Average MCC: 0.0610 (±0.0006)
+Average Accuracy: 0.1985 (±0.0006)
+Average MAP@3: 0.3341 (±0.0005)
+
+📊 Training Final Model on Full Data...
+📊 Making Predictions on Test Set...
+📊 Creating Submission File...
+✓ Submission file saved as 'submission.csv'.
+First 5 rows of submission file:
+       id          Fertilizer Name
+0  750000       DAP 28-28 17-17-17
+1  750001  17-17-17 20-20 10-26-26
+2  750002     28-28 20-20 10-26-26
+3  750003    14-35-14 17-17-17 DAP
+4  750004     20-20 10-26-26 28-28

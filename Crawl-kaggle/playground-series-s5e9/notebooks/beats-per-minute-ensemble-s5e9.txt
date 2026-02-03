@@ -1,0 +1,73 @@
+In [1]:
+# ---------------------------
+# Import standard libraries
+# ---------------------------
+from sklearn.neighbors import KNeighborsRegressor
+from functools import reduce
+import pandas as pd
+In [2]:
+# ====================================================
+# 🎵 Kaggle PS S5E9 - KNN Ensemble Blender
+# ====================================================
+# Uses KNN regression to blend multiple submissions
+# for potentially higher performance when 3+ models.
+# ====================================================
+In [3]:
+# ---------------------------
+# Define sources and weights
+# ---------------------------
+sources = {
+    "/kaggle/input/predicting-the-beats-per-minute-of-songs-vault/submission (1).csv": 0.6,
+    "/kaggle/input/predicting-the-beats-per-minute-of-songs-vault/submission.csv": 2.0,
+}
+
+# ---------------------------
+# Read and merge submissions
+# ---------------------------
+dfs = []
+for i, (src, w) in enumerate(sources.items(), start=1):
+    df = pd.read_csv(src).rename(columns={"BeatsPerMinute": f"BeatsPerMinute_{i}"})
+    dfs.append(df)
+
+# Merge on 'id'
+df = reduce(lambda left, right: left.merge(right, on="id"), dfs)
+In [4]:
+# ==================================================
+# ⚖️ Blend Predictions (KNN if 3+ sources)
+# ==================================================
+if len(sources) >= 3:
+    # Prepare feature matrix X (each column = model prediction)
+    feature_cols = [col for col in df.columns if col.startswith("BeatsPerMinute_")]
+    X = df[feature_cols]
+
+    # Optional: pseudo-target = mean of predictions
+    # This acts as a soft training target when ground truth isn't available
+    y = X.mean(axis=1)
+
+    # Initialize KNN regressor
+    knn = KNeighborsRegressor(n_neighbors=5, weights="distance")
+
+    # Fit KNN on base predictions
+    knn.fit(X, y)
+
+    # Predict final BPM using KNN blending
+    df["BeatsPerMinute"] = knn.predict(X)
+    print("✅ Used KNN blending for final ensemble.")
+else:
+    # Fallback: simple weighted average
+    weights = list(sources.values())
+    total = sum(weights)
+    norm_weights = [w / total for w in weights]
+    df["BeatsPerMinute"] = sum(
+        norm_weights[i] * df[f"BeatsPerMinute_{i+1}"] for i in range(len(norm_weights))
+    )
+    print("⚠️ Fallback to weighted average (less than 3 models).")
+⚠️ Fallback to weighted average (less than 3 models).
+In [5]:
+# ---------------------------
+# Save final submission
+# ---------------------------
+final = df[["id", "BeatsPerMinute"]]
+final.to_csv("/kaggle/working/submission.csv", index=False)
+print("✅ Ensemble submission saved as submission.csv")
+✅ Ensemble submission saved as submission.csv

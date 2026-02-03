@@ -1,0 +1,43 @@
+Binary Classification with a Bank Dataset
+      Group 1
+0.97574  v.4  S5E8💰Bank Dataset . Combine Features master Mehran Kazeminia
+0.97706  v.1  XGBoost - Using Original Data - [ CV 0.976 ] grandmaster Chris Deotte
+0.97731  v.1  NN by GPT5 - [ CV 0.974 ] - Wow! grandmaster Chris Deotte
+0.97735  v.9  PS-S5E8 . Blend XGB+LGB contributor HaohuanChen
+0.97742  v.3  Train More - XGB+NN - [LB 0.9774+] grandmaster Chris Deotte
+Group 2
+0.97118  v.1  PSS5E8 : best_quality : gpu master Gaurav Dutta
+0.97694  v.1  PG S5E8 - Single XGB expert turtle
+0.97710  v.3  Playground S5E8: Advanced XGBoost expert E. Molozhenko
+0.97729  v.6  Bank Classif. XGB+LGBM+CAT+YDF expert M. Naumov
+0.97743  v.10  Bank Classification v2 master maverick_ss_26
+Group 3
+0.97540  v.8  PS.S5.E8: DeepTables NN master Vladimir Demidov
+0.97661  v.13  CAT+XGB+LGB+SKlearnPipeline+Ridge expert L-Lee
+0.97754  v.3  Top 1% Solution,esay is all you need! expert H-Z-Ning
+0.97756  v.3  Me on 25 Upvote and Copy contributor Daniyal Atta
+0.97762  v.4  PS-S5E8 . Blend LGB+XGB contributor HaohuanChen
+main weights [ Groups.( 1,2,3 ) ] asc/desc % correct weights
+? v.107 [ +0.27 +0.15 +0.58 ]   70 x 30 [ +0.21,  -0.07, -0.14 ]
+unfold_moreShow hidden markdown
+In [1]:
+import ast
+import numpy as np
+import pandas as pd
+
+from bokeh.plotting import figure, gridplot
+from bokeh.io import output_file, show, output_notebook
+output_notebook()
+Loading BokehJS ...
+unfold_moreShow hidden code
+unfold_moreShow hidden cell
+⋯
+Group_1
+unfold_moreShow hidden code
+Group_2
+unfold_moreShow hidden code
+Group_3
+unfold_moreShow hidden code
+Submit
+Version.107 = ?
+unfold_moreShow hidden code

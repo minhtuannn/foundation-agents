@@ -1,0 +1,704 @@
+In [1]:
+!pip install ydf koolbox scikit-learn==1.5.2 && pip install --no-deps scikeras
+unfold_moreShow hidden output
+Imports and configs
+In [2]:
+from sklearn.ensemble import HistGradientBoostingRegressor, BaggingRegressor
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.feature_selection import mutual_info_regression
+from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.metrics import root_mean_squared_error
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import KFold
+from sklearn.linear_model import Ridge
+from scikeras.wrappers import KerasRegressor
+from lightgbm import LGBMRegressor, early_stopping, log_evaluation
+from ydf import GradientBoostedTreesLearner
+from catboost import CatBoostRegressor
+from xgboost import XGBRegressor
+from koolbox import Trainer
+import matplotlib.pyplot as plt
+import contextlib, io
+import seaborn as sns
+import pandas as pd
+import numpy as np
+import warnings
+import joblib
+import shutil
+import optuna
+import keras
+import json
+import glob
+import ydf
+
+ydf.verbose(2)
+warnings.filterwarnings("ignore")
+unfold_moreShow hidden output
+In [3]:
+class CFG:
+    train_path = "/kaggle/input/playground-series-s5e5/train.csv"
+    test_path = "/kaggle/input/playground-series-s5e5/test.csv"
+    sample_sub_path = "/kaggle/input/playground-series-s5e5/sample_submission.csv"
+    
+    original_path = "/kaggle/input/calories-burnt-prediction/calories.csv"
+
+    metric = root_mean_squared_error
+    target = "Calories"
+    n_folds = 5
+    seed = 42
+
+    cv = KFold(n_splits=n_folds, random_state=seed, shuffle=True)
+
+    run_optuna = True
+    n_optuna_trials = 250
+Data loading and preprocessing
+In [4]:
+train = pd.read_csv(CFG.train_path, index_col="id")
+test = pd.read_csv(CFG.test_path, index_col="id")
+
+train["Sex"] = train["Sex"].map({"male": 0, "female": 1})
+test["Sex"] = test["Sex"].map({"male": 0, "female": 1})
+
+X = train.drop(CFG.target, axis=1)
+y = np.log1p(train[CFG.target])
+X_test = test
+In [5]:
+original = pd.read_csv(CFG.original_path, index_col="User_ID")
+original["Gender"] = original["Gender"].map({"male": 0, "female": 1})
+original = original.rename(columns={"Gender": "Sex"})
+
+X_original = original.drop(CFG.target, axis=1)
+y_original = np.log1p(original[CFG.target])
+In [6]:
+mutual_info = mutual_info_regression(X, y, random_state=CFG.seed)
+
+mutual_info = pd.Series(mutual_info)
+mutual_info.index = X.columns
+mutual_info = pd.DataFrame(mutual_info.sort_values(ascending=False), columns=['Mutual Information'])
+mutual_info.style.bar(subset=['Mutual Information'], cmap='RdYlGn')
+Out[6]:
+  Mutual Information
+Duration 1.640567
+Body_Temp 1.120766
+Heart_Rate 0.976966
+Age 0.098387
+Height 0.056501
+Weight 0.055709
+Sex 0.017174
+In [7]:
+mutual_info = mutual_info_regression(X_original, y_original, random_state=CFG.seed)
+
+mutual_info = pd.Series(mutual_info)
+mutual_info.index = X_original.columns
+mutual_info = pd.DataFrame(mutual_info.sort_values(ascending=False), columns=['Mutual Information'])
+mutual_info.style.bar(subset=['Mutual Information'], cmap='RdYlGn')
+Out[7]:
+  Mutual Information
+Duration 1.494968
+Body_Temp 0.986528
+Heart_Rate 0.866243
+Age 0.035208
+Weight 0.020520
+Sex 0.016184
+Height 0.005213
+In [8]:
+sns.set_style("white")
+fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+corr_train = train.corr()
+mask_train = np.triu(np.ones_like(corr_train, dtype=bool), k=1)
+sns.heatmap(
+    data=corr_train,
+    annot=True,
+    fmt='.2f',
+    mask=mask_train,
+    square=True,
+    cmap='coolwarm',
+    cbar_kws={'shrink': .7, 'format': '%.2f'},   
+    annot_kws={'size': 8},
+    center=0,
+    ax=axes[0]
+)
+axes[0].set_title('Train')
+axes[0].tick_params(axis='both', which='major', labelsize=8)
+
+corr_orig = original.corr()
+mask_orig = np.triu(np.ones_like(corr_orig, dtype=bool), k=1)
+sns.heatmap(
+    data=corr_orig,
+    annot=True,
+    fmt='.2f',
+    mask=mask_orig,
+    square=True,
+    cmap='coolwarm',
+    cbar_kws={'shrink': .7, 'format': '%.2f'},   
+    annot_kws={'size': 8},
+    center=0,
+    ax=axes[1]
+)
+axes[1].set_title('Original')
+axes[1].tick_params(axis='both', which='major', labelsize=8)
+
+plt.tight_layout()
+plt.show()
+Training base models
+unfold_moreShow hidden code
+In [10]:
+scores = {}
+oof_preds = {}
+test_preds = {}
+HistGradientBoosting
+In [11]:
+histgb_trainer = Trainer(
+    HistGradientBoostingRegressor(**histgb_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    task="regression"
+)
+
+histgb_trainer.fit(X, y, extra_X=X_original, extra_y=y_original)
+
+scores["HistGB"] = histgb_trainer.fold_scores
+oof_preds["HistGB"] = histgb_trainer.oof_preds
+test_preds["HistGB"] = histgb_trainer.predict(X_test)
+Training HistGradientBoostingRegressor
+
+--- Fold 0 - root_mean_squared_error: 0.0594 - Time: 90.22 s
+--- Fold 1 - root_mean_squared_error: 0.0605 - Time: 80.47 s
+--- Fold 2 - root_mean_squared_error: 0.0597 - Time: 85.07 s
+--- Fold 3 - root_mean_squared_error: 0.0601 - Time: 77.64 s
+--- Fold 4 - root_mean_squared_error: 0.0593 - Time: 81.89 s
+
+------ Overall root_mean_squared_error: 0.0598 - Mean root_mean_squared_error: 0.0598 ± 0.0004 - Time: 417.01 s
+LightGBM (gbdt)
+In [12]:
+lgbm_trainer = Trainer(
+    LGBMRegressor(**lgbm_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    use_early_stopping=True,
+    task="regression"
+)
+
+fit_args = {
+    "eval_metric": "rmse",
+    "callbacks": [
+        log_evaluation(period=1000), 
+        early_stopping(stopping_rounds=100)
+    ]
+}
+
+lgbm_trainer.fit(X, y, fit_args=fit_args, extra_X=X_original, extra_y=y_original)
+
+scores["LightGBM (gbdt)"] = lgbm_trainer.fold_scores
+oof_preds["LightGBM (gbdt)"] = lgbm_trainer.oof_preds
+test_preds["LightGBM (gbdt)"] = lgbm_trainer.predict(X_test)
+Training LGBMRegressor
+
+Training until validation scores don't improve for 100 rounds
+Early stopping, best iteration is:
+[791] valid_0's rmse: 0.0596226 valid_0's l2: 0.00355485
+--- Fold 0 - root_mean_squared_error: 0.0596 - Time: 27.88 s
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's rmse: 0.0603528 valid_0's l2: 0.00364246
+Early stopping, best iteration is:
+[1369] valid_0's rmse: 0.0603066 valid_0's l2: 0.00363688
+--- Fold 1 - root_mean_squared_error: 0.0603 - Time: 43.15 s
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's rmse: 0.0596239 valid_0's l2: 0.00355501
+Early stopping, best iteration is:
+[1406] valid_0's rmse: 0.0595985 valid_0's l2: 0.00355198
+--- Fold 2 - root_mean_squared_error: 0.0596 - Time: 43.53 s
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's rmse: 0.0601725 valid_0's l2: 0.00362073
+[2000] valid_0's rmse: 0.060028 valid_0's l2: 0.00360336
+Early stopping, best iteration is:
+[1918] valid_0's rmse: 0.0600226 valid_0's l2: 0.00360271
+--- Fold 3 - root_mean_squared_error: 0.0600 - Time: 56.50 s
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's rmse: 0.0594362 valid_0's l2: 0.00353266
+Early stopping, best iteration is:
+[1376] valid_0's rmse: 0.0593934 valid_0's l2: 0.00352758
+--- Fold 4 - root_mean_squared_error: 0.0594 - Time: 42.92 s
+
+
+------ Overall root_mean_squared_error: 0.0598 - Mean root_mean_squared_error: 0.0598 ± 0.0003 - Time: 215.74 s
+LightGBM (goss)
+In [13]:
+lgbm_goss_trainer = Trainer(
+    LGBMRegressor(**lgbm_goss_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    use_early_stopping=True,
+    task="regression"
+)
+
+fit_args = {
+    "eval_metric": "rmse",
+    "callbacks": [
+        log_evaluation(period=1000), 
+        early_stopping(stopping_rounds=100)
+    ]
+}
+
+lgbm_goss_trainer.fit(X, y, fit_args=fit_args, extra_X=X_original, extra_y=y_original)
+
+scores["LightGBM (goss)"] = lgbm_goss_trainer.fold_scores
+oof_preds["LightGBM (goss)"] = lgbm_goss_trainer.oof_preds
+test_preds["LightGBM (goss)"] = lgbm_goss_trainer.predict(X_test)
+Training LGBMRegressor
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's rmse: 0.0600588 valid_0's l2: 0.00360706
+[2000] valid_0's rmse: 0.0597145 valid_0's l2: 0.00356582
+[3000] valid_0's rmse: 0.0596177 valid_0's l2: 0.00355427
+Early stopping, best iteration is:
+[3424] valid_0's rmse: 0.0595945 valid_0's l2: 0.0035515
+--- Fold 0 - root_mean_squared_error: 0.0596 - Time: 102.76 s
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's rmse: 0.0607929 valid_0's l2: 0.00369577
+[2000] valid_0's rmse: 0.0604315 valid_0's l2: 0.00365197
+[3000] valid_0's rmse: 0.0603068 valid_0's l2: 0.00363691
+Early stopping, best iteration is:
+[3299] valid_0's rmse: 0.0602872 valid_0's l2: 0.00363454
+--- Fold 1 - root_mean_squared_error: 0.0603 - Time: 97.23 s
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's rmse: 0.0600734 valid_0's l2: 0.00360881
+[2000] valid_0's rmse: 0.0597328 valid_0's l2: 0.00356801
+[3000] valid_0's rmse: 0.0596015 valid_0's l2: 0.00355234
+[4000] valid_0's rmse: 0.0595402 valid_0's l2: 0.00354503
+Early stopping, best iteration is:
+[4508] valid_0's rmse: 0.0595248 valid_0's l2: 0.00354321
+--- Fold 2 - root_mean_squared_error: 0.0595 - Time: 132.75 s
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's rmse: 0.0606943 valid_0's l2: 0.0036838
+[2000] valid_0's rmse: 0.0602788 valid_0's l2: 0.00363353
+[3000] valid_0's rmse: 0.0601248 valid_0's l2: 0.00361499
+[4000] valid_0's rmse: 0.060043 valid_0's l2: 0.00360516
+Early stopping, best iteration is:
+[4559] valid_0's rmse: 0.0600092 valid_0's l2: 0.00360111
+--- Fold 3 - root_mean_squared_error: 0.0600 - Time: 133.81 s
+
+Training until validation scores don't improve for 100 rounds
+[1000] valid_0's rmse: 0.0597776 valid_0's l2: 0.00357336
+[2000] valid_0's rmse: 0.0594386 valid_0's l2: 0.00353295
+[3000] valid_0's rmse: 0.0593427 valid_0's l2: 0.00352156
+Early stopping, best iteration is:
+[3301] valid_0's rmse: 0.0593269 valid_0's l2: 0.00351968
+--- Fold 4 - root_mean_squared_error: 0.0593 - Time: 98.12 s
+
+
+------ Overall root_mean_squared_error: 0.0597 - Mean root_mean_squared_error: 0.0597 ± 0.0003 - Time: 566.43 s
+XGBoost
+In [14]:
+xgb_trainer = Trainer(
+    XGBRegressor(**xgb_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    use_early_stopping=True,
+    task="regression"
+)
+
+fit_args = {
+    "verbose": 1000
+}
+
+xgb_trainer.fit(X, y, fit_args=fit_args, extra_X=X_original, extra_y=y_original)
+
+scores["XGBoost"] = xgb_trainer.fold_scores
+oof_preds["XGBoost"] = xgb_trainer.oof_preds
+test_preds["XGBoost"] = xgb_trainer.predict(X_test)
+Training XGBRegressor
+
+[0] validation_0-rmse:0.92856
+[1000] validation_0-rmse:0.06015
+[2000] validation_0-rmse:0.06009
+[3000] validation_0-rmse:0.06007
+[3122] validation_0-rmse:0.06006
+--- Fold 0 - root_mean_squared_error: 0.0601 - Time: 82.67 s
+
+[0] validation_0-rmse:0.93096
+[1000] validation_0-rmse:0.06137
+[2000] validation_0-rmse:0.06128
+[3000] validation_0-rmse:0.06123
+[3071] validation_0-rmse:0.06123
+--- Fold 1 - root_mean_squared_error: 0.0612 - Time: 85.00 s
+
+[0] validation_0-rmse:0.92964
+[1000] validation_0-rmse:0.06065
+[2000] validation_0-rmse:0.06056
+[3000] validation_0-rmse:0.06053
+[3091] validation_0-rmse:0.06053
+--- Fold 2 - root_mean_squared_error: 0.0605 - Time: 82.89 s
+
+[0] validation_0-rmse:0.92813
+[1000] validation_0-rmse:0.06097
+[1244] validation_0-rmse:0.06096
+--- Fold 3 - root_mean_squared_error: 0.0610 - Time: 39.65 s
+
+[0] validation_0-rmse:0.92887
+[1000] validation_0-rmse:0.06014
+[2000] validation_0-rmse:0.06007
+[2595] validation_0-rmse:0.06005
+--- Fold 4 - root_mean_squared_error: 0.0601 - Time: 72.46 s
+
+
+------ Overall root_mean_squared_error: 0.0606 - Mean root_mean_squared_error: 0.0606 ± 0.0005 - Time: 364.42 s
+CatBoost
+In [15]:
+cb_trainer = Trainer(
+    CatBoostRegressor(**cb_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    use_early_stopping=True,
+    task="regression"
+)
+
+fit_args = {
+    "verbose": 1000,
+    "early_stopping_rounds": 100,
+    "use_best_model": True
+}
+
+cb_trainer.fit(X, y, fit_args=fit_args, extra_X=X_original, extra_y=y_original)
+
+scores["CatBoost"] = cb_trainer.fold_scores
+oof_preds["CatBoost"] = cb_trainer.oof_preds
+test_preds["CatBoost"] = cb_trainer.predict(X_test)
+Training CatBoostRegressor
+
+0: learn: 0.9348709 test: 0.9341488 best: 0.9341488 (0) total: 129ms remaining: 1h 47m 34s
+1000: learn: 0.0571087 test: 0.0593244 best: 0.0593244 (1000) total: 54s remaining: 44m 4s
+2000: learn: 0.0560120 test: 0.0591679 best: 0.0591679 (2000) total: 1m 47s remaining: 42m 52s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 0.05911377754
+bestIteration = 2824
+
+Shrink model to first 2825 iterations.
+--- Fold 0 - root_mean_squared_error: 0.0591 - Time: 156.98 s
+
+0: learn: 0.9342850 test: 0.9365766 best: 0.9365766 (0) total: 91.5ms remaining: 1h 16m 14s
+1000: learn: 0.0571036 test: 0.0598252 best: 0.0598252 (1000) total: 54.1s remaining: 44m 7s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 0.05966835269
+bestIteration = 1741
+
+Shrink model to first 1742 iterations.
+--- Fold 1 - root_mean_squared_error: 0.0597 - Time: 100.30 s
+
+0: learn: 0.9346164 test: 0.9352198 best: 0.9352198 (0) total: 66.9ms remaining: 55m 47s
+1000: learn: 0.0570640 test: 0.0593004 best: 0.0593004 (1000) total: 53.6s remaining: 43m 45s
+2000: learn: 0.0559380 test: 0.0590550 best: 0.0590543 (1996) total: 1m 46s remaining: 42m 44s
+3000: learn: 0.0551639 test: 0.0589824 best: 0.0589822 (2994) total: 2m 39s remaining: 41m 40s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 0.05895750885
+bestIteration = 3703
+
+Shrink model to first 3704 iterations.
+--- Fold 2 - root_mean_squared_error: 0.0590 - Time: 203.09 s
+
+0: learn: 0.9349691 test: 0.9337102 best: 0.9337102 (0) total: 65.2ms remaining: 54m 19s
+1000: learn: 0.0570599 test: 0.0597373 best: 0.0597373 (1000) total: 53.7s remaining: 43m 50s
+2000: learn: 0.0560408 test: 0.0595997 best: 0.0595980 (1976) total: 1m 46s remaining: 42m 33s
+3000: learn: 0.0552776 test: 0.0595437 best: 0.0595417 (2940) total: 2m 39s remaining: 41m 39s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 0.0595416905
+bestIteration = 2940
+
+Shrink model to first 2941 iterations.
+--- Fold 3 - root_mean_squared_error: 0.0595 - Time: 162.97 s
+
+0: learn: 0.9347914 test: 0.9344284 best: 0.9344284 (0) total: 72.7ms remaining: 1h 34s
+1000: learn: 0.0572454 test: 0.0590697 best: 0.0590697 (1000) total: 54.2s remaining: 44m 10s
+2000: learn: 0.0561135 test: 0.0589142 best: 0.0589119 (1987) total: 1m 46s remaining: 42m 41s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 0.05891120084
+bestIteration = 2077
+
+Shrink model to first 2078 iterations.
+--- Fold 4 - root_mean_squared_error: 0.0589 - Time: 116.84 s
+
+
+------ Overall root_mean_squared_error: 0.0592 - Mean root_mean_squared_error: 0.0592 ± 0.0003 - Time: 741.92 s
+AutoGluon
+In [16]:
+oof_preds_files = glob.glob(f'/kaggle/input/s05e05-calorie-expenditure-prediction-automl/*_oof_preds_*.pkl')
+test_preds_files = glob.glob(f'/kaggle/input/s05e05-calorie-expenditure-prediction-automl/*_test_preds_*.pkl')
+
+ag_oof_preds = np.log1p(joblib.load(oof_preds_files[0]))
+ag_test_preds = np.log1p(joblib.load(test_preds_files[0]))
+
+ag_scores = []
+split = KFold(n_splits=CFG.n_folds, random_state=CFG.seed, shuffle=True).split(X, y)
+for _, val_idx in split:
+    y_val = y[val_idx]
+    y_preds = ag_oof_preds[val_idx]   
+    score = root_mean_squared_error(y_preds, y_val)
+    ag_scores.append(score)
+    
+oof_preds["AutoGluon"], test_preds["AutoGluon"], scores["AutoGluon"] = ag_oof_preds, ag_test_preds, ag_scores
+Yggdrasil
+In [17]:
+def YDFRegressor(learner_class):
+
+    class YDFXRegressor(BaseEstimator, RegressorMixin):
+
+        def __init__(self, params={}):
+            self.params = params
+
+        def fit(self, X, y):
+            assert isinstance(X, pd.DataFrame)
+            assert isinstance(y, pd.Series)
+            target = y.name
+            params = self.params.copy()
+            params['label'] = target
+            params['task'] = ydf.Task.REGRESSION
+            X = pd.concat([X, y], axis=1)
+            with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                self.model = learner_class(**params).train(X)
+            return self
+
+        def predict(self, X):
+            assert isinstance(X, pd.DataFrame)
+            with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                return self.model.predict(X)
+
+    return YDFXRegressor
+In [18]:
+ydf_trainer = Trainer(
+    YDFRegressor(GradientBoostedTreesLearner)(ydf_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    task="regression"
+)
+
+ydf_trainer.fit(X, y, extra_X=X_original, extra_y=y_original)
+
+scores["Yggdrasil"] = ydf_trainer.fold_scores
+oof_preds["Yggdrasil"] = ydf_trainer.oof_preds
+test_preds["Yggdrasil"] = ydf_trainer.predict(X_test)
+Training YDFXRegressor
+
+--- Fold 0 - root_mean_squared_error: 0.0604 - Time: 122.56 s
+--- Fold 1 - root_mean_squared_error: 0.0608 - Time: 114.05 s
+--- Fold 2 - root_mean_squared_error: 0.0603 - Time: 77.55 s
+--- Fold 3 - root_mean_squared_error: 0.0612 - Time: 99.58 s
+--- Fold 4 - root_mean_squared_error: 0.0602 - Time: 135.60 s
+
+------ Overall root_mean_squared_error: 0.0606 - Mean root_mean_squared_error: 0.0606 ± 0.0004 - Time: 551.07 s
+Neural networks
+In [19]:
+train = pd.read_csv(CFG.train_path, index_col="id")
+test = pd.read_csv(CFG.test_path, index_col="id")
+
+original = pd.read_csv(CFG.original_path, index_col="User_ID")
+original = original.rename(columns={"Gender": "Sex"})
+
+X = train.drop(CFG.target, axis=1)
+y = np.log1p(train[CFG.target])
+X_test = test
+
+X_original = original.drop(CFG.target, axis=1)
+y_original = np.log1p(original[CFG.target])
+In [20]:
+pipeline = make_pipeline(
+    ColumnTransformer(
+        [
+            ('one-hot-encode', OneHotEncoder(drop='first', sparse_output=False, dtype=np.float32, handle_unknown='ignore'), ['Sex']),
+            
+        ],
+        remainder=StandardScaler()
+    )
+).set_output(transform='pandas')
+
+X = pipeline.fit_transform(X, y)
+X_test = pipeline.transform(X_test)
+X_original = pipeline.transform(X_original)
+In [21]:
+def get_model(meta):
+    model = keras.models.Sequential()
+    model.add(keras.layers.Input(meta["X_shape_"][1:]))
+    model.add(keras.layers.Dense(256, kernel_initializer='lecun_normal', activation='selu'))
+    model.add(keras.layers.Dense(128, kernel_initializer='lecun_normal', activation='selu'))
+    model.add(keras.layers.Dense(64, kernel_initializer='lecun_normal', activation='selu'))
+    model.add(keras.layers.Dense(1))
+    return model
+In [22]:
+nn_model = KerasRegressor(
+    get_model,
+    loss="mean_squared_error",
+    random_state=CFG.seed,
+    metrics=[keras.metrics.RootMeanSquaredError(name='rmse')],
+    optimizer=keras.optimizers.AdamW(learning_rate=0.001),
+    validation_batch_size=65536,
+    validation_split=0.1,
+    batch_size=1024,
+    epochs=100, 
+    verbose=0,
+    callbacks=[
+        keras.callbacks.EarlyStopping(monitor='val_rmse', patience=7, restore_best_weights=True),
+        keras.callbacks.ReduceLROnPlateau(monitor='val_rmse', patience=3, factor=0.3)
+    ]
+)
+2025-05-17 03:03:23.114555: E external/local_xla/xla/stream_executor/cuda/cuda_driver.cc:152] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+In [23]:
+nn_bag = BaggingRegressor(
+    nn_model,
+    n_estimators=3,
+    random_state=CFG.seed,
+)
+In [24]:
+nn_trainer = Trainer(
+    nn_bag,
+    cv=CFG.cv,
+    metric=root_mean_squared_error,
+    task="regression"
+)
+
+nn_trainer.fit(X, y, extra_X=X_original, extra_y=y_original)
+
+scores["KerasANN"] = nn_trainer.fold_scores
+oof_preds["KerasANN"] = nn_trainer.oof_preds
+test_preds["KerasANN"] = nn_trainer.predict(X_test)
+unfold_moreShow hidden output
+Ensembling with Ridge
+unfold_moreShow hidden code
+In [26]:
+X = pd.DataFrame(oof_preds)
+X_test = pd.DataFrame(test_preds)
+In [27]:
+joblib.dump(X, "oof_preds.pkl")
+joblib.dump(X_test, "test_preds.pkl")
+Out[27]:
+['test_preds.pkl']
+In [28]:
+def objective(trial):    
+    params = {
+        "random_state": CFG.seed,
+        "alpha": trial.suggest_float("alpha", 0, 10),
+        "tol": trial.suggest_float("tol", 1e-6, 1e-2)
+    }
+    
+    trainer = Trainer(
+        Ridge(**params),
+        cv=CFG.cv,
+        metric=CFG.metric,
+        task="regression",
+        verbose=False
+    )
+    trainer.fit(X, y)
+    
+    return trainer.overall_score
+
+if CFG.run_optuna:
+    sampler = optuna.samplers.TPESampler(seed=CFG.seed, multivariate=True)
+    study = optuna.create_study(direction="minimize", sampler=sampler)
+    study.optimize(objective, n_trials=CFG.n_optuna_trials, n_jobs=-1, catch=(ValueError,))
+    best_params = study.best_params
+
+    ridge_params = {
+        "random_state": CFG.seed,
+        "alpha": best_params["alpha"],
+        "tol": best_params["tol"]
+    }
+else:
+    ridge_params = {
+        "random_state": CFG.seed
+    }
+unfold_moreShow hidden output
+In [29]:
+print(json.dumps(ridge_params, indent=2))
+{
+  "random_state": 42,
+  "alpha": 2.0219214481299184,
+  "tol": 0.003824339902373062
+}
+In [30]:
+ridge_trainer = Trainer(
+    Ridge(**ridge_params),
+    cv=CFG.cv,
+    metric=CFG.metric,
+    task="regression"
+)
+
+ridge_trainer.fit(X, y)
+
+scores["Ridge (ensemble)"] = ridge_trainer.fold_scores
+ridge_test_preds = np.expm1(ridge_trainer.predict(X_test))
+Training Ridge
+
+--- Fold 0 - root_mean_squared_error: 0.0588 - Time: 0.13 s
+--- Fold 1 - root_mean_squared_error: 0.0595 - Time: 0.13 s
+--- Fold 2 - root_mean_squared_error: 0.0589 - Time: 0.13 s
+--- Fold 3 - root_mean_squared_error: 0.0592 - Time: 0.13 s
+--- Fold 4 - root_mean_squared_error: 0.0585 - Time: 0.14 s
+
+------ Overall root_mean_squared_error: 0.0590 - Mean root_mean_squared_error: 0.0590 ± 0.0003 - Time: 3.83 s
+In [31]:
+ridge_coeffs = np.zeros((1, X.shape[1]))
+for m in ridge_trainer.estimators:
+    ridge_coeffs += m.coef_
+ridge_coeffs = ridge_coeffs / len(ridge_trainer.estimators)
+
+plot_weights(ridge_coeffs, "Ridge Coefficients")
+Submission
+In [32]:
+sub = pd.read_csv(CFG.sample_sub_path)
+sub[CFG.target] = ridge_test_preds
+sub.to_csv(f"sub_ridge_{np.mean(scores['Ridge (ensemble)']):.6f}.csv", index=False)
+sub.head()
+Out[32]:
+id Calories
+0 750000 27.226734
+1 750001 107.682816
+2 750002 87.157550
+3 750003 125.780160
+4 750004 76.006610
+Results
+In [33]:
+scores = pd.DataFrame(scores)
+mean_scores = scores.mean().sort_values(ascending=True)
+order = scores.mean().sort_values(ascending=True).index.tolist()
+
+min_score = mean_scores.min()
+max_score = mean_scores.max()
+padding = (max_score - min_score) * 0.5
+lower_limit = min_score - padding
+upper_limit = max_score + padding
+
+fig, axs = plt.subplots(1, 2, figsize=(15, scores.shape[1] * 0.3))
+
+boxplot = sns.boxplot(data=scores, order=order, ax=axs[0], orient="h", color="grey")
+axs[0].set_title(f"Fold {CFG.metric.__name__}")
+axs[0].set_xlabel("")
+axs[0].set_ylabel("")
+
+barplot = sns.barplot(x=mean_scores.values, y=mean_scores.index, ax=axs[1], color="grey")
+axs[1].set_title(f"Average {CFG.metric.__name__}")
+axs[1].set_xlabel("")
+axs[1].set_xlim(left=lower_limit, right=upper_limit)
+axs[1].set_ylabel("")
+
+for i, (score, model) in enumerate(zip(mean_scores.values, mean_scores.index)):
+    color = "cyan" if "ensemble" in model.lower() else "grey"
+    barplot.patches[i].set_facecolor(color)
+    boxplot.patches[i].set_facecolor(color)
+    barplot.text(score, i, round(score, 6), va="center")
+
+plt.tight_layout()
+plt.show()
+In [34]:
+shutil.rmtree("catboost_info", ignore_errors=True)

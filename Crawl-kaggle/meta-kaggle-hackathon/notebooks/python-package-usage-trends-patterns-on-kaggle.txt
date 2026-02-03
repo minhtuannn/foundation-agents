@@ -1,0 +1,213 @@
+We have also built an interactive demo that allows users to explore additional plots, filter patterns by their own selected packages, and dynamically visualize trends and associations across the Kaggle ecosystem.
+Interactive Demo
+0- Imports & Util Functions
+unfold_moreShow hidden code
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 189.0/189.0 kB 4.1 MB/s eta 0:00:00:00:01
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+/tmp/ipykernel_36/2341360226.py:3: DeprecationWarning: load_dataset is deprecated and will be removed in a future version.
+1- Most Popular Packages (Jan–Jul 2025)
+Which Python packages are currently the most popular on Kaggle?
+How widely adopted are most Python packages on Kaggle?
+
+To explore which Python packages are currently popular on Kaggle, We analyzed a series of kernels created between April 1st, 2025 and July 15th, 2025, sampling every three days to ensure temporal coverage while maintaining scalability.
+For each sampled day, We collected all public kernels and extracted the list of imported Python packages. By aggregating the number of times each package was imported across these kernels, We computed a usage count and a kernel usage ratio for each package — reflecting both raw frequency and relative adoption.
+This experiment aims to surface the most widely used libraries in recent Kaggle activity, shedding light on current user preferences, popular tools, and potentially emerging trends in the Kaggle data science ecosystem.
+In [22]:
+df = analyze_codes_in_date_range(K , "01/01/2025", "07/19/2025" , jump_days=10)
+packages_counts = count_values_and_summarize(df)
+packages_counts.to_csv("packages_counts_2025.csv",index=False)
+> Total kernels analyzed: 13778
+unfold_moreShow hidden code
+Most Popular Packages on Kaggle (2025)
+rank package usage_count usage_ratio
+1.000000 pandas 10593 0.768834
+2.000000 numpy 10586 0.768326
+3.000000 matplotlib 8322 0.604006
+4.000000 os 7810 0.566846
+5.000000 sklearn 7332 0.532153
+6.000000 seaborn 5368 0.389607
+7.000000 warnings 2615 0.189795
+8.000000 torch 2588 0.187836
+9.000000 tensorflow 2071 0.150312
+10.000000 tqdm 1820 0.132095
+11.000000 random 1410 0.102337
+12.000000 xgboost 1348 0.097837
+13.000000 PIL 1312 0.095224
+14.000000 cv2 1253 0.090942
+15.000000 IPython 1217 0.088329
+16.000000 re 1122 0.081434
+17.000000 kaggle_secrets 1106 0.080273
+18.000000 scipy 1084 0.078676
+19.000000 google 1035 0.075120
+20.000000 time 1032 0.074902
+This plot shows how Python packages are distributed based on their usage ratio—the proportion of kernels in which each package appears.
+The x-axis represents the usage ratio (from rare to widely used packages), while the y-axis shows the number of packages at each usage level.
+unfold_moreShow hidden code
+2- Number of Packages Imported vs Votes of a Kernel
+Does using more packages make your kernel more impressive or just more complicated?
+Do Kaggle notebooks with more imported packages get more upvotes or does simplicity win?
+Is there a sweet spot for how many libraries a Kaggle kernel should use?
+
+This analysis explores how the number of imported Python packages in a Kaggle kernel relates to its upvote count, which serves as a proxy for community appreciation.
+The x-axis represents the number of distinct packages imported in each kernel, while the y-axis shows the total upvotes received. The goal is to identify whether kernels that use more libraries are generally perceived as more valuable—or whether there is a point of diminishing returns, where complexity may reduce accessibility or clarity.
+Patterns in the plot can reveal whether concise, focused notebooks or tool-rich, complex ones tend to be better received by the Kaggle community.
+In [25]:
+df = analyze_codes_in_date_range(K , "05/01/2025", "05/06/2025"  )
+num_packages_used = df.groupby('id')[['package']].count().reset_index()
+num_packages_used['id'] = num_packages_used['id'].astype(float).astype(int)
+mrg = pd.merge( K , num_packages_used , left_on='CurrentKernelVersionId' , right_on='id')
+> Total kernels analyzed: 3470
+unfold_moreShow hidden code
+> Correlationship between num of packages imported and num of votes: 0.10677298322127249
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+3- Trends in the Number of Imported Packages over the Years
+Have Kaggle users started using more packages per notebook over the years?
+Are modern Kaggle notebooks more sophisticated than they were a few years ago?
+
+To investigate whether Kaggle kernels are becoming more complex, We analyzed notebooks sampled from the same calendar days between 2016 and 2025. For each sampled kernel, We counted the number of distinct Python packages imported.
+By aggregating this data yearly, we can observe trends in how the average number of imported packages per kernel has changed over time. This provides insight into whether notebooks are becoming more tool-rich, potentially reflecting more advanced modeling workflows, growing library ecosystems, or increased task complexity.
+unfold_moreShow hidden code
+> Total kernels analyzed: 2891
+unfold_moreShow hidden code
+4- Trending packages
+Which packages were already used in 2023 but have gained significant traction in 2025?
+What new packages have emerged since 2023 and become widely used in 2025?
+
+This section identifies trending Python packages by comparing usage between 2023 and 2025. The goal is to highlight tools that are either rising in popularity or newly adopted by the Kaggle community. We categorize trending packages into two groups:
+Rising Veterans: Packages that were already used in 2023, but have seen significant growth in usage by 2025. These tools are gaining momentum and becoming more central to the Kaggle workflow.
+Newcomers: Packages that had little or no usage in 2023, but are now prominently used in 2025. These represent emerging tools or libraries driven by recent trends in machine learning, deep learning, or data engineering.
+In [31]:
+df = analyze_codes_in_date_range(K , "01/01/2023", "07/19/2023" , jump_days=10)
+packages_counts_2023 = count_values_and_summarize(df)
+> Total kernels analyzed: 8420
+In [32]:
+df = analyze_codes_in_date_range(K , "01/01/2025", "07/19/2025" , jump_days=10)
+packages_counts_2025 = count_values_and_summarize(df)
+> Total kernels analyzed: 13778
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+Packages that were already used in 2023, but have seen significant growth in usage by 2025
+package growth_ratio usage_ratio_2023 usage_ratio_2025 rank_2023 rank_2025
+chromadb 176.002323 0.000119 0.020903 474.000000 44.000000
+typing_extensions 95.334591 0.000119 0.011322 474.000000 61.000000
+email 43.389461 0.000238 0.010306 347.000000 65.000000
+trl 31.778197 0.000119 0.003774 474.000000 104.000000
+lifelines 26.278125 0.000119 0.003121 474.000000 114.000000
+sympy 21.592878 0.000356 0.007693 299.000000 71.000000
+metric 18.333575 0.000119 0.002177 474.000000 144.000000
+enum 15.714493 0.000831 0.013064 192.000000 58.000000
+monai 15.277979 0.000238 0.003629 347.000000 107.000000
+kaggle_secrets 14.693431 0.005463 0.080273 71.000000 17.000000
+clip 14.666860 0.000119 0.001742 474.000000 156.000000
+keras_nlp 14.666860 0.000119 0.001742 474.000000 156.000000
+google 13.177257 0.005701 0.075120 70.000000 19.000000
+safetensors 12.222384 0.000119 0.001452 474.000000 166.000000
+kaggle 11.611264 0.000238 0.002758 347.000000 126.000000
+traceback 11.101998 0.000713 0.007911 210.000000 68.000000
+dataset 11.000145 0.000119 0.001306 474.000000 177.000000
+dotenv 11.000145 0.000119 0.001306 474.000000 177.000000
+langchain 10.022354 0.000594 0.005952 235.000000 82.000000
+mlflow 8.555668 0.000119 0.001016 474.000000 204.000000
+unfold_moreShow hidden code
+Packages that had no usage in 2023, but are now prominently used in 2025
+package growth_ratio usage_ratio_2023 usage_ratio_2025 rank_2023 rank_2025
+kagglehub nan nan 0.017129 nan 47.000000
+langchain_core nan nan 0.006750 nan 75.000000
+langchain_google_genai nan nan 0.005879 nan 83.000000
+langgraph nan nan 0.005153 nan 94.000000
+kaggle_evaluation nan nan 0.003992 nan 100.000000
+unsloth nan nan 0.003048 nan 119.000000
+pydantic nan nan 0.002976 nan 121.000000
+langchain_community nan nan 0.002685 nan 127.000000
+cayleypy nan nan 0.002177 nan 144.000000
+vllm nan nan 0.002105 nan 146.000000
+PyPDF2 nan nan 0.001306 nan 177.000000
+pycocoevalcap nan nan 0.001234 nan 182.000000
+keras_hub nan nan 0.001161 nan 186.000000
+5- Packages Popularity Trend & Ranking Shifts over Time
+Which libraries are rising stars and which are fading?
+How have data scientists’ favorite tools changed over time?
+
+To understand how the Kaggle community’s tool preferences have changed over time, this section analyzes the longitudinal trends in Python package usage. By examining how the ranking and popularity of libraries shift year over year, we gain insights into broader shifts in the data science landscape—from the continued reliance on foundational tools like pandas and matplotlib to the growing adoption of modern frameworks such as transformers.
+The following plots highlight key trends, such as the decline of conventional packages in relative usage and the emergence of cutting-edge libraries tailored to deep learning, NLP, and generative AI tasks. These trends reflect how the field evolves with new challenges, models, and technologies.
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+We have also built an interactive demo that allows users to explore additional plots, filter patterns by their own selected packages, and dynamically visualize trends and associations across the Kaggle ecosystem.
+Interactive Demo
+6- Exploring Co‑import Patterns with Market Basket Analysis
+What packages tend to appear together in Kaggle notebooks?
+What do these combinations reveal about user workflows?
+
+In this section, I apply Market Basket Analysis—a method commonly used in retail analytics—to Kaggle kernels. Each kernel is treated like a "basket" of imported packages. Using the Apriori algorithm, I identify:
+Frequent itemsets: Groups of packages that are often used together.
+Association rules: If a kernel uses package A, how likely is it to also use package B?
+These patterns help us uncover common package pairings or stacks (e.g., pandas + seaborn, or torch + torchvision), and may reflect typical workflows in data analysis, machine learning, computer vision, and NLP. This analysis provides insight into how Kaggle users combine tools—and can even inform recommendations for complementary packages or starter environments.
+In [10]:
+df = analyze_codes_in_date_range(K , "01/01/2025", "07/19/2025" , jump_days=10)
+dataset = []
+for kid in tqdm(df['id'].unique()):
+    dataset.append( [x for x in df[df['id']==kid]['package']] )
+> Total kernels analyzed: 13778
+  0%|          | 0/13778 [00:00<?, ?it/s]
+unfold_moreShow hidden code
+Out[11]:
+AlphaZero_Chess Baselines Bio CASH CASH_model Candle Crypto DatasetLoader Deepfake_Video_Detection GPUtil ... yolo_cam yolov5 yolox youtube_transcript_api yt_dlp yupi zarr zipfile zlib zoneinfo
+8761 False False False False False False False False False False ... False False False False False False False False False False
+13048 False False False False False False False False False False ... False False False False False False False False False False
+860 False False False False False False False False False False ... False False False False False False False False False False
+3 rows × 1280 columns
+unfold_moreShow hidden code
+> Number of frequent itemsets extracted:  19154
+unfold_moreShow hidden code
+Top 10 Frequent Pair of Packages
+support itemsets
+0.665409 pandas , numpy
+0.541878 matplotlib , numpy
+0.506750 os , numpy
+0.503774 matplotlib , pandas
+0.480766 sklearn , numpy
+0.478516 sklearn , pandas
+0.465888 os , pandas
+0.403324 sklearn , matplotlib
+0.371244 matplotlib , seaborn
+0.370736 pandas , seaborn
+unfold_moreShow hidden code
+Top 10 Frequent big package sets!
+support itemsets
+0.344317 sklearn , matplotlib , pandas , numpy
+0.325954 numpy , matplotlib , pandas , seaborn
+0.294382 matplotlib , os , pandas , numpy
+0.279141 sklearn , matplotlib , pandas , seaborn
+0.275947 sklearn , numpy , matplotlib , seaborn
+0.271302 sklearn , numpy , os , pandas
+0.264480 sklearn , numpy , pandas , seaborn
+0.262012 matplotlib , seaborn , pandas , numpy , sklearn
+0.237770 sklearn , matplotlib , os , numpy
+0.216142 sklearn , matplotlib , os , pandas
+unfold_moreShow hidden code
+> Number of rules extracted:  514346
+unfold_moreShow hidden code
+Top Association rules
+antecedents consequents support confidence lift
+google , io , typing_extensions pprint , enum 0.006242 0.905263 143.364549
+pprint , enum , kaggle_secrets google , io , typing_extensions 0.006242 0.988506 143.364549
+google , io , IPython , typing_extensions pprint , enum , kaggle_secrets 0.006242 0.905263 143.364549
+pprint , enum google , io , typing_extensions 0.006242 0.988506 143.364549
+pprint , enum google , kaggle_secrets , io , typing_extensions 0.006242 0.988506 143.364549
+kaggle_secrets , io , IPython , typing_extensions , google pprint , enum 0.006242 0.905263 143.364549
+google , io , typing_extensions pprint , enum , IPython 0.006242 0.905263 143.364549
+google , io , IPython , typing_extensions pprint , enum 0.006242 0.905263 143.364549
+pprint , enum google , io , IPython , typing_extensions 0.006242 0.988506 143.364549
+pprint , enum kaggle_secrets , io , IPython , typing_extensions , google 0.006242 0.988506 143.364549
+google , io , typing_extensions pprint , enum , kaggle_secrets 0.006242 0.905263 143.364549
+pprint , enum , IPython google , io , typing_extensions 0.006242 0.988506 143.364549
+pprint , enum , kaggle_secrets google , io , IPython , typing_extensions 0.006242 0.988506 143.364549
+pprint , enum , IPython google , kaggle_secrets , io , typing_extensions 0.006242 0.988506 143.364549
+We have also built an interactive demo that allows users to explore additional plots, filter patterns by their own selected packages, and dynamically visualize trends and associations across the Kaggle ecosystem.
+Interactive Demo

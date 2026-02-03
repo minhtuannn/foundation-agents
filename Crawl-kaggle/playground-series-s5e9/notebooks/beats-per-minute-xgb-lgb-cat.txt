@@ -1,0 +1,589 @@
+v1-v10, only xgboost
+v11-v15, xgboost + ridge. It seems that Ridge hasn't improved performance.
+v17-v18, xgboost + lightgbm
+v19-v21, xgboost + lightgbm + catboost
+v22- , Ensemble external dataset. It's a bit embarrassing that the model I worked hard to develop has had a negative effect, and I can only set the weight to a negative number.
+In [1]:
+import pandas as pd 
+import numpy as np 
+import os 
+import time
+import logging 
+import matplotlib.pyplot as plt
+import seaborn as sns
+import math
+
+from sklearn.model_selection import KFold
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import mean_squared_error
+
+from lightgbm import LGBMRegressor
+from catboost import CatBoostRegressor
+from xgboost import XGBRegressor
+from sklearn.linear_model import Ridge
+
+from category_encoders import TargetEncoder
+
+from tqdm.auto import tqdm
+from itertools import combinations
+import warnings
+warnings.simplefilter('ignore')
+In [2]:
+train = pd.read_csv("/kaggle/input/playground-series-s5e9/train.csv")
+test = pd.read_csv("/kaggle/input/playground-series-s5e9/test.csv")
+submission = pd.read_csv("/kaggle/input/playground-series-s5e9/sample_submission.csv")
+In [3]:
+df_external_1 = pd.read_csv("/kaggle/input/s5e9-26-37962/submission.csv")
+EDA and Preprocessing
+In [4]:
+def bin_column(df, column, bins, bin_names=None):
+    if bin_names is None:
+        bin_names = [f'{b:.1f}_to_{b_next:.1f}' for b, b_next in zip(bins[:-1], bins[1:])]
+    df[column + '_binned'] = pd.cut(df[column], bins=bins, labels=bin_names, include_lowest=True)
+    return df
+
+bins = [0.025, 0.1, 0.15, 0.2]
+train = bin_column(train, 'VocalContent', bins)
+test = bin_column(test, 'VocalContent', bins)
+
+bins = [0.01, 0.2, 0.4, 0.6, 0.8, 1.0]
+train = bin_column(train, 'AcousticQuality', bins)
+test = bin_column(test, 'AcousticQuality', bins)
+
+bins = [0.001, 0.2, 0.4, 0.6, 0.8, 1.0]
+train = bin_column(train, 'InstrumentalScore', bins)
+test = bin_column(test, 'InstrumentalScore', bins)
+
+bins = [0.05, 0.2, 0.4]
+train = bin_column(train, 'LivePerformanceLikelihood', bins)
+test = bin_column(test, 'LivePerformanceLikelihood', bins)
+
+
+bins = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+train = bin_column(train, 'MoodScore', bins)
+test = bin_column(test, 'MoodScore', bins)
+In [5]:
+numerical_features = ['RhythmScore', 'AudioLoudness', 'VocalContent', 'AcousticQuality',
+       'InstrumentalScore', 'LivePerformanceLikelihood', 'MoodScore',
+       'TrackDurationMs', 'Energy']
+
+def add_feature_cross_terms(df, numerical_features):
+    df_new = df.copy()
+    df['TrackDurationMin'] = df['TrackDurationMs'] / 60000 
+    for i in range(len(numerical_features)):
+        for j in range(i + 1, len(numerical_features)):  
+            feature1 = numerical_features[i]
+            feature2 = numerical_features[j]
+            cross_term_name = f"{feature1}_x_{feature2}"
+            df_new[cross_term_name] = df_new[feature1] * df_new[feature2]
+    
+    df_new['acoustic_instrumental_ratio'] = df_new['AcousticQuality'] / (df_new['InstrumentalScore'] + 1e-6)
+    df_new['RhythmEnergyRatio'] = df_new['RhythmScore'] / (df_new['Energy'] + 1e-8)
+    df_new['VocalInstrumentalRatio'] = df_new['VocalContent'] / (df_new['InstrumentalScore'] + 1e-8)
+    df['EnergyBin'] = pd.cut(df['Energy'], bins=5, labels=['VeryLow', 'Low', 'Medium', 'High', 'VeryHigh'])
+    df['RhythmBin'] = pd.cut(df['RhythmScore'], bins=5, labels=['VeryLow', 'Low', 'Medium', 'High', 'VeryHigh'])
+    
+    return df_new
+
+train = add_feature_cross_terms(train, numerical_features)
+test = add_feature_cross_terms(test, numerical_features)
+In [6]:
+def add_feature_sq_terms(df, numerical_features):
+    for feature in numerical_features:
+        df[f'{feature}_squared'] = df[feature] ** 2
+        df[f'{feature}_sqrt'] = np.sqrt(np.abs(df[feature]))
+    return df
+    
+train = add_feature_sq_terms(train, numerical_features)
+test = add_feature_sq_terms(test, numerical_features)
+In [7]:
+num_features = train.select_dtypes(include='number')
+In [8]:
+BeatsPerMinute_global_avg = train['BeatsPerMinute'].mean()
+In [9]:
+X = train.drop(columns=["id", "BeatsPerMinute"])
+y = train["BeatsPerMinute"]
+X_test = test.drop(columns=["id"])
+In [10]:
+train.describe()
+Out[10]:
+id RhythmScore AudioLoudness VocalContent AcousticQuality InstrumentalScore LivePerformanceLikelihood MoodScore TrackDurationMs Energy ... InstrumentalScore_squared InstrumentalScore_sqrt LivePerformanceLikelihood_squared LivePerformanceLikelihood_sqrt MoodScore_squared MoodScore_sqrt TrackDurationMs_squared TrackDurationMs_sqrt Energy_squared Energy_sqrt
+count 524164.000000 524164.000000 524164.000000 524164.000000 524164.000000 524164.000000 524164.000000 524164.000000 524164.000000 524164.000000 ... 5.241640e+05 524164.000000 524164.000000 524164.000000 524164.000000 524164.000000 5.241640e+05 524164.000000 5.241640e+05 524164.000000
+mean 262081.500000 0.632843 -8.379014 0.074443 0.262913 0.117690 0.178398 0.555843 241903.692949 0.500923 ... 3.123397e-02 0.260471 0.045794 0.394040 0.359803 0.723282 6.203704e+10 487.785437 3.349956e-01 0.666621
+std 151313.257586 0.156899 4.616221 0.049939 0.223120 0.131845 0.118186 0.225480 59326.601501 0.289952 ... 5.227566e-02 0.223261 0.049845 0.152088 0.246541 0.180849 2.843469e+10 63.000541 2.974746e-01 0.237780
+min 0.000000 0.076900 -27.509725 0.023500 0.000005 0.000001 0.024300 0.025600 63973.000000 0.000067 ... 1.144900e-12 0.001034 0.000590 0.155885 0.000655 0.160000 4.092545e+09 252.928844 4.448890e-09 0.008167
+25% 131040.750000 0.515850 -11.551933 0.023500 0.069413 0.000001 0.077637 0.403921 207099.876625 0.254933 ... 1.144900e-12 0.001034 0.006028 0.278634 0.163152 0.635548 4.289036e+10 455.082275 6.499100e-02 0.504909
+50% 262081.500000 0.634686 -8.252499 0.066425 0.242502 0.074247 0.166327 0.564817 243684.058150 0.511800 ... 5.512685e-03 0.272484 0.027665 0.407832 0.319018 0.751543 5.938192e+10 493.643655 2.619392e-01 0.715402
+75% 393122.250000 0.739179 -4.912298 0.107343 0.396957 0.204065 0.268946 0.716633 281851.658500 0.746000 ... 4.164273e-02 0.451736 0.072332 0.518600 0.513562 0.846542 7.944036e+10 530.897032 5.565160e-01 0.863713
+max 524163.000000 0.975000 -1.357000 0.256401 0.995000 0.869258 0.599924 0.978000 464723.228100 1.000000 ... 7.556094e-01 0.932340 0.359909 0.774548 0.956484 0.988939 2.159677e+11 681.706116 1.000000e+00 1.000000
+8 rows × 68 columns
+In [11]:
+FOLDS = 10
+FEATURES = X.columns.tolist()
+
+# KFold setup
+kf = KFold(n_splits=FOLDS, shuffle=True, random_state=42)
+
+# Arrays to store predictions
+oof = np.zeros(len(train))
+pred_xgb = np.zeros(len(test))
+
+# Start CV loop
+for i, (train_idx, valid_idx) in enumerate(kf.split(X, y)):
+    print(f"\n{'#'*10} Fold {i+1} {'#'*10}")
+    
+    x_train = X.iloc[train_idx].copy()
+    y_train = y.iloc[train_idx]
+    x_valid = X.iloc[valid_idx].copy()
+    y_valid = y.iloc[valid_idx]
+    x_test = X_test.copy()
+
+    # No categorical target encoding in this dataset, but you can add if needed
+    
+    start = time.time()
+
+    # Train model
+    model = XGBRegressor(
+        device="cuda" if XGBRegressor().get_params().get("device") == "cuda" else "cpu",
+        max_depth=6,
+        colsample_bytree=0.9,
+        subsample=0.9,
+        n_estimators=2000,
+        learning_rate=0.02,
+        gamma=10.0, 
+        max_delta_step=2,
+        early_stopping_rounds=100,
+        eval_metric="rmse",
+        enable_categorical=True
+    )
+
+    model.fit(
+        x_train, y_train,
+        eval_set=[(x_valid, y_valid)],
+        verbose=100
+    )
+
+    # Predict OOF and test
+    oof[valid_idx] = model.predict(x_valid)
+    pred_xgb += model.predict(x_test)
+
+    rmse = np.sqrt(mean_squared_error(y_valid, oof[valid_idx]))
+    print(f"Fold {i+1} RMSE: {rmse:.4f}")
+    print(f"Feature engineering & training time: {time.time() - start:.1f} sec")
+
+# Average test predictions
+pred_xgb /= FOLDS
+
+# Final RMSE
+full_rmse = np.sqrt(mean_squared_error(y, oof))
+print(f"\nFinal CV RMSE: {full_rmse:.4f}")
+########## Fold 1 ##########
+[0] validation_0-rmse:26.44219
+[100] validation_0-rmse:26.43586
+[198] validation_0-rmse:26.43654
+Fold 1 RMSE: 26.4358
+Feature engineering & training time: 27.1 sec
+
+########## Fold 2 ##########
+[0] validation_0-rmse:26.44803
+[100] validation_0-rmse:26.44338
+[200] validation_0-rmse:26.44335
+[229] validation_0-rmse:26.44376
+Fold 2 RMSE: 26.4431
+Feature engineering & training time: 30.7 sec
+
+########## Fold 3 ##########
+[0] validation_0-rmse:26.52258
+[100] validation_0-rmse:26.51351
+[200] validation_0-rmse:26.51296
+[284] validation_0-rmse:26.51345
+Fold 3 RMSE: 26.5126
+Feature engineering & training time: 35.1 sec
+
+########## Fold 4 ##########
+[0] validation_0-rmse:26.46355
+[100] validation_0-rmse:26.45810
+[198] validation_0-rmse:26.45860
+Fold 4 RMSE: 26.4580
+Feature engineering & training time: 26.6 sec
+
+########## Fold 5 ##########
+[0] validation_0-rmse:26.53033
+[100] validation_0-rmse:26.52291
+[200] validation_0-rmse:26.52181
+[300] validation_0-rmse:26.52223
+[319] validation_0-rmse:26.52215
+Fold 5 RMSE: 26.5213
+Feature engineering & training time: 38.3 sec
+
+########## Fold 6 ##########
+[0] validation_0-rmse:26.53217
+[100] validation_0-rmse:26.52593
+[200] validation_0-rmse:26.52637
+[238] validation_0-rmse:26.52679
+Fold 6 RMSE: 26.5254
+Feature engineering & training time: 30.3 sec
+
+########## Fold 7 ##########
+[0] validation_0-rmse:26.45503
+[100] validation_0-rmse:26.44597
+[200] validation_0-rmse:26.44533
+[300] validation_0-rmse:26.44460
+[398] validation_0-rmse:26.44503
+Fold 7 RMSE: 26.4446
+Feature engineering & training time: 45.9 sec
+
+########## Fold 8 ##########
+[0] validation_0-rmse:26.45332
+[100] validation_0-rmse:26.44472
+[200] validation_0-rmse:26.44434
+[300] validation_0-rmse:26.44402
+[371] validation_0-rmse:26.44495
+Fold 8 RMSE: 26.4439
+Feature engineering & training time: 43.5 sec
+
+########## Fold 9 ##########
+[0] validation_0-rmse:26.40788
+[100] validation_0-rmse:26.40338
+[200] validation_0-rmse:26.40459
+[227] validation_0-rmse:26.40445
+Fold 9 RMSE: 26.4033
+Feature engineering & training time: 30.2 sec
+
+########## Fold 10 ##########
+[0] validation_0-rmse:26.42354
+[100] validation_0-rmse:26.41591
+[200] validation_0-rmse:26.41525
+[300] validation_0-rmse:26.41537
+[325] validation_0-rmse:26.41540
+Fold 10 RMSE: 26.4149
+Feature engineering & training time: 39.5 sec
+
+Final CV RMSE: 26.4603
+In [12]:
+# KFold setup
+kf = KFold(n_splits=FOLDS, shuffle=True, random_state=2025)
+
+# Arrays to store predictions
+oof = np.zeros(len(train))
+pred_lgb = np.zeros(len(test))
+
+# Start CV loop
+for i, (train_idx, valid_idx) in enumerate(kf.split(X, y)):
+    print(f"\n{'#'*10} Fold {i+1} {'#'*10}")
+    
+    x_train = X.iloc[train_idx].copy()
+    y_train = y.iloc[train_idx]
+    x_valid = X.iloc[valid_idx].copy()
+    y_valid = y.iloc[valid_idx]
+    x_test = X_test.copy()
+
+    # No categorical target encoding in this dataset, but you can add if needed
+    
+    start = time.time()
+
+    # Train model
+    model = LGBMRegressor(
+        device="gpu" if LGBMRegressor().get_params().get("device") == "gpu" else "cpu",
+        max_depth=6,
+        colsample_bytree=0.9,
+        subsample=0.9,
+        n_estimators=2000,
+        learning_rate=0.03,
+        reg_alpha=0.8, 
+        reg_lambda=4.0,
+        early_stopping_rounds=100,
+        metric="rmse",
+        verbose=0,
+    )
+
+    model.fit(
+        x_train, y_train,
+        eval_set=[(x_valid, y_valid)],
+    )
+
+    # Predict OOF and test
+    oof[valid_idx] = model.predict(x_valid)
+    pred_lgb += model.predict(x_test)
+
+    rmse = np.sqrt(mean_squared_error(y_valid, oof[valid_idx]))
+    print(f"Fold {i+1} RMSE: {rmse:.4f}")
+    print(f"Feature engineering & training time: {time.time() - start:.1f} sec")
+
+# Average test predictions
+pred_lgb /= FOLDS
+
+# Final RMSE
+full_rmse = np.sqrt(mean_squared_error(y, oof))
+print(f"\nFinal CV RMSE: {full_rmse:.4f}")
+########## Fold 1 ##########
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+Fold 1 RMSE: 26.4326
+Feature engineering & training time: 12.5 sec
+
+########## Fold 2 ##########
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+Fold 2 RMSE: 26.5945
+Feature engineering & training time: 14.2 sec
+
+########## Fold 3 ##########
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+Fold 3 RMSE: 26.5293
+Feature engineering & training time: 15.0 sec
+
+########## Fold 4 ##########
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+Fold 4 RMSE: 26.4830
+Feature engineering & training time: 16.8 sec
+
+########## Fold 5 ##########
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+Fold 5 RMSE: 26.4466
+Feature engineering & training time: 12.8 sec
+
+########## Fold 6 ##########
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+Fold 6 RMSE: 26.2980
+Feature engineering & training time: 13.8 sec
+
+########## Fold 7 ##########
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+Fold 7 RMSE: 26.4121
+Feature engineering & training time: 11.5 sec
+
+########## Fold 8 ##########
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+Fold 8 RMSE: 26.4388
+Feature engineering & training time: 13.4 sec
+
+########## Fold 9 ##########
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+Fold 9 RMSE: 26.4370
+Feature engineering & training time: 13.1 sec
+
+########## Fold 10 ##########
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+[LightGBM] [Warning] early_stopping_round is set=100, early_stopping_rounds=100 will be ignored. Current value: early_stopping_round=100
+Fold 10 RMSE: 26.5172
+Feature engineering & training time: 13.8 sec
+
+Final CV RMSE: 26.4590
+In [13]:
+cat_features = [col for col in FEATURES if X[col].dtype == 'category']
+for col in cat_features:
+    X[col] = X[col].cat.add_categories(['missing']).fillna('missing')
+    X_test[col] = X_test[col].cat.add_categories(['missing']).fillna('missing')
+In [14]:
+ 
+# KFold setup
+kf = KFold(n_splits=FOLDS, shuffle=True, random_state=2026)
+
+# Arrays to store predictions
+oof = np.zeros(len(train))
+pred_cat = np.zeros(len(test))
+
+# Start CV loop
+for i, (train_idx, valid_idx) in enumerate(kf.split(X, y)):
+    print(f"\n{'#'*10} Fold {i+1} {'#'*10}")
+    
+    x_train = X.iloc[train_idx].copy()
+    y_train = y.iloc[train_idx]
+    x_valid = X.iloc[valid_idx].copy()
+    y_valid = y.iloc[valid_idx]
+    x_test = X_test.copy()
+
+    # No categorical target encoding in this dataset, but you can add if needed
+    
+    start = time.time()
+
+    # Train model
+    model = CatBoostRegressor(
+        task_type="GPU" if CatBoostRegressor().get_params().get("task_type") == "GPU" else "CPU",
+        max_depth=6,
+        colsample_bylevel=0.9,
+        subsample=0.9,
+        n_estimators=2000,
+        learning_rate=0.08,
+        random_strength=0.1, 
+        early_stopping_rounds=100,
+        loss_function="RMSE",
+        verbose=100
+    )
+
+    model.fit(
+        x_train, y_train,
+        eval_set=[(x_valid, y_valid)],
+        cat_features=cat_features,  
+        use_best_model=True,
+        verbose=100
+    )
+
+    # Predict OOF and test
+    oof[valid_idx] = model.predict(x_valid)
+    pred_cat += model.predict(x_test)
+
+    rmse = np.sqrt(mean_squared_error(y_valid, oof[valid_idx]))
+    print(f"Fold {i+1} RMSE: {rmse:.4f}")
+    print(f"Feature engineering & training time: {time.time() - start:.1f} sec")
+
+# Average test predictions
+pred_cat /= FOLDS
+
+# Final RMSE
+full_rmse = np.sqrt(mean_squared_error(y, oof))
+print(f"\nFinal CV RMSE: {full_rmse:.4f}")
+########## Fold 1 ##########
+0: learn: 26.4563588 test: 26.5559906 best: 26.5559906 (0) total: 445ms remaining: 14m 50s
+100: learn: 26.4063655 test: 26.5486649 best: 26.5484977 (93) total: 31.4s remaining: 9m 50s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 26.54849771
+bestIteration = 93
+
+Shrink model to first 94 iterations.
+Fold 1 RMSE: 26.5485
+Feature engineering & training time: 63.2 sec
+
+########## Fold 2 ##########
+0: learn: 26.4646776 test: 26.4813089 best: 26.4813089 (0) total: 353ms remaining: 11m 45s
+100: learn: 26.4130738 test: 26.4769602 best: 26.4755054 (19) total: 31.3s remaining: 9m 49s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 26.47550543
+bestIteration = 19
+
+Shrink model to first 20 iterations.
+Fold 2 RMSE: 26.4755
+Feature engineering & training time: 38.7 sec
+
+########## Fold 3 ##########
+0: learn: 26.4637887 test: 26.4879829 best: 26.4879829 (0) total: 366ms remaining: 12m 10s
+100: learn: 26.4162209 test: 26.4822827 best: 26.4808057 (16) total: 30.6s remaining: 9m 35s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 26.48080571
+bestIteration = 16
+
+Shrink model to first 17 iterations.
+Fold 3 RMSE: 26.4808
+Feature engineering & training time: 37.0 sec
+
+########## Fold 4 ##########
+0: learn: 26.4488170 test: 26.6236234 best: 26.6236234 (0) total: 337ms remaining: 11m 12s
+100: learn: 26.3968527 test: 26.6155396 best: 26.6147265 (28) total: 30.7s remaining: 9m 36s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 26.61472653
+bestIteration = 28
+
+Shrink model to first 29 iterations.
+Fold 4 RMSE: 26.6147
+Feature engineering & training time: 40.5 sec
+
+########## Fold 5 ##########
+0: learn: 26.4847399 test: 26.2987707 best: 26.2987707 (0) total: 362ms remaining: 12m 4s
+100: learn: 26.4338322 test: 26.3002208 best: 26.2964004 (10) total: 30.1s remaining: 9m 25s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 26.2964004
+bestIteration = 10
+
+Shrink model to first 11 iterations.
+Fold 5 RMSE: 26.2964
+Feature engineering & training time: 34.6 sec
+
+########## Fold 6 ##########
+0: learn: 26.4575051 test: 26.5459064 best: 26.5459064 (0) total: 360ms remaining: 11m 59s
+100: learn: 26.4078702 test: 26.5410715 best: 26.5393965 (21) total: 29.9s remaining: 9m 21s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 26.53939645
+bestIteration = 21
+
+Shrink model to first 22 iterations.
+Fold 6 RMSE: 26.5394
+Feature engineering & training time: 37.6 sec
+
+########## Fold 7 ##########
+0: learn: 26.4764288 test: 26.3752580 best: 26.3752580 (0) total: 357ms remaining: 11m 53s
+100: learn: 26.4246615 test: 26.3646590 best: 26.3646590 (100) total: 30.3s remaining: 9m 30s
+200: learn: 26.3957610 test: 26.3647306 best: 26.3641506 (193) total: 58.2s remaining: 8m 41s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 26.36415061
+bestIteration = 193
+
+Shrink model to first 194 iterations.
+Fold 7 RMSE: 26.3642
+Feature engineering & training time: 87.8 sec
+
+########## Fold 8 ##########
+0: learn: 26.4824109 test: 26.3212673 best: 26.3212673 (0) total: 379ms remaining: 12m 38s
+100: learn: 26.4310268 test: 26.3163328 best: 26.3159004 (90) total: 30.9s remaining: 9m 40s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 26.31590037
+bestIteration = 90
+
+Shrink model to first 91 iterations.
+Fold 8 RMSE: 26.3159
+Feature engineering & training time: 57.7 sec
+
+########## Fold 9 ##########
+0: learn: 26.4731108 test: 26.4053001 best: 26.4053001 (0) total: 379ms remaining: 12m 37s
+100: learn: 26.4247760 test: 26.3996707 best: 26.3975369 (33) total: 30.2s remaining: 9m 28s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 26.39753694
+bestIteration = 33
+
+Shrink model to first 34 iterations.
+Fold 9 RMSE: 26.3975
+Feature engineering & training time: 41.5 sec
+
+########## Fold 10 ##########
+0: learn: 26.4547676 test: 26.5708345 best: 26.5708345 (0) total: 363ms remaining: 12m 6s
+100: learn: 26.4033589 test: 26.5624932 best: 26.5624932 (100) total: 30.2s remaining: 9m 28s
+200: learn: 26.3713891 test: 26.5660064 best: 26.5623147 (104) total: 58.9s remaining: 8m 47s
+Stopped by overfitting detector  (100 iterations wait)
+
+bestTest = 26.56231474
+bestIteration = 104
+
+Shrink model to first 105 iterations.
+Fold 10 RMSE: 26.5623
+Feature engineering & training time: 61.9 sec
+
+Final CV RMSE: 26.4597
+In [15]:
+pred = df_external_1["BeatsPerMinute"]*1.15 - pred_xgb*0.05 - pred_lgb * 0.05 - pred_cat * 0.05
+print('predict mean :',pred.mean())
+print('predict median :',np.median(pred))
+
+y_pred_after = np.clip(pred, 46.718, 206.037)
+print('predict mean after clip:',y_pred_after.mean())
+print('predict median after clip:',np.median(y_pred_after))
+
+submission["BeatsPerMinute"] = y_pred_after
+submission.to_csv("submission.csv", index=False)
+submission.head()
+predict mean : 119.04463567891318
+predict median : 119.14019422228216
+predict mean after clip: 119.04463567891318
+predict median after clip: 119.14019422228216
+Out[15]:
+id BeatsPerMinute
+0 524164 119.174165
+1 524165 118.675515
+2 524166 119.333680
+3 524167 119.398345
+4 524168 119.582908

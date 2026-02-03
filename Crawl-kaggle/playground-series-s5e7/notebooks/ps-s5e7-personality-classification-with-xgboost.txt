@@ -1,0 +1,105 @@
+XGBoost: "Yes, it's me. What a shock, etcetera."
+This notebook provides a complete baseline solution using the XGBoost algorithm to classify individuals as Introverts or Extroverts based on personality and social behavior features. It is designed for the July 2025 Kaggle Playground Series competition, where the objective is to predict the Personality target variable with maximum accuracy.
+The workflow begins by importing necessary Python libraries such as pandas, NumPy, scikit-learn, and XGBoost. Then, it loads the provided training, test, and sample submission CSV files from the competition’s dataset directory. The Personality column in the training data, which contains string labels (Introvert, Extrovert), is encoded into numerical format using LabelEncoder to make it suitable for model training.
+To ensure consistent preprocessing, the training and test feature sets are concatenated. All categorical columns are identified and encoded using OrdinalEncoder, which assigns integer values to string categories. After encoding, the data is split back into training and test sets.
+The model is built using XGBoost with a basic set of hyperparameters. These include a maximum tree depth of 4 and a learning rate (eta) of 0.1. Stratified 5-fold cross-validation is used to ensure robust evaluation while preserving the class distribution. In each fold, the model is trained on a portion of the data and validated on a held-out set, and early stopping is applied to avoid overfitting.
+After training, the notebook calculates the cross-validation accuracy based on the out-of-fold predictions. It then averages the predictions made on the test set across all folds. These final predictions are thresholded, converted back to the original string labels using the earlier label encoder, and inserted into the submission template.
+Finally, the notebook writes the predictions to a submission.csv file, which is ready to be uploaded to Kaggle for evaluation. This solution serves as a clean and efficient starting point. It can be improved further with feature engineering, more advanced models, or ensemble methods.
+Imports
+In the first step, the necessary Python libraries are imported. pandas and numpy are used for data manipulation and numerical operations. StratifiedKFold from sklearn.model_selection is used to perform stratified cross-validation, which ensures that each fold maintains the original class distribution. LabelEncoder and OrdinalEncoder from sklearn.preprocessing are used to convert categorical variables into numerical format for modeling. accuracy_score from sklearn.metrics is used to evaluate the model's performance. Lastly, xgboost is imported to train the XGBoost classifier, which will be used to predict whether a person is an Introvert or an Extrovert.
+In [1]:
+# 1. Imports
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
+from sklearn.metrics import accuracy_score
+import xgboost as xgb
+Load data
+In this step, the training, test, and sample submission datasets are loaded using pandas. The train.csv file contains both the input features and the target variable (Personality) used to train the model. The test.csv file contains only the input features and is used for generating predictions. The sample_submission.csv file provides the correct format for submitting predictions to the competition. These datasets are read directly from the Kaggle input directory and stored in three separate DataFrame objects: train, test, and submission.
+In [2]:
+# 2. Load data
+train = pd.read_csv("/kaggle/input/playground-series-s5e7/train.csv")
+test = pd.read_csv("/kaggle/input/playground-series-s5e7/test.csv")
+submission = pd.read_csv("/kaggle/input/playground-series-s5e7/sample_submission.csv")
+Encode target
+In this step, the target variable Personality, which contains categorical values (Introvert or Extrovert), is converted into numerical format using LabelEncoder. This encoding is necessary because machine learning models like XGBoost require numerical inputs. A new column named Personality_encoded is added to the training dataset, where Introvert and Extrovert are represented as integers (0 and 1, or vice versa).
+In [3]:
+# 3. Encode target
+le = LabelEncoder()
+train["Personality_encoded"] = le.fit_transform(train["Personality"])
+Prepare features
+In this step, the input features and target variable are separated for model training. The features DataFrame X is created by dropping the id, Personality, and Personality_encoded columns from the training set, since id is not a predictive feature and the target columns should not be included as inputs. The target variable y is assigned from the Personality_encoded column. Similarly, the test set features X_test are prepared by removing the id column, keeping only the relevant input features for prediction.
+In [4]:
+# 4. Prepare features
+X = train.drop(columns=["id", "Personality", "Personality_encoded"])
+y = train["Personality_encoded"]
+X_test = test.drop(columns=["id"])
+Encode categorical columns
+In this step, categorical features are identified and transformed into numerical values. First, the training and test feature sets (X and X_test) are concatenated vertically into a single DataFrame named combined to ensure consistent encoding across both datasets. The code then identifies all columns with object data types (i.e., categorical text columns) and stores their names in cat_cols. An OrdinalEncoder is applied to these columns, converting each unique category into a unique integer. After encoding, the combined data is split back into the original training (X) and test (X_test) feature sets, preserving the original row order.
+In [5]:
+# 5. Encode categorical columns
+combined = pd.concat([X, X_test], axis=0)
+cat_cols = combined.select_dtypes(include="object").columns.tolist()
+encoder = OrdinalEncoder()
+combined[cat_cols] = encoder.fit_transform(combined[cat_cols])
+
+X = combined.iloc[:len(X)].reset_index(drop=True)
+X_test = combined.iloc[len(X):].reset_index(drop=True)
+Setup XGBoost
+In this step, the hyperparameters for the XGBoost model are defined. The objective is set to "binary:logistic" since this is a binary classification task (Introvert vs. Extrovert). The evaluation metric is "logloss", which is commonly used for binary classification problems. The max_depth parameter limits the depth of each decision tree to 4, helping to control model complexity and overfitting. The eta parameter (learning rate) is set to 0.1 to balance learning speed and stability. subsample and colsample_bytree are both set to 0.8 to introduce randomness and improve generalization. A fixed random_state ensures reproducibility of results.
+In [6]:
+# 6. Setup XGBoost
+params = {
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "max_depth": 4,
+    "eta": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "random_state": 42
+}
+Stratified K-Fold Cross-Validation
+In this step, a 5-fold stratified cross-validation strategy is used to train and validate the XGBoost model. Stratification ensures that the class distribution of the target variable (Introvert vs. Extrovert) remains consistent in each fold. For each fold, the data is split into training and validation sets, and the XGBoost model is trained on the training portion using the defined parameters.
+During training, early stopping is applied to prevent overfitting — the training stops if the validation log loss doesn’t improve after 10 rounds. Predictions are made on the validation fold and stored in the oof_preds array to evaluate model performance later. Predictions on the test set are accumulated and averaged across all folds, ensuring a more stable and robust final prediction.
+In [7]:
+# 7. Stratified K-Fold Cross-Validation
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+oof_preds = np.zeros(len(X))
+test_preds = np.zeros(len(X_test))
+
+for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+    X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+    y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    dval = xgb.DMatrix(X_val, label=y_val)
+    dtest = xgb.DMatrix(X_test)
+
+    model = xgb.train(params, dtrain, num_boost_round=100,
+                      evals=[(dval, "valid")],
+                      early_stopping_rounds=10, verbose_eval=False)
+    
+    oof_preds[val_idx] = model.predict(dval) > 0.5
+    test_preds += model.predict(dtest) / skf.n_splits
+Evaluate
+In step 8, the model’s performance is evaluated by calculating the cross-validation accuracy using the out-of-fold predictions (oof_preds) against the true labels (y). This metric gives a reliable estimate of how well the model generalizes to unseen data.
+In step 9, the final test predictions are post-processed. The averaged prediction probabilities are thresholded at 0.5 to convert them into binary class labels (0 or 1). These numeric labels are then inverse-transformed back into their original form (Introvert or Extrovert) using the LabelEncoder. Finally, the predictions are inserted into the sample submission format and saved to a file named submission.csv, ready for upload to the Kaggle competition platform.
+In [8]:
+# 8. Evaluate
+cv_acc = accuracy_score(y, oof_preds)
+print(f"Cross-Validation Accuracy: {cv_acc:.4f}")
+
+# 9. Create submission
+final_preds = (test_preds > 0.5).astype(int)
+submission["Personality"] = le.inverse_transform(final_preds)
+submission.to_csv("submission.csv", index=False)
+submission.head()
+Cross-Validation Accuracy: 0.9691
+Out[8]:
+id Personality
+0 18524 Extrovert
+1 18525 Introvert
+2 18526 Extrovert
+3 18527 Extrovert
+4 18528 Introvert

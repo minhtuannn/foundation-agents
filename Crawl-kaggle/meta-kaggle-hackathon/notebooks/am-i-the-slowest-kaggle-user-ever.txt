@@ -1,0 +1,417 @@
+How long does it take to make progress in Kaggle?
+I am one of the first users of Kaggle - more precisely, user number 650.
+After registering about 15 years ago, life happened and I never managed to participate much. Only recently, this year, I was able to complete my registration and join some competitions.
+Am I the slowest Kaggle participant ever? To verify this, let's compute how long does it take for users to achieve a new rank, and see how the distribution looks like (spoiler alert: I really am!)
+Unfortunately we are only able to compute the time it has taken for a user to get to their current rank since they registered. It is not possible to know how long it took them to go between one rank and the others, because the data is not saved.
+unfold_moreShow hidden code
+TLDR;
+Yes, I really am the person who took the longest to achieve Expert rank. I'm significantly slower, with a p-value of 0.01318.
+Config
+You can customize these variables to create a report for your own rank and tier. Just change the values and rerun the notebook. You can find the user id in the Users table.
+In [2]:
+my_user_id = 650 # Your user Id, taken from the Users table. Used for plotting
+your_tier <- "Expert"
+Reading Data and parsing dates
+In [3]:
+users = read_csv("/kaggle/input/meta-kaggle/Users.csv") %>% 
+    filter(PerformanceTier != 0) %>% # Novice users are not relevant for this notebook
+    filter(PerformanceTier != 5) %>% # Exclude Kaggle Team members
+    mutate(RegisterDate = mdy(RegisterDate))
+Warning message:
+“One or more parsing issues, call `problems()` on your data frame for details,
+e.g.:
+  dat <- vroom(...)
+  problems(dat)”
+Rows: 24494188 Columns: 7
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: ","
+chr (4): UserName, DisplayName, RegisterDate, Country
+dbl (2): Id, PerformanceTier
+lgl (1): LocationSharingOptOut
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+In [4]:
+users %>% dim 
+users %>% head
+2859807
+A tibble: 6 × 7
+Id UserName DisplayName RegisterDate PerformanceTier Country LocationSharingOptOut
+<dbl> <chr> <chr> <date> <dbl> <chr> <lgl>
+368 antgoldbloom Anthony Goldbloom 2010-01-20 2 United States FALSE
+381 iguyon Isabelle 2010-01-29 2 United States FALSE
+389 anandjeyahar Anand Jeyahar 2010-02-03 1 India FALSE
+392 jmeynet Julien Meynet 2010-02-03 3 Spain FALSE
+394 m4xl1n m4xl1n 2010-02-03 1 United States FALSE
+397 gdupont mister_P 2010-02-04 1 France FALSE
+In [ ]:
+unfold_moreShow hidden code
+A tibble: 4 × 2
+PerformanceTier n
+<dbl> <int>
+1 263079
+2 19280
+3 3000
+4 621
+In [6]:
+user_achievements = read_csv("/kaggle/input/meta-kaggle/UserAchievements.csv")  %>% 
+    filter(Tier >0 ) %>% # Novice tier is not relevant
+    mutate(TierAchievementDate = mdy(TierAchievementDate))
+Rows: 97976624 Columns: 11
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: ","
+chr (2): AchievementType, TierAchievementDate
+dbl (9): Id, UserId, Tier, Points, CurrentRanking, HighestRanking, TotalGold...
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+unfold_moreShow hidden code
+114410011
+A tibble: 6 × 11
+Id UserId AchievementType Tier TierAchievementDate Points CurrentRanking HighestRanking TotalGold TotalSilver TotalBronze
+<dbl> <dbl> <chr> <dbl> <date> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl>
+3739823 368 Competitions 1 2016-07-15 26 NA 75 0 0 0
+3739827 381 Scripts 1 2016-07-15 0 NA NA 0 0 0
+3739831 392 Discussion 1 2018-04-09 0 NA NA 0 0 2
+3739837 397 Discussion 1 2016-07-15 0 NA NA 0 0 0
+3739840 398 Discussion 1 2016-07-15 0 NA NA 0 0 0
+3739846 406 Discussion 1 2016-07-15 0 NA NA 0 0 0
+unfold_moreShow hidden code
+A tibble: 4 × 2
+Tier n
+<dbl> <int>
+1 1114210
+2 25760
+3 3366
+4 764
+unfold_moreShow hidden code
+A tibble: 6 × 11
+Id UserId AchievementType Tier TierAchievementDate Points CurrentRanking HighestRanking TotalGold TotalSilver TotalBronze
+<dbl> <dbl> <chr> <dbl> <date> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl>
+235338679 27255219 Competitions 1 2025-06-06 0 NA NA 0 0 0
+235338682 27255219 Datasets 1 2025-06-06 0 NA NA 0 0 0
+235351408 27258414 Scripts 1 2025-06-06 0 NA NA 0 0 0
+235351407 27258414 Competitions 1 2025-06-06 0 NA NA 0 0 0
+235351410 27258414 Datasets 1 2025-06-06 0 NA NA 0 0 0
+235351409 27258414 Discussion 1 2025-06-06 0 NA NA 0 0 0
+This is how data looks like for a specific user (me). I'm an Expert in Scripts and Discussion, and Contributor in Competitions and Datasets.
+Unfortunately, we only have one data point per user/category. This means we cannot track the full progression, e.g. from rank 0 to rank 1, then rank 1 to rank 2, because the data is not tracked.
+In [10]:
+# This is me
+users %>% filter(Id == my_user_id)
+user_achievements %>% filter(UserId==my_user_id)
+A tibble: 1 × 7
+Id UserName DisplayName RegisterDate PerformanceTier Country LocationSharingOptOut
+<dbl> <chr> <chr> <date> <dbl> <chr> <lgl>
+650 dalloliogm Giovanni Marco Dall'Olio 2010-04-29 2 United Kingdom FALSE
+A tibble: 4 × 11
+Id UserId AchievementType Tier TierAchievementDate Points CurrentRanking HighestRanking TotalGold TotalSilver TotalBronze
+<dbl> <dbl> <chr> <dbl> <date> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl>
+3916583 650 Competitions 1 2025-01-15 966 NA NA 0 0 0
+4495800 650 Scripts 2 2025-03-29 201 538 538 0 1 17
+5075581 650 Discussion 2 2025-05-08 125 508 508 0 3 79
+138387028 650 Datasets 1 2025-01-15 4 NA NA 0 0 0
+Calculating Time to Current rank
+unfold_moreShow hidden code
+Joining with `by = join_by(UserId)`
+In [12]:
+user_achievements %>% filter(UserId==my_user_id)
+A tibble: 4 × 14
+Id UserId AchievementType Tier TierAchievementDate Points CurrentRanking HighestRanking TotalGold TotalSilver TotalBronze RegisterDate PerformanceTier achievement_delay
+<dbl> <dbl> <chr> <dbl> <date> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl> <date> <dbl> <drtn>
+3916583 650 Competitions 1 2025-01-15 966 NA NA 0 0 0 2010-04-29 2 5375 days
+4495800 650 Scripts 2 2025-03-29 201 538 538 0 1 17 2010-04-29 2 5448 days
+5075581 650 Discussion 2 2025-05-08 125 508 508 0 3 79 2010-04-29 2 5488 days
+138387028 650 Datasets 1 2025-01-15 4 NA NA 0 0 0 2010-04-29 2 5375 days
+In [13]:
+tier_labels <- c(
+  "0" = "Novice",
+  "1" = "Contributor",
+  "2" = "Expert",
+  "3" = "Master",
+  "4" = "Grandmaster",
+  "5" = "Kaggle Team"
+)
+
+user_achievements = user_achievements %>%
+  mutate(
+    PerformanceTierFactor = factor(
+      as.character(PerformanceTier),
+      levels = names(tier_labels),
+      labels = tier_labels
+    ),
+    TierFactor = factor(
+      as.character(Tier),
+      levels = names(tier_labels),
+      labels = tier_labels
+    ),
+    AchievementType = as.factor(AchievementType)
+  )
+In [14]:
+user_achievements %>% head
+A tibble: 6 × 16
+Id UserId AchievementType Tier TierAchievementDate Points CurrentRanking HighestRanking TotalGold TotalSilver TotalBronze RegisterDate PerformanceTier achievement_delay PerformanceTierFactor TierFactor
+<dbl> <dbl> <fct> <dbl> <date> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl> <date> <dbl> <drtn> <fct> <fct>
+3739823 368 Competitions 1 2016-07-15 26 NA 75 0 0 0 2010-01-20 2 2368 days Expert Contributor
+3739827 381 Scripts 1 2016-07-15 0 NA NA 0 0 0 2010-01-29 2 2359 days Expert Contributor
+3739831 392 Discussion 1 2018-04-09 0 NA NA 0 0 2 2010-02-03 3 2987 days Master Contributor
+3739837 397 Discussion 1 2016-07-15 0 NA NA 0 0 0 2010-02-04 1 2353 days Contributor Contributor
+3739840 398 Discussion 1 2016-07-15 0 NA NA 0 0 0 2010-02-05 1 2352 days Contributor Contributor
+3739846 406 Discussion 1 2016-07-15 0 NA NA 0 0 0 2010-02-15 1 2342 days Contributor Contributor
+In [15]:
+time_to_current_rank = user_achievements %>%
+    #filter(!is.na(achievement_delay)) %>%
+    filter(Tier == PerformanceTier) %>%
+    fgroup_by(UserId, PerformanceTierFactor) %>%
+    fsummarise(time_to_current_tier = min(achievement_delay)) %>%
+    ungroup #%>% 
+    #arrange(UserID)
+time_to_current_rank %>% head
+A tibble: 6 × 3
+UserId PerformanceTierFactor time_to_current_tier
+<dbl> <fct> <drtn>
+368 Expert 2414 days
+381 Expert 2359 days
+389 Contributor 2452 days
+392 Master 2354 days
+394 Contributor 2354 days
+397 Contributor 2353 days
+unfold_moreShow hidden cell
+unfold_moreShow hidden code
+A tibble: 6 × 3
+UserId PerformanceTierFactor time_to_current_tier
+<dbl> <fct> <drtn>
+368 Expert 2414 days
+381 Expert 2359 days
+389 Contributor 2452 days
+392 Master 2354 days
+394 Contributor 2354 days
+397 Contributor 2353 days
+How long does it take for people to get to their Kaggle Rank?
+The plot below shows how much time it takes for people to achieve their top rank.
+I'm the red line - an outlier at the end of the tail.
+In [18]:
+library(ggplot2)
+library(dplyr)
+library(patchwork)  # or use cowplot::plot_grid()
+
+# Step 1: compute 75th percentiles per tier
+q3_limits <- time_to_current_rank %>%
+  group_by(PerformanceTierFactor) %>%
+  summarise(q3 = quantile(time_to_current_tier, 0.75, na.rm = TRUE))
+
+# Step 2: plot full distribution
+p_full <- time_to_current_rank %>%
+  ggplot(aes(time_to_current_tier)) +
+  geom_histogram(binwidth = 100, fill = "steelblue", alpha = 0.7) +
+  geom_vline(
+    data = my_tier,
+    aes(xintercept = time_to_current_tier),
+    color = "red", linetype = "dashed", size = 1
+  ) +
+  facet_wrap(~PerformanceTierFactor, scales = "free_y") +
+  labs(title = "Days taken to reach best Kaggle Rank (red line: Me)",
+       x = "Days", y = "Number of Users") +
+  theme_minimal()
+
+# Step 3: zoomed-in plot by filtering to Q3
+p_zoom <- time_to_current_rank %>%
+  inner_join(q3_limits, by = "PerformanceTierFactor") %>%
+  filter(time_to_current_tier <= q3) %>%
+  ggplot(aes(time_to_current_tier)) +
+  geom_histogram(binwidth = 50, fill = "steelblue", alpha = 0.7) +
+  facet_wrap(~PerformanceTierFactor, scales = "free_y") +
+  labs(title = "Days taken to reach best Kaggle Rank - Zoomed In (Up to 75th Percentile)",
+       x = "Days", y = "Number of Users") +
+  theme_minimal()
+
+# Step 4: plot
+p_full
+Warning message:
+“Using `size` aesthetic for lines was deprecated in ggplot2 3.4.0.
+ℹ Please use `linewidth` instead.”
+Don't know how to automatically pick scale for object of type <difftime>.
+Defaulting to continuous.
+In [19]:
+p_zoom
+Don't know how to automatically pick scale for object of type <difftime>.
+Defaulting to continuous.
+In [20]:
+my_delay <- time_to_current_rank %>%
+  filter(UserId == my_user_id) %>%
+  pull(time_to_current_tier)%>% as.numeric
+
+expert_distribution <- time_to_current_rank %>%
+  #filter(!is.na(PerformanceTier)) %>%
+  filter(PerformanceTierFactor == "Expert") %>%
+  pull(time_to_current_tier) %>% as.numeric
+
+your_percentile <- mean(expert_distribution <= my_delay, na.rm = TRUE)
+
+cat("You are slower than", round(100 * your_percentile, 2), "% of Experts.\n")
+You are slower than 100 % of Experts.
+Summary Stats
+The table below shows a summary of how much does it take people to achieve their best rank in Kaggle.
+Using median values, it takes 346 days to become Contributor; 577 to become Expert; 971 to become Master; and 1326 to become Granmaster.
+Somebody managed to achieve Grandmaster rank in 25 days. Impressive!
+In [21]:
+time_summary <- time_to_current_rank %>%
+  ungroup() %>%
+  filter(!is.na(PerformanceTierFactor), !is.na(time_to_current_tier)) %>%
+  mutate(
+    days_to_current_tier = as.numeric(time_to_current_tier)
+  ) %>%
+  group_by(PerformanceTierFactor) %>%
+  summarise(
+    n_users = n(),
+    min_days = min(days_to_current_tier, na.rm = TRUE),
+    p25 = quantile(days_to_current_tier, 0.25, na.rm = TRUE),
+    median_days = median(days_to_current_tier, na.rm = TRUE),
+    p75 = quantile(days_to_current_tier, 0.75, na.rm = TRUE),
+    second_slowest_days = sort(days_to_current_tier, decreasing = TRUE)[2],
+    max_days = max(days_to_current_tier, na.rm = TRUE),
+    mean_days = mean(days_to_current_tier, na.rm = TRUE),
+    sd_days = sd(days_to_current_tier, na.rm = TRUE),
+  )
+time_summary
+A tibble: 4 × 10
+PerformanceTierFactor n_users min_days p25 median_days p75 second_slowest_days max_days mean_days sd_days
+<fct> <int> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl>
+Contributor 263060 0 76.0 346 851.0 5238 5304 575.5083 656.2250
+Expert 19175 0 266.0 577 1096.0 5417 5448 762.7189 650.6921
+Master 2989 15 527.0 969 1537.0 4525 5011 1100.8106 719.3200
+Grandmaster 615 25 783.5 1326 1921.5 4339 4721 1394.0488 789.9728
+What is my p-value?
+Am I significantly slower than most? To compute this, let's compute the log of the days taken to reach expert rank (so it is a pseudo-normal distribution) and compute the pvalue.
+In [22]:
+# ### Evaluate best Data transformation
+# x <- as.numeric(time_to_current_rank$time_to_current_tier)
+# # Log1p (safe for zeros)
+# x_log <- log1p(x)
+
+# # Box-Cox (only positive)
+# boxcox_obj <- boxcox(x)
+# x_boxcox <- boxcox_obj$x.t
+
+# # Yeo-Johnson (handles zero and negative)
+# yj_obj <- yeojohnson(x)
+# x_yj <- yj_obj$x.t
+
+# # Quantile normalization to normal
+# qt_obj <- orderNorm(x)
+# x_qt <- qt_obj$x.t
+# plot_density <- function(data, label) {
+#   ggplot(data.frame(x = data), aes(x)) +
+#     geom_histogram(aes(y = ..density..), bins = 40, fill = "steelblue", alpha = 0.7) +
+#     geom_density(color = "red", size = 1) +
+#     ggtitle(paste("Distribution:", label))
+# }
+
+# plot_density(x, "Original") +
+# plot_density(x_log, "Log1p") +
+# plot_density(x_boxcox, "Box-Cox") +
+# plot_density(x_yj, "Yeo-Johnson") +
+# plot_density(x_qt, "Quantile Transform")
+# shapiro.test(x_log)
+# shapiro.test(x_boxcox)
+# shapiro.test(x_yj)
+# shapiro.test(x_qt)
+In [23]:
+log_data <- time_to_current_rank %>%
+  filter(PerformanceTierFactor == your_tier) %>%
+  mutate(
+    delay_days = as.numeric(time_to_current_tier),
+    log_delay = log1p(delay_days)  # log1p handles 0 safely
+  )
+my_log_delay <- log_data %>%
+  filter(UserId == 650) %>%
+  pull(log_delay)
+log_mean <- mean(log_data$log_delay, na.rm = TRUE)
+log_sd   <- sd(log_data$log_delay, na.rm = TRUE)
+
+z_score <- (my_log_delay - log_mean) / log_sd
+p_value <- pnorm(z_score, lower.tail = FALSE)  # one-sided upper tail
+
+cat("Log-transformed Z-score:", round(z_score, 2), "\n")
+cat("Parametric one-sided p-value:", signif(p_value, 4), "\n")
+Log-transformed Z-score: 2.22 
+Parametric one-sided p-value: 0.01321 
+How much does it take to reach a rank within every category?
+There are four categories in Kaggle - Competitions, Datasets, Code, Discussion. The previous cells shows the stats for the highest of these four, for each user. In the plots below, we delve into every single cateogy
+In [24]:
+time_by_type_summary <- user_achievements %>%
+  filter(!is.na(PerformanceTierFactor), !is.na(achievement_delay)) %>%
+  mutate(
+    days_to_current_tier = as.numeric(achievement_delay)
+  ) %>%
+  group_by(AchievementType, PerformanceTierFactor) %>%
+  summarise(
+    n_users = n(),
+    min_days = min(days_to_current_tier, na.rm = TRUE),
+    p25 = quantile(days_to_current_tier, 0.25, na.rm = TRUE),
+    median_days = median(days_to_current_tier, na.rm = TRUE),
+    p75 = quantile(days_to_current_tier, 0.75, na.rm = TRUE),
+    second_slowest_days = sort(days_to_current_tier, decreasing = TRUE)[2],
+    max_days = max(days_to_current_tier, na.rm = TRUE),
+    mean_days = mean(days_to_current_tier, na.rm = TRUE),
+    sd_days = sd(days_to_current_tier, na.rm = TRUE),
+  )
+time_by_type_summary
+`summarise()` has grouped output by 'AchievementType'. You can override using
+the `.groups` argument.
+A grouped_df: 16 × 11
+AchievementType PerformanceTierFactor n_users min_days p25 median_days p75 second_slowest_days max_days mean_days sd_days
+<fct> <fct> <int> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl>
+Competitions Contributor 263060 0 76.00 346.0 851.25 5238 5304 575.5282 656.2277
+Competitions Expert 19280 0 178.00 461.0 978.00 5375 5417 664.7901 639.9955
+Competitions Master 3000 0 395.50 887.5 1497.00 5011 5030 1009.7613 755.0092
+Competitions Grandmaster 620 0 536.00 1191.5 1899.75 4564 4721 1234.8726 861.2089
+Datasets Contributor 263060 0 105.00 483.0 1303.00 5238 5304 794.6824 840.8541
+Datasets Expert 19280 0 179.00 547.0 1229.00 4387 5375 814.7518 801.7754
+Datasets Master 3000 0 372.00 971.5 1970.00 4118 5020 1220.2323 963.6258
+Datasets Grandmaster 621 0 593.00 1102.0 1992.00 4703 5334 1363.2544 1001.8014
+Discussion Contributor 263060 0 76.00 346.0 852.00 5238 5304 575.5701 656.2414
+Discussion Expert 19241 0 140.00 401.0 931.00 4488 5488 621.7421 633.2348
+Discussion Master 2995 0 280.00 714.0 1382.00 4280 5315 896.1576 745.7633
+Discussion Grandmaster 619 0 435.00 1019.0 1833.50 4660 4864 1191.3635 909.2346
+Scripts Contributor 263060 0 76.00 346.0 852.00 5238 5304 575.5497 656.2288
+Scripts Expert 19242 0 181.00 484.0 1017.00 4481 5448 684.9419 648.6608
+Scripts Master 2994 0 331.25 769.0 1437.25 4889 5007 936.9071 735.0125
+Scripts Grandmaster 619 0 419.50 907.0 1733.00 4530 4597 1177.9548 948.2457
+unfold_moreShow hidden code
+A tibble: 6 × 16
+Id UserId AchievementType Tier TierAchievementDate Points CurrentRanking HighestRanking TotalGold TotalSilver TotalBronze RegisterDate PerformanceTier achievement_delay PerformanceTierFactor TierFactor
+<dbl> <dbl> <fct> <dbl> <date> <dbl> <dbl> <dbl> <dbl> <dbl> <dbl> <date> <dbl> <drtn> <fct> <fct>
+3739823 368 Competitions 1 2016-07-15 26 NA 75 0 0 0 2010-01-20 2 2368 days Expert Contributor
+3739827 381 Scripts 1 2016-07-15 0 NA NA 0 0 0 2010-01-29 2 2359 days Expert Contributor
+3739831 392 Discussion 1 2018-04-09 0 NA NA 0 0 2 2010-02-03 3 2987 days Master Contributor
+3739837 397 Discussion 1 2016-07-15 0 NA NA 0 0 0 2010-02-04 1 2353 days Contributor Contributor
+3739840 398 Discussion 1 2016-07-15 0 NA NA 0 0 0 2010-02-05 1 2352 days Contributor Contributor
+3739846 406 Discussion 1 2016-07-15 0 NA NA 0 0 0 2010-02-15 1 2342 days Contributor Contributor
+In [ ]:
+In [26]:
+my_tier_by_type <- user_achievements %>%
+  filter(UserId == my_user_id) 
+my_tier
+# Step 2: plot full distribution
+p_full <- user_achievements %>%
+  ggplot(aes(achievement_delay)) +
+  geom_histogram(binwidth = 100, fill = "steelblue", alpha = 0.7) +
+  geom_vline(
+    data = my_tier_by_type,
+    aes(xintercept = achievement_delay),
+    color = "red", linetype = "dashed", size = 1
+  ) +
+  facet_wrap(~PerformanceTierFactor+AchievementType, scales = "free_y") +
+  labs(title = "Days taken to achieve each rank - split by Category. (Red line: Me)",
+       x = "Days", y = "Number of Users") +
+  theme_minimal()
+
+
+p_full
+A tibble: 1 × 2
+PerformanceTierFactor time_to_current_tier
+<fct> <drtn>
+Expert 5448 days
+Don't know how to automatically pick scale for object of type <difftime>.
+Defaulting to continuous.
+Warning message:
+“Removed 349 rows containing non-finite outside the scale range (`stat_bin()`).”

@@ -1,0 +1,57 @@
+In [1]:
+import pandas as pd
+import numpy as np
+
+df1 = pd.read_csv("/kaggle/input/caloriecast-adaptive-ensemble-engine-for-s5e5/submission.csv")
+df1.to_csv( 'adaptive-ensemble-engine_submission.csv', index=False)  #0.05670
+
+df2 = pd.read_csv("/kaggle/input/ensemble-of-solutions/submission.csv")
+df2.to_csv( 'Ensemble_submission.csv', index=False)   # 0.05668
+
+df3 = pd.read_csv("/kaggle/input/ps-s5e5-log-blended-cat-xgboost-with-50-fold-cv/ensemble_submission.csv")
+df3.to_csv( 'log-blended-cat-xgboost-with-50-fold-cv_submission.csv', index=False)  # 0.05670
+
+df4 = pd.read_csv("/kaggle/input/ps-s5e5-cross-masked-ensemble/submission.csv")
+df4.to_csv( 'cross-masked-ensemble_submission.csv', index=False)  # 0.05680
+
+df5 = pd.read_csv("/kaggle/input/ps-s5e5-calorie-prediction-ensemble/submission.csv")
+df5.to_csv( 'trippleEnsemble_submission.csv', index=False)     # 0.05667 
+
+df6 = pd.read_csv("/kaggle/input/ps-s5e5-catboost-xgboost-feature-engineering/submission.csv")
+df6.to_csv( 'catboost-xgboost-feature-engineering_submission.csv', index=False)   # 0.05679
+
+df7 = pd.read_csv("/kaggle/input/pce-v1/submission.csv")
+df7.to_csv( 'XG_Catboost_FE_submission.csv', index=False)   # 0.05668
+
+df8 = pd.read_csv("/kaggle/input/calorie-best-fe/submission.csv")
+df8.to_csv( 'calorie-best-fe_submission.csv', index=False)   # 0.05667
+
+df9 = pd.read_csv("/kaggle/input/calories-expenditure/submission.csv")  # 0.05692
+df10 = pd.read_csv("/kaggle/input/best-fe-3-diverse-models/submission_.csv") #0.05669
+
+
+df11 = pd.read_csv("/kaggle/input/calorie-expenditure-female-vs-male/submission.csv")
+df11.to_csv( 'male_female_submission.csv', index=False)   # 0.05667
+
+
+df12 = pd.read_csv("/kaggle/input/kmeans-clustering-based-fe-improves-cv-lb-scores/submission.csv")
+df12.to_csv( 'kmean_submission.csv', index=False)   # 0.05695 V2
+
+
+df13 = pd.read_csv("/kaggle/input/s5e5-xgb-cat-lgbm-meta-models/submission.csv")
+df13.to_csv( 'metamodel_submission.csv', index=False)   # 0.05695 V2
+
+
+
+ground_truth = pd.read_csv("/kaggle/input/playground-series-s5e5/sample_submission.csv")  
+In [2]:
+all_preds = np.stack([df['Calories'] for df in [df1, df2, df3, df4, df5, df6, df7, df8,df9, df10, df11, df12, df13]], axis=1)
+main = pd.read_csv('/kaggle/input/median-ensemble-of-multiple-model-submissio-634c57/submission_mean.csv')
+
+median =  np.median(all_preds, axis=1)
+ground_truth['Calories'] = np.median(np.stack([main['Calories'], median], axis=1), axis=1)
+ground_truth.to_csv('submission_median.csv', index=False)
+
+mean =  np.mean(all_preds, axis=1)
+ground_truth['Calories'] = np.mean(np.stack([main['Calories'], mean], axis=1), axis=1)
+ground_truth.to_csv('submission_mean.csv', index=False)

@@ -1,0 +1,1555 @@
+Exploring Mental Health Data
+Introduction
+Mental health has become an increasingly important area of study, especially in understanding the factors that contribute to conditions like depression. The 2024 Kaggle Playground Series continues this focus by presenting a dataset derived from a mental health survey aimed at exploring the underlying causes of depression in individuals. This competition invites participants to apply their machine learning skills to analyze and predict depression outcomes, leveraging both synthetic and original data sources to enhance model performance and uncover insightful patterns.
+In [1]:
+# This Python 3 environment comes with many helpful analytics libraries installed
+# It is defined by the kaggle/python Docker image: https://github.com/kaggle/docker-python
+# For example, here's several helpful packages to load
+
+import numpy as np # linear algebra
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+
+# Input data files are available in the read-only "../input/" directory
+# For example, running this (by clicking run or pressing Shift+Enter) will list all files under the input directory
+
+import os
+for dirname, _, filenames in os.walk('/kaggle/input'):
+    for filename in filenames:
+        print(os.path.join(dirname, filename))
+
+# You can write up to 20GB to the current directory (/kaggle/working/) that gets preserved as output when you create a version using "Save & Run All" 
+# You can also write temporary files to /kaggle/temp/, but they won't be saved outside of the current session
+/kaggle/input/playground-series-s4e11/sample_submission.csv
+/kaggle/input/playground-series-s4e11/train.csv
+/kaggle/input/playground-series-s4e11/test.csv
+Methodology
+Data Preparation
+Participants will begin by loading the provided train.csv and test.csv datasets, which contain survey responses and corresponding depression indicators. The train.csv includes a binary target variable indicating the presence or absence of depression, while the test.csv requires participants to predict these outcomes. Additionally, the sample_submission.csv file offers a template for submitting predictions in the correct format.
+Feature Engineering
+Given that the dataset is synthetic, participants are encouraged to explore and preprocess the data meticulously. This involves handling missing values, encoding categorical variables, and normalizing numerical features to ensure compatibility with machine learning algorithms. Leveraging the original Depression Survey/Dataset for Analysis can provide a foundation for feature extraction and enhance the robustness of predictive models.
+Model Development
+Using the prepared data, participants will develop machine learning models to predict depression outcomes. Techniques such as XGBoost, neural networks, and ensemble methods can be employed to achieve high accuracy. GPU-accelerated training pipelines, like the XGBoostGPUPipeline, can significantly reduce training times, allowing for extensive hyperparameter tuning and model optimization.
+Evaluation and Visualization
+Models will be evaluated based on metrics like accuracy, precision, recall, and the area under the ROC curve (AUC). Additionally, participants are encouraged to visualize feature importance and explore various factors influencing depression, providing both quantitative and qualitative insights. Effective visualization techniques can aid in understanding the model's decision-making process and highlight key predictors of mental health conditions.
+In [2]:
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
+import xgboost as xgb
+import time
+import warnings
+
+warnings.filterwarnings("ignore")  # Suppress all warnings for cleaner output
+
+class XGBoostGPUPipeline:
+    """GPU-accelerated XGBoost pipeline for depression prediction."""
+    
+    def __init__(self, random_state=42, gpu_device=0):
+        """
+        Initialize the XGBoostGPUPipeline with random state and GPU device.
+        
+        Args:
+            random_state (int, optional): Seed for reproducibility. Defaults to 42.
+            gpu_device (int, optional): GPU device ID to use. Defaults to 0.
+        """
+        self.random_state = random_state  # Set the random seed for reproducibility
+        self.gpu_device = gpu_device      # Specify which GPU device to use for training
+        
+    def optimize_model(self, X_train, y_train, X_val, y_val):
+        """
+        Optimize XGBoost parameters using GPU acceleration.
+        
+        Args:
+            X_train (pd.DataFrame): Training feature data.
+            y_train (pd.Series): Training target data.
+            X_val (pd.DataFrame): Validation feature data.
+            y_val (pd.Series): Validation target data.
+        
+        Returns:
+            tuple: Best parameters and all optimization results.
+        """
+        print("\nOptimizing XGBoost on GPU...")
+        start_time = time.time()  # Record the start time
+        
+        # Convert training and validation data into DMatrix format for efficient training on GPU
+        dtrain = xgb.DMatrix(X_train, label=y_train)
+        dval = xgb.DMatrix(X_val, label=y_val)
+        
+        # Define a grid of hyperparameters to search over
+        param_grid = {
+            'max_depth': [3, 6, 9],
+            'learning_rate': [0.01, 0.1, 0.3],
+            'n_estimators': [100, 200, 500],
+            'min_child_weight': [1, 3, 5],
+            'subsample': [0.8, 0.9, 1.0]
+        }
+        
+        best_score = 0      # Initialize the best score
+        best_params = None  # Initialize the best parameters
+        results = []        # List to store results of each parameter combination
+        
+        # Calculate the total number of parameter combinations
+        total_combinations = len(param_grid['max_depth']) * len(param_grid['learning_rate']) * \
+                             len(param_grid['n_estimators']) * len(param_grid['min_child_weight']) * \
+                             len(param_grid['subsample'])
+                             
+        print(f"Total parameter combinations to try: {total_combinations}")
+        current_combination = 0  # Initialize the current combination counter
+        
+        # Iterate over all possible combinations of hyperparameters
+        for max_depth in param_grid['max_depth']:
+            for lr in param_grid['learning_rate']:
+                for n_estimators in param_grid['n_estimators']:
+                    for min_child_weight in param_grid['min_child_weight']:
+                        for subsample in param_grid['subsample']:
+                            current_combination += 1              # Increment combination counter
+                            combination_start_time = time.time()  # Record the start time for this combination
+                            
+                            # Define the current set of parameters
+                            params = {
+                                'max_depth': max_depth,
+                                'learning_rate': lr,
+                                'n_estimators': n_estimators,
+                                'min_child_weight': min_child_weight,
+                                'subsample': subsample,
+                                'tree_method': 'gpu_hist',       # Use GPU-accelerated histogram algorithm
+                                'objective': 'binary:logistic',  # Binary classification objective
+                                'eval_metric': 'auc',            # Evaluation metric: Area Under the Curve
+                                'gpu_id': self.gpu_device        # Specify the GPU device ID
+                            }
+                            
+                            # Train the XGBoost model with the current set of parameters
+                            model = xgb.train(
+                                params,
+                                dtrain,
+                                num_boost_round=n_estimators,
+                                evals=[(dval, 'eval')],    # Evaluation dataset
+                                early_stopping_rounds=50,  # Stop if no improvement after 50 rounds
+                                verbose_eval=False         # Do not print training progress
+                            )
+                            
+                            # Retrieve the best score achieved during training
+                            score = model.best_score
+                            results.append({
+                                'params': params,  # Store the parameters
+                                'score': score     # Store the corresponding score
+                            })
+                            
+                            combination_time = time.time() - combination_start_time  # Calculate time taken for this combination
+                            
+                            # Print details of the current combination
+                            print(f"\nCombination {current_combination}/{total_combinations}")
+                            print(f"Parameters: {params}")
+                            print(f"Score: {score:.4f}")
+                            print(f"Time taken: {combination_time:.2f} seconds")
+                            
+                            # Update best parameters if the current score is better
+                            if score > best_score:
+                                best_score = score    # Update the best score
+                                best_params = params  # Update the best parameters
+                                print("New best score found!")
+        
+        total_time = time.time() - start_time  # Calculate the total optimization time
+        print(f"\nTotal optimization time: {total_time:.2f} seconds")  # Print the total time taken
+        
+        return best_params, results  # Return the best parameters and all results
+    
+    def run(self, train_path, test_path, submission_path=None, target_column='Depression'):
+        """
+        Execute the complete GPU-accelerated XGBoost pipeline.
+        
+        Args:
+            train_path (str): Path to the training CSV file.
+            test_path (str): Path to the test CSV file.
+            submission_path (str, optional): Path to save the submission CSV file. Defaults to None.
+            target_column (str, optional): Name of the target column. Defaults to 'Depression'.
+        
+        Returns:
+            dict: Dictionary containing the trained model, best parameters, and optimization results.
+        """
+        print("Loading and preparing data...")  # Notify about data loading
+        train_df = pd.read_csv(train_path)      # Load training data
+        test_df = pd.read_csv(test_path)        # Load test data
+        
+        # Prepare features by dropping unnecessary columns
+        X = train_df.drop([target_column, 'id', 'Name'], axis=1)  # Features for training
+        y = train_df[target_column]                               # Target variable
+        X_test = test_df.drop(['id', 'Name'], axis=1)             # Features for testing
+        
+        # Identify categorical columns and convert them to numerical codes
+        categorical_columns = X.select_dtypes(include=['object']).columns  # Select categorical columns
+        for col in categorical_columns:
+            X[col] = X[col].astype('category').cat.codes            # Encode categorical variables in training data
+            X_test[col] = X_test[col].astype('category').cat.codes  # Encode categorical variables in test data
+        
+        # Split the training data into training and validation sets
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, random_state=self.random_state
+        )
+        
+        # Optimize model hyperparameters using the training and validation sets
+        best_params, optimization_results = self.optimize_model(X_train, y_train, X_val, y_val)
+        
+        print("\nTraining final model with best parameters...")
+        # Initialize the final XGBoost classifier with the best found parameters
+        final_model = xgb.XGBClassifier(
+            **best_params,
+            random_state=self.random_state  # Set the random seed for reproducibility
+        )
+        
+        # Train the final model on the training data
+        final_model.fit(
+            X_train, 
+            y_train,
+            eval_set=[(X_val, y_val)],  # Use validation set for early stopping
+            early_stopping_rounds=50,   # Stop if no improvement after 50 rounds
+            verbose=False               # Do not print training progress
+        )
+        
+        # Generate validation predictions
+        val_predictions = final_model.predict(X_val)  # Predict on validation data
+        
+        # Calculate various metrics
+        validation_accuracy = accuracy_score(y_val, val_predictions)  # Calculate accuracy
+        full_report = classification_report(y_val, val_predictions)   # Generate a detailed classification report
+        
+        # Print validation results
+        print("\nValidation Results:")
+        print(full_report)  # Print the classification report
+        
+        # Print final model summary
+        print("\n" + "="*50)
+        print("BEST MODEL SUMMARY")
+        print("="*50)
+        print("\nBest Parameters:")
+        for param, value in best_params.items():
+            if param not in ['tree_method', 'objective', 'eval_metric', 'gpu_id']:
+                print(f"{param}: {value}")
+        
+        print(f"\nBest Model Performance:")
+        print(f"Accuracy: {validation_accuracy:.4f}")                # Print the accuracy score
+        print(f"AUC Score: {best_params.get('best_score', 'N/A')}")  # Attempt to print the AUC score if available
+        
+        # Feature importance
+        feature_importance = pd.DataFrame({
+            'feature': X.columns,                           # Feature names
+            'importance': final_model.feature_importances_  # Corresponding feature importances
+        })
+        feature_importance = feature_importance.sort_values('importance', ascending=False)  # Sort features by importance
+        
+        print("\nTop 10 Most Important Features:")
+        for idx, row in feature_importance.head(10).iterrows():
+            print(f"{row['feature']}: {row['importance']:.4f}")  # Print the top 10 features with their importance scores
+            
+        print("\n" + "="*50)
+        
+        # Generate submission file if path is provided
+        if submission_path:
+            test_predictions = final_model.predict(X_test)  # Predict on test data
+            submission_df = pd.DataFrame({
+                'id': test_df['id'],            # Include the ID from the test data
+                'Depression': test_predictions  # Include the predicted Depression values
+            })
+            submission_df.to_csv(submission_path, index=False)       # Save the submission file as CSV
+            print(f"\nSubmission file saved to: {submission_path}")  # Notify about the saved submission
+        
+        return {
+            'model': final_model,                         # Return the trained model
+            'best_params': best_params,                   # Return the best hyperparameters
+            'optimization_results': optimization_results  # Return all optimization results
+        }
+
+# Example usage
+if __name__ == "__main__":
+    # Initialize the XGBoostGPUPipeline with a random state for reproducibility and specify GPU device 0
+    pipeline = XGBoostGPUPipeline(random_state=42, gpu_device=0)
+    
+    # Execute the pipeline with specified paths for training, testing, and submission
+    results = pipeline.run(
+        train_path='/kaggle/input/playground-series-s4e11/train.csv',  # Path to the training data
+        test_path='/kaggle/input/playground-series-s4e11/test.csv',    # Path to the test data
+        submission_path='submission.csv'                               # Path to save the submission file
+    )
+Loading and preparing data...
+
+Optimizing XGBoost on GPU...
+Total parameter combinations to try: 243
+
+Combination 1/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9600
+Time taken: 0.64 seconds
+New best score found!
+
+Combination 2/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9599
+Time taken: 0.25 seconds
+
+Combination 3/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9598
+Time taken: 0.25 seconds
+
+Combination 4/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9601
+Time taken: 0.25 seconds
+New best score found!
+
+Combination 5/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9600
+Time taken: 0.24 seconds
+
+Combination 6/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9598
+Time taken: 0.24 seconds
+
+Combination 7/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9601
+Time taken: 0.24 seconds
+New best score found!
+
+Combination 8/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9600
+Time taken: 0.24 seconds
+
+Combination 9/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9597
+Time taken: 0.23 seconds
+
+Combination 10/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9649
+Time taken: 0.50 seconds
+New best score found!
+
+Combination 11/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9647
+Time taken: 0.49 seconds
+
+Combination 12/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9646
+Time taken: 0.48 seconds
+
+Combination 13/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9650
+Time taken: 0.49 seconds
+New best score found!
+
+Combination 14/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9648
+Time taken: 0.49 seconds
+
+Combination 15/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9647
+Time taken: 0.46 seconds
+
+Combination 16/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9650
+Time taken: 0.49 seconds
+
+Combination 17/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9649
+Time taken: 0.49 seconds
+
+Combination 18/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9646
+Time taken: 0.47 seconds
+
+Combination 19/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9733
+Time taken: 1.21 seconds
+New best score found!
+
+Combination 20/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9732
+Time taken: 1.20 seconds
+
+Combination 21/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9732
+Time taken: 1.17 seconds
+
+Combination 22/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9733
+Time taken: 1.20 seconds
+
+Combination 23/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9732
+Time taken: 1.20 seconds
+
+Combination 24/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9732
+Time taken: 1.15 seconds
+
+Combination 25/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9733
+Time taken: 1.20 seconds
+
+Combination 26/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9732
+Time taken: 1.19 seconds
+
+Combination 27/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9732
+Time taken: 1.16 seconds
+
+Combination 28/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.25 seconds
+New best score found!
+
+Combination 29/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9759
+Time taken: 0.25 seconds
+New best score found!
+
+Combination 30/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.23 seconds
+
+Combination 31/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.25 seconds
+
+Combination 32/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9759
+Time taken: 0.25 seconds
+New best score found!
+
+Combination 33/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.23 seconds
+
+Combination 34/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.25 seconds
+
+Combination 35/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.24 seconds
+
+Combination 36/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.24 seconds
+
+Combination 37/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.48 seconds
+New best score found!
+
+Combination 38/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.49 seconds
+New best score found!
+
+Combination 39/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.46 seconds
+
+Combination 40/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.48 seconds
+
+Combination 41/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.49 seconds
+
+Combination 42/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.46 seconds
+
+Combination 43/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.49 seconds
+
+Combination 44/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.48 seconds
+New best score found!
+
+Combination 45/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.47 seconds
+
+Combination 46/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9767
+Time taken: 0.95 seconds
+New best score found!
+
+Combination 47/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9767
+Time taken: 0.85 seconds
+New best score found!
+
+Combination 48/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9767
+Time taken: 1.05 seconds
+
+Combination 49/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9766
+Time taken: 0.93 seconds
+
+Combination 50/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9767
+Time taken: 0.91 seconds
+
+Combination 51/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.88 seconds
+
+Combination 52/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.87 seconds
+
+Combination 53/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9767
+Time taken: 0.91 seconds
+New best score found!
+
+Combination 54/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.71 seconds
+
+Combination 55/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.26 seconds
+
+Combination 56/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.26 seconds
+
+Combination 57/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.27 seconds
+
+Combination 58/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.26 seconds
+
+Combination 59/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.25 seconds
+
+Combination 60/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.25 seconds
+
+Combination 61/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.24 seconds
+
+Combination 62/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.24 seconds
+
+Combination 63/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.24 seconds
+
+Combination 64/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.38 seconds
+
+Combination 65/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.41 seconds
+
+Combination 66/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.44 seconds
+
+Combination 67/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.34 seconds
+
+Combination 68/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.37 seconds
+
+Combination 69/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.48 seconds
+
+Combination 70/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.34 seconds
+
+Combination 71/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.48 seconds
+
+Combination 72/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.44 seconds
+
+Combination 73/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.38 seconds
+
+Combination 74/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.40 seconds
+
+Combination 75/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.44 seconds
+
+Combination 76/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.33 seconds
+
+Combination 77/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.37 seconds
+
+Combination 78/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.50 seconds
+
+Combination 79/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.34 seconds
+
+Combination 80/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.47 seconds
+
+Combination 81/243
+Parameters: {'max_depth': 3, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9765
+Time taken: 0.43 seconds
+
+Combination 82/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9710
+Time taken: 0.36 seconds
+
+Combination 83/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9708
+Time taken: 0.36 seconds
+
+Combination 84/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9704
+Time taken: 0.36 seconds
+
+Combination 85/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9710
+Time taken: 0.36 seconds
+
+Combination 86/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9708
+Time taken: 0.36 seconds
+
+Combination 87/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9704
+Time taken: 0.35 seconds
+
+Combination 88/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9710
+Time taken: 0.36 seconds
+
+Combination 89/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9708
+Time taken: 0.36 seconds
+
+Combination 90/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9705
+Time taken: 0.35 seconds
+
+Combination 91/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9732
+Time taken: 0.71 seconds
+
+Combination 92/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9731
+Time taken: 0.72 seconds
+
+Combination 93/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9729
+Time taken: 0.70 seconds
+
+Combination 94/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9732
+Time taken: 0.72 seconds
+
+Combination 95/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9731
+Time taken: 0.72 seconds
+
+Combination 96/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9729
+Time taken: 0.71 seconds
+
+Combination 97/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9732
+Time taken: 0.72 seconds
+
+Combination 98/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9731
+Time taken: 0.72 seconds
+
+Combination 99/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9730
+Time taken: 0.71 seconds
+
+Combination 100/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9760
+Time taken: 1.81 seconds
+
+Combination 101/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9759
+Time taken: 1.78 seconds
+
+Combination 102/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 1.74 seconds
+
+Combination 103/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9760
+Time taken: 1.81 seconds
+
+Combination 104/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9759
+Time taken: 1.82 seconds
+
+Combination 105/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 1.78 seconds
+
+Combination 106/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9760
+Time taken: 1.82 seconds
+
+Combination 107/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9759
+Time taken: 1.85 seconds
+
+Combination 108/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 1.77 seconds
+
+Combination 109/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.36 seconds
+
+Combination 110/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.36 seconds
+
+Combination 111/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9761
+Time taken: 0.35 seconds
+
+Combination 112/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.36 seconds
+
+Combination 113/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.36 seconds
+
+Combination 114/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9761
+Time taken: 0.35 seconds
+
+Combination 115/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9761
+Time taken: 0.36 seconds
+
+Combination 116/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.36 seconds
+
+Combination 117/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.35 seconds
+
+Combination 118/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.62 seconds
+
+Combination 119/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.67 seconds
+
+Combination 120/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9761
+Time taken: 0.52 seconds
+
+Combination 121/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.53 seconds
+
+Combination 122/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.59 seconds
+
+Combination 123/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9761
+Time taken: 0.52 seconds
+
+Combination 124/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.69 seconds
+
+Combination 125/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.57 seconds
+
+Combination 126/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.57 seconds
+
+Combination 127/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9764
+Time taken: 0.62 seconds
+
+Combination 128/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.67 seconds
+
+Combination 129/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9761
+Time taken: 0.51 seconds
+
+Combination 130/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.52 seconds
+
+Combination 131/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.59 seconds
+
+Combination 132/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9761
+Time taken: 0.52 seconds
+
+Combination 133/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.68 seconds
+
+Combination 134/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9763
+Time taken: 0.56 seconds
+
+Combination 135/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9762
+Time taken: 0.56 seconds
+
+Combination 136/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.31 seconds
+
+Combination 137/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.27 seconds
+
+Combination 138/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.26 seconds
+
+Combination 139/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9754
+Time taken: 0.28 seconds
+
+Combination 140/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.27 seconds
+
+Combination 141/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9755
+Time taken: 0.29 seconds
+
+Combination 142/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9754
+Time taken: 0.31 seconds
+
+Combination 143/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9759
+Time taken: 0.27 seconds
+
+Combination 144/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.30 seconds
+
+Combination 145/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.31 seconds
+
+Combination 146/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.28 seconds
+
+Combination 147/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.26 seconds
+
+Combination 148/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9754
+Time taken: 0.29 seconds
+
+Combination 149/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.28 seconds
+
+Combination 150/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9755
+Time taken: 0.29 seconds
+
+Combination 151/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9754
+Time taken: 0.32 seconds
+
+Combination 152/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9759
+Time taken: 0.27 seconds
+
+Combination 153/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.30 seconds
+
+Combination 154/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.31 seconds
+
+Combination 155/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.28 seconds
+
+Combination 156/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.26 seconds
+
+Combination 157/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9754
+Time taken: 0.29 seconds
+
+Combination 158/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.27 seconds
+
+Combination 159/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9755
+Time taken: 0.29 seconds
+
+Combination 160/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9754
+Time taken: 0.32 seconds
+
+Combination 161/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9759
+Time taken: 0.28 seconds
+
+Combination 162/243
+Parameters: {'max_depth': 6, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 0.31 seconds
+
+Combination 163/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9739
+Time taken: 0.76 seconds
+
+Combination 164/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9736
+Time taken: 0.77 seconds
+
+Combination 165/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9731
+Time taken: 0.76 seconds
+
+Combination 166/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9740
+Time taken: 0.74 seconds
+
+Combination 167/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9737
+Time taken: 0.75 seconds
+
+Combination 168/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9733
+Time taken: 0.75 seconds
+
+Combination 169/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9739
+Time taken: 0.72 seconds
+
+Combination 170/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9737
+Time taken: 0.73 seconds
+
+Combination 171/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9732
+Time taken: 0.74 seconds
+
+Combination 172/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9748
+Time taken: 1.57 seconds
+
+Combination 173/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9745
+Time taken: 1.57 seconds
+
+Combination 174/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9742
+Time taken: 1.55 seconds
+
+Combination 175/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9748
+Time taken: 1.50 seconds
+
+Combination 176/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9746
+Time taken: 1.53 seconds
+
+Combination 177/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9743
+Time taken: 1.52 seconds
+
+Combination 178/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9748
+Time taken: 1.47 seconds
+
+Combination 179/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9746
+Time taken: 1.50 seconds
+
+Combination 180/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9742
+Time taken: 1.50 seconds
+
+Combination 181/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 3.91 seconds
+
+Combination 182/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 3.92 seconds
+
+Combination 183/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9753
+Time taken: 3.91 seconds
+
+Combination 184/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9759
+Time taken: 3.69 seconds
+
+Combination 185/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 3.74 seconds
+
+Combination 186/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 3.72 seconds
+
+Combination 187/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9759
+Time taken: 3.55 seconds
+
+Combination 188/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9758
+Time taken: 3.61 seconds
+
+Combination 189/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.01, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 3.64 seconds
+
+Combination 190/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.72 seconds
+
+Combination 191/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9753
+Time taken: 0.73 seconds
+
+Combination 192/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9751
+Time taken: 0.72 seconds
+
+Combination 193/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.69 seconds
+
+Combination 194/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9754
+Time taken: 0.68 seconds
+
+Combination 195/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.67 seconds
+
+Combination 196/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.65 seconds
+
+Combination 197/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.64 seconds
+
+Combination 198/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.65 seconds
+
+Combination 199/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.98 seconds
+
+Combination 200/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9753
+Time taken: 0.91 seconds
+
+Combination 201/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9751
+Time taken: 0.95 seconds
+
+Combination 202/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.76 seconds
+
+Combination 203/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9754
+Time taken: 0.77 seconds
+
+Combination 204/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.77 seconds
+
+Combination 205/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.80 seconds
+
+Combination 206/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.72 seconds
+
+Combination 207/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.79 seconds
+
+Combination 208/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.98 seconds
+
+Combination 209/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9753
+Time taken: 0.91 seconds
+
+Combination 210/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9751
+Time taken: 0.97 seconds
+
+Combination 211/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.76 seconds
+
+Combination 212/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9754
+Time taken: 0.76 seconds
+
+Combination 213/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.76 seconds
+
+Combination 214/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9757
+Time taken: 0.80 seconds
+
+Combination 215/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.72 seconds
+
+Combination 216/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.1, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9756
+Time taken: 0.79 seconds
+
+Combination 217/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9746
+Time taken: 0.47 seconds
+
+Combination 218/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9741
+Time taken: 0.44 seconds
+
+Combination 219/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9743
+Time taken: 0.44 seconds
+
+Combination 220/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9748
+Time taken: 0.44 seconds
+
+Combination 221/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9745
+Time taken: 0.42 seconds
+
+Combination 222/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9746
+Time taken: 0.41 seconds
+
+Combination 223/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9751
+Time taken: 0.40 seconds
+
+Combination 224/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9748
+Time taken: 0.41 seconds
+
+Combination 225/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 100, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9750
+Time taken: 0.43 seconds
+
+Combination 226/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9746
+Time taken: 0.48 seconds
+
+Combination 227/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9741
+Time taken: 0.44 seconds
+
+Combination 228/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9743
+Time taken: 0.45 seconds
+
+Combination 229/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9748
+Time taken: 0.44 seconds
+
+Combination 230/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9745
+Time taken: 0.42 seconds
+
+Combination 231/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9746
+Time taken: 0.40 seconds
+
+Combination 232/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9751
+Time taken: 0.40 seconds
+
+Combination 233/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9748
+Time taken: 0.40 seconds
+
+Combination 234/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 200, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9750
+Time taken: 0.42 seconds
+
+Combination 235/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9746
+Time taken: 0.48 seconds
+
+Combination 236/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9741
+Time taken: 0.45 seconds
+
+Combination 237/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 1, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9743
+Time taken: 0.45 seconds
+
+Combination 238/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9748
+Time taken: 0.43 seconds
+
+Combination 239/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9745
+Time taken: 0.42 seconds
+
+Combination 240/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 3, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9746
+Time taken: 0.41 seconds
+
+Combination 241/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.8, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9751
+Time taken: 0.40 seconds
+
+Combination 242/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 0.9, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9748
+Time taken: 0.40 seconds
+
+Combination 243/243
+Parameters: {'max_depth': 9, 'learning_rate': 0.3, 'n_estimators': 500, 'min_child_weight': 5, 'subsample': 1.0, 'tree_method': 'gpu_hist', 'objective': 'binary:logistic', 'eval_metric': 'auc', 'gpu_id': 0}
+Score: 0.9750
+Time taken: 0.43 seconds
+
+Total optimization time: 176.02 seconds
+
+Training final model with best parameters...
+
+Validation Results:
+              precision    recall  f1-score   support
+
+           0       0.96      0.97      0.96     22986
+           1       0.85      0.82      0.83      5154
+
+    accuracy                           0.94     28140
+   macro avg       0.90      0.89      0.90     28140
+weighted avg       0.94      0.94      0.94     28140
+
+
+==================================================
+BEST MODEL SUMMARY
+==================================================
+
+Best Parameters:
+max_depth: 3
+learning_rate: 0.1
+n_estimators: 500
+min_child_weight: 5
+subsample: 0.9
+
+Best Model Performance:
+Accuracy: 0.9396
+AUC Score: N/A
+
+Top 10 Most Important Features:
+Have you ever had suicidal thoughts ?: 0.2927
+Age: 0.2764
+Academic Pressure: 0.1036
+Financial Stress: 0.0791
+Work Pressure: 0.0680
+Job Satisfaction: 0.0534
+Dietary Habits: 0.0365
+Work/Study Hours: 0.0316
+Study Satisfaction: 0.0136
+Sleep Duration: 0.0134
+
+==================================================
+
+Submission file saved to: submission.csv
+Conclusion
+The "Exploring Mental Health Data" competition in the 2024 Kaggle Playground Series offers a valuable opportunity to apply machine learning techniques to a socially impactful problem. By analyzing survey data to predict depression, participants can contribute to a deeper understanding of mental health dynamics. The combination of synthetic and original datasets, along with the emphasis on data visualization, ensures a comprehensive learning experience that not only hones predictive modeling skills but also fosters meaningful insights into the factors affecting mental well-being. Successful models and findings from this competition have the potential to inform public health strategies and support mental health initiatives globally.

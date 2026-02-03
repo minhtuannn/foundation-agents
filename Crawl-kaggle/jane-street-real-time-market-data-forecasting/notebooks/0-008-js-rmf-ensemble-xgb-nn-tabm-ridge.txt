@@ -1,0 +1,132 @@
+Additional
+2025/01/03 : add weights ensemble of public notebook
+https://www.kaggle.com/code/yunsuxiaozi/js-ridge-baseline?scriptVersionId=202739388
+https://www.kaggle.com/code/hideyukizushi/js-nnx5-xgbx5-weighted-blend-lb-0-0078/notebook?scriptVersionId=215419804
+https://www.kaggle.com/code/i2nfinit3y/jane-street-tabm-ft-transformer-inference?scriptVersionId=213715783
+Imports and installation
+In [1]:
+!pip install rtdl_num_embeddings -q --no-index --find-links=/kaggle/input/jane-street-import/rtdl_num_embeddings
+In [2]:
+import os, sys, gc
+import pickle
+import dill
+import numpy as np
+import pandas as pd
+import polars as pl
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from pytorch_lightning import (LightningDataModule, LightningModule, Trainer)
+
+from sklearn.metrics import r2_score
+
+import torch.optim
+from torch.utils.data import Dataset, DataLoader, TensorDataset
+from sklearn.model_selection import train_test_split
+import math
+from tqdm import tqdm
+from collections import OrderedDict
+from tabm_reference import Model, make_parameter_groups
+
+import warnings
+import joblib
+from pytorch_lightning.callbacks import Callback
+import gc
+
+import lightgbm as lgb
+from lightgbm import LGBMRegressor, Booster
+from xgboost import XGBRegressor
+from catboost import CatBoostRegressor
+
+import warnings
+warnings.filterwarnings('ignore')
+pd.options.display.max_columns = None
+
+sys.path.append("/kaggle/input/jane-street-real-time-market-data-forecasting")
+Top Public Notebook
+JS|NNx5+XGBx5(MyTrain+Pub)|WeightBlend|LB.0.0078 (hideyukizushi)
+LB: 0.0078 https://www.kaggle.com/code/yunsuxiaozi/js2024-starter?scriptVersionId=206770572
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+Jane Street | TabM/FT-Transformer inference (i2nfinit3y)
+LB: 0.0074 https://www.kaggle.com/code/i2nfinit3y/jane-street-tabm-ft-transformer-inference?scriptVersionId=213715783
+unfold_moreShow hidden code
+unfold_moreShow hidden code
+JS Ridge baseline (yunsuxiaozi)
+LB: 0.0042 https://www.kaggle.com/code/yunsuxiaozi/js-ridge-baseline?scriptVersionId=202938352
+unfold_moreShow hidden code
+Ensemble notebook
+In [8]:
+def predict(test: pl.DataFrame, lags: pl.DataFrame | None) -> pl.DataFrame | pd.DataFrame:
+    """
+    Make ensemble predictions combining three different models:
+    - Neural Network + XGBoost ensemble
+    - Ridge Regression
+    - Tabular Model (TABM)
+    
+    Args:
+        test: DataFrame containing test features
+        lags: DataFrame containing lagged features
+        
+    Returns:
+        DataFrame with weighted ensemble predictions
+    """
+    # Get predictions from each model/ensemble
+    pd_nn_xgb = predict_nn_xgb(test, lags).to_pandas()  # Neural Network + XGBoost predictions
+    pd_ridge = predict_ridge(test, lags).to_pandas()     # Ridge Regression predictions 
+    pd_tabm = predict_tabm(test, lags).to_pandas()       # Tabular Model predictions
+    
+    # Rename prediction columns to avoid naming conflicts during merge
+    pd_nn_xgb = pd_nn_xgb.rename(columns={'responder_6': 'col_nn_xgb'})
+    pd_ridge = pd_ridge.rename(columns={'responder_6': 'col_ridge'})
+    pd_tabm = pd_tabm.rename(columns={'responder_6': 'col_tabm'})
+    
+    # Merge predictions from all models based on row_id
+    pds = pd.merge(pd_nn_xgb, pd_ridge, on=['row_id'])
+    pds = pd.merge(pds, pd_tabm, on=['row_id'])
+    
+    # Define ensemble weights for each model
+    e_weights = [0.50,  # Weight for Neural Network + XGBoost
+                0.10,   # Weight for Ridge Regression
+                0.40]   # Weight for Tabular Model
+    
+    # Create weighted ensemble predictions
+    pds['responder_6'] = (
+        pds['col_nn_xgb'] * e_weights[0] + 
+        pds['col_ridge'] * e_weights[1] +    
+        pds['col_tabm'] * e_weights[2]     
+    )
+    
+    # Format final predictions DataFrame
+    predictions = test.select('row_id', pl.lit(0.0).alias('responder_6'))
+    pred = pds['responder_6'].to_numpy()
+    predictions = predictions.with_columns(pl.Series('responder_6', pred.ravel()))
+    
+    return predictions
+In [9]:
+import kaggle_evaluation.jane_street_inference_server
+
+# Initialize the Jane Street inference server with our predict function
+inference_server = kaggle_evaluation.jane_street_inference_server.JSInferenceServer(predict)
+
+# Check if this is running in competition environment
+if os.getenv('KAGGLE_IS_COMPETITION_RERUN'):
+    # If in competition environment, serve predictions in real-time
+    inference_server.serve()
+else:
+    # If running locally, use test data from provided parquet files
+    inference_server.run_local_gateway(
+        (
+            # Path to test data parquet file
+            '/kaggle/input/jane-street-real-time-market-data-forecasting/test.parquet',
+            # Path to lagged features parquet file
+            '/kaggle/input/jane-street-real-time-market-data-forecasting/lags.parquet',
+        )
+    )
+[08:23:02] WARNING: /workspace/src/common/error_msg.cc:58: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.

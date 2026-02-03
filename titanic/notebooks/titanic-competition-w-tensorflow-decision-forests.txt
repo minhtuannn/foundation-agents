@@ -1,0 +1,821 @@
+Titanic competition with TensorFlow Decision Forests
+This notebook will take you through the steps needed to train a baseline Gradient Boosted Trees Model using TensorFlow Decision Forests and creating a submission on the Titanic competition.
+This notebook shows:
+How to do some basic pre-processing. For example, the passenger names will be tokenized, and ticket names will be splitted in parts.
+How to train a Gradient Boosted Trees (GBT) with default parameters
+How to train a GBT with improved default parameters
+How to tune the parameters of a GBTs
+How to train and ensemble many GBTs
+Imports dependencies
+In [1]:
+import numpy as np
+import pandas as pd
+import os
+
+import tensorflow as tf
+import tensorflow_decision_forests as tfdf
+
+print(f"Found TF-DF {tfdf.__version__}")
+Found TF-DF 1.2.0
+Load dataset
+In [2]:
+train_df = pd.read_csv("/kaggle/input/titanic/train.csv")
+serving_df = pd.read_csv("/kaggle/input/titanic/test.csv")
+
+train_df.head(10)
+Out[2]:
+PassengerId Survived Pclass Name Sex Age SibSp Parch Ticket Fare Cabin Embarked
+0 1 0 3 Braund, Mr. Owen Harris male 22.0 1 0 A/5 21171 7.2500 NaN S
+1 2 1 1 Cumings, Mrs. John Bradley (Florence Briggs Th... female 38.0 1 0 PC 17599 71.2833 C85 C
+2 3 1 3 Heikkinen, Miss. Laina female 26.0 0 0 STON/O2. 3101282 7.9250 NaN S
+3 4 1 1 Futrelle, Mrs. Jacques Heath (Lily May Peel) female 35.0 1 0 113803 53.1000 C123 S
+4 5 0 3 Allen, Mr. William Henry male 35.0 0 0 373450 8.0500 NaN S
+5 6 0 3 Moran, Mr. James male NaN 0 0 330877 8.4583 NaN Q
+6 7 0 1 McCarthy, Mr. Timothy J male 54.0 0 0 17463 51.8625 E46 S
+7 8 0 3 Palsson, Master. Gosta Leonard male 2.0 3 1 349909 21.0750 NaN S
+8 9 1 3 Johnson, Mrs. Oscar W (Elisabeth Vilhelmina Berg) female 27.0 0 2 347742 11.1333 NaN S
+9 10 1 2 Nasser, Mrs. Nicholas (Adele Achem) female 14.0 1 0 237736 30.0708 NaN C
+Prepare dataset
+We will apply the following transformations on the dataset.
+Tokenize the names. For example, "Braund, Mr. Owen Harris" will become ["Braund", "Mr.", "Owen", "Harris"].
+Extract any prefix in the ticket. For example ticket "STON/O2. 3101282" will become "STON/O2." and 3101282.
+In [3]:
+def preprocess(df):
+    df = df.copy()
+    
+    def normalize_name(x):
+        return " ".join([v.strip(",()[].\"'") for v in x.split(" ")])
+    
+    def ticket_number(x):
+        return x.split(" ")[-1]
+        
+    def ticket_item(x):
+        items = x.split(" ")
+        if len(items) == 1:
+            return "NONE"
+        return "_".join(items[0:-1])
+    
+    df["Name"] = df["Name"].apply(normalize_name)
+    df["Ticket_number"] = df["Ticket"].apply(ticket_number)
+    df["Ticket_item"] = df["Ticket"].apply(ticket_item)                     
+    return df
+    
+preprocessed_train_df = preprocess(train_df)
+preprocessed_serving_df = preprocess(serving_df)
+
+preprocessed_train_df.head(5)
+Out[3]:
+PassengerId Survived Pclass Name Sex Age SibSp Parch Ticket Fare Cabin Embarked Ticket_number Ticket_item
+0 1 0 3 Braund Mr Owen Harris male 22.0 1 0 A/5 21171 7.2500 NaN S 21171 A/5
+1 2 1 1 Cumings Mrs John Bradley Florence Briggs Thayer female 38.0 1 0 PC 17599 71.2833 C85 C 17599 PC
+2 3 1 3 Heikkinen Miss Laina female 26.0 0 0 STON/O2. 3101282 7.9250 NaN S 3101282 STON/O2.
+3 4 1 1 Futrelle Mrs Jacques Heath Lily May Peel female 35.0 1 0 113803 53.1000 C123 S 113803 NONE
+4 5 0 3 Allen Mr William Henry male 35.0 0 0 373450 8.0500 NaN S 373450 NONE
+Let's keep the list of the input features of the model. Notably, we don't want to train our model on the "PassengerId" and "Ticket" features.
+In [4]:
+input_features = list(preprocessed_train_df.columns)
+input_features.remove("Ticket")
+input_features.remove("PassengerId")
+input_features.remove("Survived")
+#input_features.remove("Ticket_number")
+
+print(f"Input features: {input_features}")
+Input features: ['Pclass', 'Name', 'Sex', 'Age', 'SibSp', 'Parch', 'Fare', 'Cabin', 'Embarked', 'Ticket_number', 'Ticket_item']
+Convert Pandas dataset to TensorFlow Dataset
+In [5]:
+def tokenize_names(features, labels=None):
+    """Divite the names into tokens. TF-DF can consume text tokens natively."""
+    features["Name"] =  tf.strings.split(features["Name"])
+    return features, labels
+
+train_ds = tfdf.keras.pd_dataframe_to_tf_dataset(preprocessed_train_df,label="Survived").map(tokenize_names)
+serving_ds = tfdf.keras.pd_dataframe_to_tf_dataset(preprocessed_serving_df).map(tokenize_names)
+Train model with default parameters
+Train model
+First, we are training a GradientBoostedTreesModel model with the default parameters.
+In [6]:
+model = tfdf.keras.GradientBoostedTreesModel(
+    verbose=0, # Very few logs
+    features=[tfdf.keras.FeatureUsage(name=n) for n in input_features],
+    exclude_non_specified_features=True, # Only use the features in "features"
+    random_seed=1234,
+)
+model.fit(train_ds)
+
+self_evaluation = model.make_inspector().evaluation()
+print(f"Accuracy: {self_evaluation.accuracy} Loss:{self_evaluation.loss}")
+[INFO 2023-05-18T10:31:05.469776904+00:00 kernel.cc:1214] Loading model from path /tmp/tmpxl2c60xw/model/ with prefix f38ff16f536e4497
+[INFO 2023-05-18T10:31:05.47954519+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:31:05.479865457+00:00 kernel.cc:1046] Use fast generic engine
+WARNING: AutoGraph could not transform <function simple_ml_inference_op_with_handle at 0x78705a4f94d0> and will run it as-is.
+Please report this to the TensorFlow team. When filing the bug, set the verbosity to 10 (on Linux, `export AUTOGRAPH_VERBOSITY=10`) and attach the full output.
+Cause: could not get source code
+To silence this warning, decorate the function with @tf.autograph.experimental.do_not_convert
+Accuracy: 0.8260869383811951 Loss:0.8608942627906799
+Train model with improved default parameters
+Now you'll use some specific parameters when creating the GBT model
+In [7]:
+model = tfdf.keras.GradientBoostedTreesModel(
+    verbose=0, # Very few logs
+    features=[tfdf.keras.FeatureUsage(name=n) for n in input_features],
+    exclude_non_specified_features=True, # Only use the features in "features"
+    
+    #num_trees=2000,
+    
+    # Only for GBT.
+    # A bit slower, but great to understand the model.
+    # compute_permutation_variable_importance=True,
+    
+    # Change the default hyper-parameters
+    # hyperparameter_template="benchmark_rank1@v1",
+    
+    #num_trees=1000,
+    #tuner=tuner
+    
+    min_examples=1,
+    categorical_algorithm="RANDOM",
+    #max_depth=4,
+    shrinkage=0.05,
+    #num_candidate_attributes_ratio=0.2,
+    split_axis="SPARSE_OBLIQUE",
+    sparse_oblique_normalization="MIN_MAX",
+    sparse_oblique_num_projections_exponent=2.0,
+    num_trees=2000,
+    #validation_ratio=0.0,
+    random_seed=1234,
+    
+)
+model.fit(train_ds)
+
+self_evaluation = model.make_inspector().evaluation()
+print(f"Accuracy: {self_evaluation.accuracy} Loss:{self_evaluation.loss}")
+[INFO 2023-05-18T10:31:10.217810247+00:00 kernel.cc:1214] Loading model from path /tmp/tmp73d7qv4h/model/ with prefix ce08288098554ec5
+[INFO 2023-05-18T10:31:10.227982178+00:00 decision_forest.cc:661] Model loaded with 33 root(s), 1823 node(s), and 10 input feature(s).
+[INFO 2023-05-18T10:31:10.228265252+00:00 kernel.cc:1046] Use fast generic engine
+Accuracy: 0.760869562625885 Loss:1.0154211521148682
+Let's look at the model and you can also notice the information about variable importance that the model figured out
+In [8]:
+model.summary()
+Model: "gradient_boosted_trees_model_1"
+_________________________________________________________________
+ Layer (type)                Output Shape              Param #   
+=================================================================
+=================================================================
+Total params: 1
+Trainable params: 0
+Non-trainable params: 1
+_________________________________________________________________
+Type: "GRADIENT_BOOSTED_TREES"
+Task: CLASSIFICATION
+Label: "__LABEL"
+
+Input Features (11):
+ Age
+ Cabin
+ Embarked
+ Fare
+ Name
+ Parch
+ Pclass
+ Sex
+ SibSp
+ Ticket_item
+ Ticket_number
+
+No weights
+
+Variable Importance: INV_MEAN_MIN_DEPTH:
+    1.           "Sex"  0.576632 ################
+    2.           "Age"  0.364297 #######
+    3.          "Fare"  0.278839 ####
+    4.          "Name"  0.208548 #
+    5. "Ticket_number"  0.180792 
+    6.        "Pclass"  0.176962 
+    7.         "Parch"  0.176659 
+    8.   "Ticket_item"  0.175540 
+    9.      "Embarked"  0.172339 
+   10.         "SibSp"  0.170442 
+
+Variable Importance: NUM_AS_ROOT:
+    1.  "Sex" 28.000000 ################
+    2. "Name"  5.000000 
+
+Variable Importance: NUM_NODES:
+    1.           "Age" 406.000000 ################
+    2.          "Fare" 290.000000 ###########
+    3.          "Name" 44.000000 #
+    4.   "Ticket_item" 42.000000 #
+    5.           "Sex" 31.000000 #
+    6.         "Parch" 28.000000 
+    7. "Ticket_number" 22.000000 
+    8.        "Pclass" 15.000000 
+    9.      "Embarked" 12.000000 
+   10.         "SibSp"  5.000000 
+
+Variable Importance: SUM_SCORE:
+    1.           "Sex" 460.497828 ################
+    2.           "Age" 355.963333 ############
+    3.          "Fare" 292.870316 ##########
+    4.          "Name" 108.548952 ###
+    5.        "Pclass" 28.132254 
+    6.   "Ticket_item" 23.818676 
+    7. "Ticket_number" 23.772288 
+    8.         "Parch" 19.303155 
+    9.      "Embarked"  8.155722 
+   10.         "SibSp"  0.015225 
+
+
+
+Loss: BINOMIAL_LOG_LIKELIHOOD
+Validation loss value: 1.01542
+Number of trees per iteration: 1
+Node format: NOT_SET
+Number of trees: 33
+Total number of nodes: 1823
+
+Number of nodes by tree:
+Count: 33 Average: 55.2424 StdDev: 5.13473
+Min: 39 Max: 63 Ignored: 0
+----------------------------------------------
+[ 39, 40) 1   3.03%   3.03% #
+[ 40, 41) 0   0.00%   3.03%
+[ 41, 42) 0   0.00%   3.03%
+[ 42, 44) 0   0.00%   3.03%
+[ 44, 45) 0   0.00%   3.03%
+[ 45, 46) 0   0.00%   3.03%
+[ 46, 47) 0   0.00%   3.03%
+[ 47, 49) 2   6.06%   9.09% ###
+[ 49, 50) 2   6.06%  15.15% ###
+[ 50, 51) 0   0.00%  15.15%
+[ 51, 52) 2   6.06%  21.21% ###
+[ 52, 54) 5  15.15%  36.36% #######
+[ 54, 55) 0   0.00%  36.36%
+[ 55, 56) 5  15.15%  51.52% #######
+[ 56, 57) 0   0.00%  51.52%
+[ 57, 59) 4  12.12%  63.64% ######
+[ 59, 60) 7  21.21%  84.85% ##########
+[ 60, 61) 0   0.00%  84.85%
+[ 61, 62) 3   9.09%  93.94% ####
+[ 62, 63] 2   6.06% 100.00% ###
+
+Depth by leafs:
+Count: 928 Average: 4.8847 StdDev: 0.380934
+Min: 2 Max: 5 Ignored: 0
+----------------------------------------------
+[ 2, 3)   1   0.11%   0.11%
+[ 3, 4)  17   1.83%   1.94%
+[ 4, 5)  70   7.54%   9.48% #
+[ 5, 5] 840  90.52% 100.00% ##########
+
+Number of training obs by leaf:
+Count: 928 Average: 28.4127 StdDev: 70.8313
+Min: 1 Max: 438 Ignored: 0
+----------------------------------------------
+[   1,  22) 731  78.77%  78.77% ##########
+[  22,  44)  74   7.97%  86.75% #
+[  44,  66)  37   3.99%  90.73% #
+[  66,  88)   3   0.32%  91.06%
+[  88, 110)   9   0.97%  92.03%
+[ 110, 132)   8   0.86%  92.89%
+[ 132, 154)  18   1.94%  94.83%
+[ 154, 176)   8   0.86%  95.69%
+[ 176, 198)   6   0.65%  96.34%
+[ 198, 220)   2   0.22%  96.55%
+[ 220, 241)   2   0.22%  96.77%
+[ 241, 263)   1   0.11%  96.88%
+[ 263, 285)   2   0.22%  97.09%
+[ 285, 307)   5   0.54%  97.63%
+[ 307, 329)   1   0.11%  97.74%
+[ 329, 351)   2   0.22%  97.95%
+[ 351, 373)   6   0.65%  98.60%
+[ 373, 395)   6   0.65%  99.25%
+[ 395, 417)   2   0.22%  99.46%
+[ 417, 438]   5   0.54% 100.00%
+
+Attribute in nodes:
+ 406 : Age [NUMERICAL]
+ 290 : Fare [NUMERICAL]
+ 44 : Name [CATEGORICAL_SET]
+ 42 : Ticket_item [CATEGORICAL]
+ 31 : Sex [CATEGORICAL]
+ 28 : Parch [NUMERICAL]
+ 22 : Ticket_number [CATEGORICAL]
+ 15 : Pclass [NUMERICAL]
+ 12 : Embarked [CATEGORICAL]
+ 5 : SibSp [NUMERICAL]
+
+Attribute in nodes with depth <= 0:
+ 28 : Sex [CATEGORICAL]
+ 5 : Name [CATEGORICAL_SET]
+
+Attribute in nodes with depth <= 1:
+ 39 : Age [NUMERICAL]
+ 28 : Sex [CATEGORICAL]
+ 21 : Fare [NUMERICAL]
+ 5 : Name [CATEGORICAL_SET]
+ 3 : Pclass [NUMERICAL]
+ 2 : Ticket_number [CATEGORICAL]
+ 1 : Parch [NUMERICAL]
+
+Attribute in nodes with depth <= 2:
+ 102 : Age [NUMERICAL]
+ 65 : Fare [NUMERICAL]
+ 28 : Sex [CATEGORICAL]
+ 15 : Name [CATEGORICAL_SET]
+ 7 : Ticket_number [CATEGORICAL]
+ 5 : Pclass [NUMERICAL]
+ 4 : Parch [NUMERICAL]
+ 2 : Ticket_item [CATEGORICAL]
+ 2 : Embarked [CATEGORICAL]
+
+Attribute in nodes with depth <= 3:
+ 206 : Age [NUMERICAL]
+ 156 : Fare [NUMERICAL]
+ 33 : Name [CATEGORICAL_SET]
+ 29 : Sex [CATEGORICAL]
+ 19 : Ticket_number [CATEGORICAL]
+ 11 : Ticket_item [CATEGORICAL]
+ 11 : Parch [NUMERICAL]
+ 7 : Pclass [NUMERICAL]
+ 3 : Embarked [CATEGORICAL]
+
+Attribute in nodes with depth <= 5:
+ 406 : Age [NUMERICAL]
+ 290 : Fare [NUMERICAL]
+ 44 : Name [CATEGORICAL_SET]
+ 42 : Ticket_item [CATEGORICAL]
+ 31 : Sex [CATEGORICAL]
+ 28 : Parch [NUMERICAL]
+ 22 : Ticket_number [CATEGORICAL]
+ 15 : Pclass [NUMERICAL]
+ 12 : Embarked [CATEGORICAL]
+ 5 : SibSp [NUMERICAL]
+
+Condition type in nodes:
+ 744 : ObliqueCondition
+ 122 : ContainsBitmapCondition
+ 29 : ContainsCondition
+Condition type in nodes with depth <= 0:
+ 31 : ContainsBitmapCondition
+ 2 : ContainsCondition
+Condition type in nodes with depth <= 1:
+ 64 : ObliqueCondition
+ 33 : ContainsBitmapCondition
+ 2 : ContainsCondition
+Condition type in nodes with depth <= 2:
+ 176 : ObliqueCondition
+ 51 : ContainsBitmapCondition
+ 3 : ContainsCondition
+Condition type in nodes with depth <= 3:
+ 380 : ObliqueCondition
+ 77 : ContainsBitmapCondition
+ 18 : ContainsCondition
+Condition type in nodes with depth <= 5:
+ 744 : ObliqueCondition
+ 122 : ContainsBitmapCondition
+ 29 : ContainsCondition
+
+Training logs:
+Number of iteration to final model: 33
+ Iter:1 train-loss:1.266350 valid-loss:1.360049  train-accuracy:0.624531 valid-accuracy:0.543478
+ Iter:2 train-loss:1.213702 valid-loss:1.321897  train-accuracy:0.624531 valid-accuracy:0.543478
+ Iter:3 train-loss:1.165783 valid-loss:1.286817  train-accuracy:0.624531 valid-accuracy:0.543478
+ Iter:4 train-loss:1.122469 valid-loss:1.256133  train-accuracy:0.624531 valid-accuracy:0.543478
+ Iter:5 train-loss:1.081461 valid-loss:1.229342  train-accuracy:0.808511 valid-accuracy:0.771739
+ Iter:6 train-loss:1.045305 valid-loss:1.204601  train-accuracy:0.826033 valid-accuracy:0.728261
+ Iter:16 train-loss:0.794952 valid-loss:1.058568  train-accuracy:0.914894 valid-accuracy:0.771739
+ Iter:26 train-loss:0.646146 valid-loss:1.021539  train-accuracy:0.926158 valid-accuracy:0.793478
+ Iter:36 train-loss:0.558627 valid-loss:1.023663  train-accuracy:0.929912 valid-accuracy:0.771739
+ Iter:46 train-loss:0.493899 valid-loss:1.025164  train-accuracy:0.931164 valid-accuracy:0.760870
+ Iter:56 train-loss:0.451528 valid-loss:1.032880  train-accuracy:0.938673 valid-accuracy:0.771739
+Make predictions
+In [9]:
+def prediction_to_kaggle_format(model, threshold=0.5):
+    proba_survive = model.predict(serving_ds, verbose=0)[:,0]
+    return pd.DataFrame({
+        "PassengerId": serving_df["PassengerId"],
+        "Survived": (proba_survive >= threshold).astype(int)
+    })
+
+def make_submission(kaggle_predictions):
+    path="/kaggle/working/submission.csv"
+    kaggle_predictions.to_csv(path, index=False)
+    print(f"Submission exported to {path}")
+    
+kaggle_predictions = prediction_to_kaggle_format(model)
+make_submission(kaggle_predictions)
+!head /kaggle/working/submission.csv
+Submission exported to /kaggle/working/submission.csv
+PassengerId,Survived
+892,0
+893,0
+894,0
+895,0
+896,0
+897,0
+898,0
+899,0
+900,1
+Training a model with hyperparameter tunning
+Hyper-parameter tuning is enabled by specifying the tuner constructor argument of the model. The tuner object contains all the configuration of the tuner (search space, optimizer, trial and objective).
+In [10]:
+tuner = tfdf.tuner.RandomSearch(num_trials=1000)
+tuner.choice("min_examples", [2, 5, 7, 10])
+tuner.choice("categorical_algorithm", ["CART", "RANDOM"])
+
+local_search_space = tuner.choice("growing_strategy", ["LOCAL"])
+local_search_space.choice("max_depth", [3, 4, 5, 6, 8])
+
+global_search_space = tuner.choice("growing_strategy", ["BEST_FIRST_GLOBAL"], merge=True)
+global_search_space.choice("max_num_nodes", [16, 32, 64, 128, 256])
+
+#tuner.choice("use_hessian_gain", [True, False])
+tuner.choice("shrinkage", [0.02, 0.05, 0.10, 0.15])
+tuner.choice("num_candidate_attributes_ratio", [0.2, 0.5, 0.9, 1.0])
+
+
+tuner.choice("split_axis", ["AXIS_ALIGNED"])
+oblique_space = tuner.choice("split_axis", ["SPARSE_OBLIQUE"], merge=True)
+oblique_space.choice("sparse_oblique_normalization",
+                     ["NONE", "STANDARD_DEVIATION", "MIN_MAX"])
+oblique_space.choice("sparse_oblique_weights", ["BINARY", "CONTINUOUS"])
+oblique_space.choice("sparse_oblique_num_projections_exponent", [1.0, 1.5])
+
+# Tune the model. Notice the `tuner=tuner`.
+tuned_model = tfdf.keras.GradientBoostedTreesModel(tuner=tuner)
+tuned_model.fit(train_ds, verbose=0)
+
+tuned_self_evaluation = tuned_model.make_inspector().evaluation()
+print(f"Accuracy: {tuned_self_evaluation.accuracy} Loss:{tuned_self_evaluation.loss}")
+Use /tmp/tmpf3gqf8yh as temporary training directory
+[INFO 2023-05-18T10:33:20.758894639+00:00 kernel.cc:1214] Loading model from path /tmp/tmpf3gqf8yh/model/ with prefix 1800e47d98cd4401
+[INFO 2023-05-18T10:33:20.773899277+00:00 decision_forest.cc:661] Model loaded with 19 root(s), 589 node(s), and 12 input feature(s).
+[INFO 2023-05-18T10:33:20.773949099+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesGeneric" built
+[INFO 2023-05-18T10:33:20.773977709+00:00 kernel.cc:1046] Use fast generic engine
+Accuracy: 0.9178082346916199 Loss:0.6503586769104004
+In the last line in the cell above, you can see the accuracy is higher than previously with default parameters and parameters set by hand.
+This is the main idea behing hyperparameter tuning.
+For more information you can follow this tutorial: Automated hyper-parameter tuning
+Making an ensemble
+Here you'll create 100 models with different seeds and combine their results
+This approach removes a little bit the random aspects related to creating ML models
+In the GBT creation is used the honest parameter. It will use different training examples to infer the structure and the leaf values. This regularization technique trades examples for bias estimates.
+In [11]:
+predictions = None
+num_predictions = 0
+
+for i in range(100):
+    print(f"i:{i}")
+    # Possible models: GradientBoostedTreesModel or RandomForestModel
+    model = tfdf.keras.GradientBoostedTreesModel(
+        verbose=0, # Very few logs
+        features=[tfdf.keras.FeatureUsage(name=n) for n in input_features],
+        exclude_non_specified_features=True, # Only use the features in "features"
+
+        #min_examples=1,
+        #categorical_algorithm="RANDOM",
+        ##max_depth=4,
+        #shrinkage=0.05,
+        ##num_candidate_attributes_ratio=0.2,
+        #split_axis="SPARSE_OBLIQUE",
+        #sparse_oblique_normalization="MIN_MAX",
+        #sparse_oblique_num_projections_exponent=2.0,
+        #num_trees=2000,
+        ##validation_ratio=0.0,
+        random_seed=i,
+        honest=True,
+    )
+    model.fit(train_ds)
+    
+    sub_predictions = model.predict(serving_ds, verbose=0)[:,0]
+    if predictions is None:
+        predictions = sub_predictions
+    else:
+        predictions += sub_predictions
+    num_predictions += 1
+
+predictions/=num_predictions
+
+kaggle_predictions = pd.DataFrame({
+        "PassengerId": serving_df["PassengerId"],
+        "Survived": (predictions >= 0.5).astype(int)
+    })
+
+make_submission(kaggle_predictions)
+i:0
+[INFO 2023-05-18T10:33:21.948337712+00:00 kernel.cc:1214] Loading model from path /tmp/tmplm3k4_lm/model/ with prefix c4f440bf7ff942e4
+[INFO 2023-05-18T10:33:21.953190127+00:00 kernel.cc:1046] Use fast generic engine
+i:1
+[INFO 2023-05-18T10:33:24.230007891+00:00 kernel.cc:1214] Loading model from path /tmp/tmpl3j28v1o/model/ with prefix ea268a84a741444b
+[INFO 2023-05-18T10:33:24.251794826+00:00 kernel.cc:1046] Use fast generic engine
+i:2
+[INFO 2023-05-18T10:33:25.498207811+00:00 kernel.cc:1214] Loading model from path /tmp/tmpmj97qbr5/model/ with prefix f2f7410f63bd409a
+[INFO 2023-05-18T10:33:25.503194641+00:00 kernel.cc:1046] Use fast generic engine
+i:3
+[INFO 2023-05-18T10:33:27.910626163+00:00 kernel.cc:1214] Loading model from path /tmp/tmpwsp1w2ml/model/ with prefix f928c3cbda334e6d
+[INFO 2023-05-18T10:33:27.938088033+00:00 kernel.cc:1046] Use fast generic engine
+i:4
+[INFO 2023-05-18T10:33:30.339966478+00:00 kernel.cc:1214] Loading model from path /tmp/tmp4dqqgbtz/model/ with prefix a9e2b4aa2bd14f15
+[INFO 2023-05-18T10:33:30.346317062+00:00 kernel.cc:1046] Use fast generic engine
+i:5
+[INFO 2023-05-18T10:33:31.453628429+00:00 kernel.cc:1214] Loading model from path /tmp/tmpgvxkiu9m/model/ with prefix f5a20793ca43486e
+[INFO 2023-05-18T10:33:31.457181214+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:33:31.457242742+00:00 kernel.cc:1046] Use fast generic engine
+i:6
+[INFO 2023-05-18T10:33:32.699337745+00:00 kernel.cc:1214] Loading model from path /tmp/tmposloraoe/model/ with prefix 7641e344b3e84731
+[INFO 2023-05-18T10:33:32.707394885+00:00 kernel.cc:1046] Use fast generic engine
+i:7
+[INFO 2023-05-18T10:33:34.855967893+00:00 kernel.cc:1214] Loading model from path /tmp/tmp37s3iidq/model/ with prefix f9acd15508a4477c
+[INFO 2023-05-18T10:33:34.876978248+00:00 kernel.cc:1046] Use fast generic engine
+i:8
+[INFO 2023-05-18T10:33:36.133979214+00:00 kernel.cc:1214] Loading model from path /tmp/tmp2w1jbf7w/model/ with prefix a73d32791aad4620
+[INFO 2023-05-18T10:33:36.144570159+00:00 kernel.cc:1046] Use fast generic engine
+i:9
+[INFO 2023-05-18T10:33:38.078212415+00:00 kernel.cc:1214] Loading model from path /tmp/tmpf8h2tme_/model/ with prefix c32733675faa4571
+[INFO 2023-05-18T10:33:38.095937299+00:00 kernel.cc:1046] Use fast generic engine
+i:10
+[INFO 2023-05-18T10:33:39.294404897+00:00 kernel.cc:1214] Loading model from path /tmp/tmp_34hnzg2/model/ with prefix d86f7947a9924e08
+[INFO 2023-05-18T10:33:39.300675439+00:00 kernel.cc:1046] Use fast generic engine
+i:11
+[INFO 2023-05-18T10:33:40.710356612+00:00 kernel.cc:1214] Loading model from path /tmp/tmpqqhxvzqa/model/ with prefix f4fa80b88812483e
+[INFO 2023-05-18T10:33:40.725593448+00:00 kernel.cc:1046] Use fast generic engine
+i:12
+[INFO 2023-05-18T10:33:41.872693359+00:00 kernel.cc:1214] Loading model from path /tmp/tmpgio8_emb/model/ with prefix 584bc3336ff148d4
+[INFO 2023-05-18T10:33:41.878926188+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:33:41.878973373+00:00 kernel.cc:1046] Use fast generic engine
+i:13
+[INFO 2023-05-18T10:33:43.133436956+00:00 kernel.cc:1214] Loading model from path /tmp/tmp_fe2ypgw/model/ with prefix 665f04dc50494529
+[INFO 2023-05-18T10:33:43.144992798+00:00 kernel.cc:1046] Use fast generic engine
+i:14
+[INFO 2023-05-18T10:33:44.307986506+00:00 kernel.cc:1214] Loading model from path /tmp/tmpr81v89fc/model/ with prefix 18d7d2a243594cee
+[INFO 2023-05-18T10:33:44.314551544+00:00 kernel.cc:1046] Use fast generic engine
+i:15
+[INFO 2023-05-18T10:33:46.142297492+00:00 kernel.cc:1214] Loading model from path /tmp/tmpbgs_2ci0/model/ with prefix 4e729daf7fa14285
+[INFO 2023-05-18T10:33:46.150843277+00:00 kernel.cc:1046] Use fast generic engine
+i:16
+[INFO 2023-05-18T10:33:48.039337316+00:00 kernel.cc:1214] Loading model from path /tmp/tmpr5v82plm/model/ with prefix 7f12fa3d909d4f27
+[INFO 2023-05-18T10:33:48.053265884+00:00 kernel.cc:1046] Use fast generic engine
+i:17
+[INFO 2023-05-18T10:33:49.877689502+00:00 kernel.cc:1214] Loading model from path /tmp/tmpu84ev3x9/model/ with prefix 17e265ef795c476a
+[INFO 2023-05-18T10:33:49.891505639+00:00 kernel.cc:1046] Use fast generic engine
+i:18
+[INFO 2023-05-18T10:33:51.279061786+00:00 kernel.cc:1214] Loading model from path /tmp/tmp_kn7vjpk/model/ with prefix de89cda1f7cb457a
+[INFO 2023-05-18T10:33:51.296866304+00:00 kernel.cc:1046] Use fast generic engine
+i:19
+[INFO 2023-05-18T10:33:52.884210845+00:00 kernel.cc:1214] Loading model from path /tmp/tmpiqbe9z0k/model/ with prefix 3ffde27267724071
+[INFO 2023-05-18T10:33:52.903292797+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:33:52.903359977+00:00 kernel.cc:1046] Use fast generic engine
+i:20
+[INFO 2023-05-18T10:33:54.339331903+00:00 kernel.cc:1214] Loading model from path /tmp/tmpp23celh4/model/ with prefix 10648c743627411c
+[INFO 2023-05-18T10:33:54.355176879+00:00 kernel.cc:1046] Use fast generic engine
+i:21
+[INFO 2023-05-18T10:33:55.579964463+00:00 kernel.cc:1214] Loading model from path /tmp/tmph_zw36wd/model/ with prefix a2bb80559c7e4821
+[INFO 2023-05-18T10:33:55.586214432+00:00 kernel.cc:1046] Use fast generic engine
+i:22
+[INFO 2023-05-18T10:33:56.754886233+00:00 kernel.cc:1214] Loading model from path /tmp/tmplw1k53vh/model/ with prefix f8c87a097abd4766
+[INFO 2023-05-18T10:33:56.762601065+00:00 kernel.cc:1046] Use fast generic engine
+i:23
+[INFO 2023-05-18T10:33:58.077570163+00:00 kernel.cc:1214] Loading model from path /tmp/tmpqth9jo1v/model/ with prefix d44f89acfd884036
+[INFO 2023-05-18T10:33:58.086871098+00:00 kernel.cc:1046] Use fast generic engine
+i:24
+[INFO 2023-05-18T10:33:59.75683034+00:00 kernel.cc:1214] Loading model from path /tmp/tmp_320ckz8/model/ with prefix ca6c614f297c4190
+[INFO 2023-05-18T10:33:59.762867776+00:00 kernel.cc:1046] Use fast generic engine
+i:25
+[INFO 2023-05-18T10:34:01.111614827+00:00 kernel.cc:1214] Loading model from path /tmp/tmplr1dgz7t/model/ with prefix 5f58ccbc2f714cef
+[INFO 2023-05-18T10:34:01.124043889+00:00 kernel.cc:1046] Use fast generic engine
+i:26
+[INFO 2023-05-18T10:34:02.403875094+00:00 kernel.cc:1214] Loading model from path /tmp/tmptmc420hg/model/ with prefix f15c70a4abd142ed
+[INFO 2023-05-18T10:34:02.414477226+00:00 kernel.cc:1046] Use fast generic engine
+i:27
+[INFO 2023-05-18T10:34:03.632885117+00:00 kernel.cc:1214] Loading model from path /tmp/tmp9bnj_rhe/model/ with prefix 09cf9e80b54e4f01
+[INFO 2023-05-18T10:34:03.639922594+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:34:03.639985667+00:00 kernel.cc:1046] Use fast generic engine
+i:28
+[INFO 2023-05-18T10:34:04.80093394+00:00 kernel.cc:1214] Loading model from path /tmp/tmpdy4ty8e7/model/ with prefix 12ecce69a3094482
+[INFO 2023-05-18T10:34:04.806562217+00:00 kernel.cc:1046] Use fast generic engine
+i:29
+[INFO 2023-05-18T10:34:06.176649164+00:00 kernel.cc:1214] Loading model from path /tmp/tmp4s_urrdz/model/ with prefix 7c52615e6dbe49b6
+[INFO 2023-05-18T10:34:06.190106917+00:00 kernel.cc:1046] Use fast generic engine
+i:30
+[INFO 2023-05-18T10:34:08.042952706+00:00 kernel.cc:1214] Loading model from path /tmp/tmpa5ffc53i/model/ with prefix 778954274b29412a
+[INFO 2023-05-18T10:34:08.071412376+00:00 kernel.cc:1046] Use fast generic engine
+i:31
+[INFO 2023-05-18T10:34:10.130544806+00:00 kernel.cc:1214] Loading model from path /tmp/tmpe531jwwn/model/ with prefix f480e9ddd2034b6f
+[INFO 2023-05-18T10:34:10.143340258+00:00 kernel.cc:1046] Use fast generic engine
+i:32
+[INFO 2023-05-18T10:34:11.8704522+00:00 kernel.cc:1214] Loading model from path /tmp/tmpvh3w4qn3/model/ with prefix 530fadef1eda4a78
+[INFO 2023-05-18T10:34:11.877131677+00:00 kernel.cc:1046] Use fast generic engine
+i:33
+[INFO 2023-05-18T10:34:13.261046572+00:00 kernel.cc:1214] Loading model from path /tmp/tmp6cmvc2ni/model/ with prefix 9983903467604992
+[INFO 2023-05-18T10:34:13.275374265+00:00 kernel.cc:1046] Use fast generic engine
+i:34
+[INFO 2023-05-18T10:34:14.932436357+00:00 kernel.cc:1214] Loading model from path /tmp/tmpuyr6xbug/model/ with prefix e8d30d97cfdc438f
+[INFO 2023-05-18T10:34:14.941772566+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:34:14.941821998+00:00 kernel.cc:1046] Use fast generic engine
+i:35
+[INFO 2023-05-18T10:34:16.239869578+00:00 kernel.cc:1214] Loading model from path /tmp/tmpbupnml9z/model/ with prefix d49e70e1dc4643a5
+[INFO 2023-05-18T10:34:16.248321871+00:00 kernel.cc:1046] Use fast generic engine
+i:36
+[INFO 2023-05-18T10:34:17.790593631+00:00 kernel.cc:1214] Loading model from path /tmp/tmpm9_7mg97/model/ with prefix 7c5d4bb088834cdf
+[INFO 2023-05-18T10:34:17.806502874+00:00 kernel.cc:1046] Use fast generic engine
+i:37
+[INFO 2023-05-18T10:34:19.119001097+00:00 kernel.cc:1214] Loading model from path /tmp/tmpprk9ne1p/model/ with prefix 92577de9c74c4e30
+[INFO 2023-05-18T10:34:19.128851908+00:00 kernel.cc:1046] Use fast generic engine
+i:38
+[INFO 2023-05-18T10:34:20.718640589+00:00 kernel.cc:1214] Loading model from path /tmp/tmpxnx03asy/model/ with prefix c06e0e0c2b3143d6
+[INFO 2023-05-18T10:34:20.733772661+00:00 kernel.cc:1046] Use fast generic engine
+i:39
+[INFO 2023-05-18T10:34:22.276000518+00:00 kernel.cc:1214] Loading model from path /tmp/tmpl1bcgsyt/model/ with prefix 3f8161548998456a
+[INFO 2023-05-18T10:34:22.290102378+00:00 kernel.cc:1046] Use fast generic engine
+i:40
+[INFO 2023-05-18T10:34:23.677801876+00:00 kernel.cc:1214] Loading model from path /tmp/tmp8etd50zo/model/ with prefix c19b3262a9cf4a82
+[INFO 2023-05-18T10:34:23.682914204+00:00 kernel.cc:1046] Use fast generic engine
+i:41
+[INFO 2023-05-18T10:34:25.260553537+00:00 kernel.cc:1214] Loading model from path /tmp/tmp6ctspflq/model/ with prefix 895d3dc68ff041a3
+[INFO 2023-05-18T10:34:25.277071839+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:34:25.277123526+00:00 kernel.cc:1046] Use fast generic engine
+i:42
+[INFO 2023-05-18T10:34:26.667122397+00:00 kernel.cc:1214] Loading model from path /tmp/tmpegzgyttm/model/ with prefix e8c589e4d6f54675
+[INFO 2023-05-18T10:34:26.678052894+00:00 kernel.cc:1046] Use fast generic engine
+i:43
+[INFO 2023-05-18T10:34:28.384453398+00:00 kernel.cc:1214] Loading model from path /tmp/tmpp2efe_ge/model/ with prefix a2a2af2a909f43bf
+[INFO 2023-05-18T10:34:28.404482053+00:00 kernel.cc:1046] Use fast generic engine
+i:44
+[INFO 2023-05-18T10:34:29.824741245+00:00 kernel.cc:1214] Loading model from path /tmp/tmpjiiwvuj6/model/ with prefix 14c443fb8e0e4b16
+[INFO 2023-05-18T10:34:29.835718149+00:00 kernel.cc:1046] Use fast generic engine
+i:45
+[INFO 2023-05-18T10:34:31.403557622+00:00 kernel.cc:1214] Loading model from path /tmp/tmpw7t4qv67/model/ with prefix 058a3c9f358a4441
+[INFO 2023-05-18T10:34:31.407348428+00:00 kernel.cc:1046] Use fast generic engine
+i:46
+[INFO 2023-05-18T10:34:33.016721727+00:00 kernel.cc:1214] Loading model from path /tmp/tmpf33zt1_8/model/ with prefix 13f35c50f63e4523
+[INFO 2023-05-18T10:34:33.032482566+00:00 kernel.cc:1046] Use fast generic engine
+i:47
+[INFO 2023-05-18T10:34:34.642400708+00:00 kernel.cc:1214] Loading model from path /tmp/tmp__v6r89g/model/ with prefix e9d642544b0e4c04
+[INFO 2023-05-18T10:34:34.657600654+00:00 kernel.cc:1046] Use fast generic engine
+i:48
+[INFO 2023-05-18T10:34:35.866337496+00:00 kernel.cc:1214] Loading model from path /tmp/tmp7buinln0/model/ with prefix e761528f031f4a7e
+[INFO 2023-05-18T10:34:35.871274531+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:34:35.871344651+00:00 kernel.cc:1046] Use fast generic engine
+i:49
+[INFO 2023-05-18T10:34:37.106491025+00:00 kernel.cc:1214] Loading model from path /tmp/tmp866z5gwf/model/ with prefix ed6acb5d8332445f
+[INFO 2023-05-18T10:34:37.114994662+00:00 kernel.cc:1046] Use fast generic engine
+i:50
+[INFO 2023-05-18T10:34:38.544557797+00:00 kernel.cc:1214] Loading model from path /tmp/tmpnl2o_rwi/model/ with prefix 93b66a53f7d84de9
+[INFO 2023-05-18T10:34:38.558418799+00:00 kernel.cc:1046] Use fast generic engine
+i:51
+[INFO 2023-05-18T10:34:40.585342582+00:00 kernel.cc:1214] Loading model from path /tmp/tmp1duuv71f/model/ with prefix ed7ae4de78b5440b
+[INFO 2023-05-18T10:34:40.603043096+00:00 kernel.cc:1046] Use fast generic engine
+i:52
+[INFO 2023-05-18T10:34:41.986421488+00:00 kernel.cc:1214] Loading model from path /tmp/tmpvw6ii_z9/model/ with prefix f8db08bb01c647d3
+[INFO 2023-05-18T10:34:41.995479515+00:00 kernel.cc:1046] Use fast generic engine
+i:53
+[INFO 2023-05-18T10:34:43.846630571+00:00 kernel.cc:1214] Loading model from path /tmp/tmpny_ukl54/model/ with prefix 1785ce9217aa4994
+[INFO 2023-05-18T10:34:43.855497064+00:00 kernel.cc:1046] Use fast generic engine
+i:54
+[INFO 2023-05-18T10:34:45.151833126+00:00 kernel.cc:1214] Loading model from path /tmp/tmpiya7usve/model/ with prefix bbbdfef726764bd3
+[INFO 2023-05-18T10:34:45.156589442+00:00 kernel.cc:1046] Use fast generic engine
+i:55
+[INFO 2023-05-18T10:34:46.77358209+00:00 kernel.cc:1214] Loading model from path /tmp/tmpbxg0t47u/model/ with prefix a2add2a15a8b4937
+[INFO 2023-05-18T10:34:46.789983186+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:34:46.790036924+00:00 kernel.cc:1046] Use fast generic engine
+i:56
+[INFO 2023-05-18T10:34:49.185730496+00:00 kernel.cc:1214] Loading model from path /tmp/tmpvgsmijpy/model/ with prefix f11c35b624dd4801
+[INFO 2023-05-18T10:34:49.200454508+00:00 kernel.cc:1046] Use fast generic engine
+i:57
+[INFO 2023-05-18T10:34:50.475233069+00:00 kernel.cc:1214] Loading model from path /tmp/tmpj2pqhlzf/model/ with prefix 94a270b459db41f7
+[INFO 2023-05-18T10:34:50.480098021+00:00 kernel.cc:1046] Use fast generic engine
+i:58
+[INFO 2023-05-18T10:34:51.81473943+00:00 kernel.cc:1214] Loading model from path /tmp/tmpc318b_47/model/ with prefix 35a4cc3721344731
+[INFO 2023-05-18T10:34:51.822092629+00:00 kernel.cc:1046] Use fast generic engine
+i:59
+[INFO 2023-05-18T10:34:53.231037101+00:00 kernel.cc:1214] Loading model from path /tmp/tmplj6owa0f/model/ with prefix a8ea31fc3a404c13
+[INFO 2023-05-18T10:34:53.241916395+00:00 kernel.cc:1046] Use fast generic engine
+i:60
+[INFO 2023-05-18T10:34:54.837732274+00:00 kernel.cc:1214] Loading model from path /tmp/tmpc_k5t1ol/model/ with prefix 6637c533b177416a
+[INFO 2023-05-18T10:34:54.84928887+00:00 kernel.cc:1046] Use fast generic engine
+i:61
+[INFO 2023-05-18T10:34:56.502178789+00:00 kernel.cc:1214] Loading model from path /tmp/tmp6p3yzkc6/model/ with prefix 7f3f357e4ecd467b
+[INFO 2023-05-18T10:34:56.507717374+00:00 kernel.cc:1046] Use fast generic engine
+i:62
+[INFO 2023-05-18T10:34:58.562533808+00:00 kernel.cc:1214] Loading model from path /tmp/tmp4qwsdjx5/model/ with prefix 3cf2abcc265d4eaa
+[INFO 2023-05-18T10:34:58.591053862+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:34:58.591128478+00:00 kernel.cc:1046] Use fast generic engine
+i:63
+[INFO 2023-05-18T10:35:01.045013705+00:00 kernel.cc:1214] Loading model from path /tmp/tmpsc1d3fdo/model/ with prefix 331111241efa4eaf
+[INFO 2023-05-18T10:35:01.055002209+00:00 kernel.cc:1046] Use fast generic engine
+i:64
+[INFO 2023-05-18T10:35:02.491436173+00:00 kernel.cc:1214] Loading model from path /tmp/tmpz8_0rh4j/model/ with prefix 782b4b9544664c34
+[INFO 2023-05-18T10:35:02.500648398+00:00 kernel.cc:1046] Use fast generic engine
+i:65
+[INFO 2023-05-18T10:35:03.746983159+00:00 kernel.cc:1214] Loading model from path /tmp/tmpuad51ad_/model/ with prefix 62ad43498a8945ee
+[INFO 2023-05-18T10:35:03.752355273+00:00 kernel.cc:1046] Use fast generic engine
+i:66
+[INFO 2023-05-18T10:35:05.002186741+00:00 kernel.cc:1214] Loading model from path /tmp/tmpmr6hhyib/model/ with prefix e13e4dafafe240a9
+[INFO 2023-05-18T10:35:05.009253052+00:00 kernel.cc:1046] Use fast generic engine
+i:67
+[INFO 2023-05-18T10:35:06.639802377+00:00 kernel.cc:1214] Loading model from path /tmp/tmp48hjyy5y/model/ with prefix b57f917606ba4450
+[INFO 2023-05-18T10:35:06.659970275+00:00 kernel.cc:1046] Use fast generic engine
+i:68
+[INFO 2023-05-18T10:35:08.082001856+00:00 kernel.cc:1214] Loading model from path /tmp/tmpgpkk86q4/model/ with prefix 0585d52463174c5c
+[INFO 2023-05-18T10:35:08.095272974+00:00 kernel.cc:1046] Use fast generic engine
+i:69
+[INFO 2023-05-18T10:35:09.331136571+00:00 kernel.cc:1214] Loading model from path /tmp/tmph_frny4j/model/ with prefix fa5a095fe4904682
+[INFO 2023-05-18T10:35:09.338199435+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:35:09.338254677+00:00 kernel.cc:1046] Use fast generic engine
+i:70
+[INFO 2023-05-18T10:35:10.640887616+00:00 kernel.cc:1214] Loading model from path /tmp/tmp4wjgf2r2/model/ with prefix 80c4c80589414e13
+[INFO 2023-05-18T10:35:10.650636036+00:00 kernel.cc:1046] Use fast generic engine
+i:71
+[INFO 2023-05-18T10:35:12.430099993+00:00 kernel.cc:1214] Loading model from path /tmp/tmptjlatbqq/model/ with prefix 26007776bcc648d7
+[INFO 2023-05-18T10:35:12.438293634+00:00 kernel.cc:1046] Use fast generic engine
+i:72
+[INFO 2023-05-18T10:35:14.019537623+00:00 kernel.cc:1214] Loading model from path /tmp/tmpu4egs0bv/model/ with prefix 4a67d5be0d72468d
+[INFO 2023-05-18T10:35:14.036505305+00:00 kernel.cc:1046] Use fast generic engine
+i:73
+[INFO 2023-05-18T10:35:15.512613873+00:00 kernel.cc:1214] Loading model from path /tmp/tmpfqjqzbub/model/ with prefix aca012bed5e74739
+[INFO 2023-05-18T10:35:15.520282978+00:00 kernel.cc:1046] Use fast generic engine
+i:74
+[INFO 2023-05-18T10:35:16.861640206+00:00 kernel.cc:1214] Loading model from path /tmp/tmpj9r8iw0a/model/ with prefix 74b2a1783b9e46a6
+[INFO 2023-05-18T10:35:16.874599194+00:00 kernel.cc:1046] Use fast generic engine
+i:75
+[INFO 2023-05-18T10:35:18.122098866+00:00 kernel.cc:1214] Loading model from path /tmp/tmpruig1t4u/model/ with prefix d7ab0b72252a4c10
+[INFO 2023-05-18T10:35:18.130775546+00:00 kernel.cc:1046] Use fast generic engine
+i:76
+[INFO 2023-05-18T10:35:19.822243439+00:00 kernel.cc:1214] Loading model from path /tmp/tmpoqsf9fbn/model/ with prefix eb5803ca471a4f5a
+[INFO 2023-05-18T10:35:19.826743805+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:35:19.82681821+00:00 kernel.cc:1046] Use fast generic engine
+i:77
+[INFO 2023-05-18T10:35:20.988911754+00:00 kernel.cc:1214] Loading model from path /tmp/tmpqi5x3v5z/model/ with prefix 92ba1de56c4b4bea
+[INFO 2023-05-18T10:35:20.994464531+00:00 kernel.cc:1046] Use fast generic engine
+i:78
+[INFO 2023-05-18T10:35:22.200580278+00:00 kernel.cc:1214] Loading model from path /tmp/tmpcun3o_n6/model/ with prefix 6b72ab70b8af48d5
+[INFO 2023-05-18T10:35:22.207684575+00:00 kernel.cc:1046] Use fast generic engine
+i:79
+[INFO 2023-05-18T10:35:23.408222+00:00 kernel.cc:1214] Loading model from path /tmp/tmpl172n50i/model/ with prefix aacd198ef20c48ab
+[INFO 2023-05-18T10:35:23.416126968+00:00 kernel.cc:1046] Use fast generic engine
+i:80
+[INFO 2023-05-18T10:35:24.750680123+00:00 kernel.cc:1214] Loading model from path /tmp/tmp65w8y5ov/model/ with prefix 11dca72a6a674b19
+[INFO 2023-05-18T10:35:24.761420982+00:00 kernel.cc:1046] Use fast generic engine
+i:81
+[INFO 2023-05-18T10:35:26.60253295+00:00 kernel.cc:1214] Loading model from path /tmp/tmpk2brm2qt/model/ with prefix ef8df47ffbb94864
+[INFO 2023-05-18T10:35:26.614219574+00:00 kernel.cc:1046] Use fast generic engine
+i:82
+[INFO 2023-05-18T10:35:28.331782151+00:00 kernel.cc:1214] Loading model from path /tmp/tmposmdbjqj/model/ with prefix b5fa31b36b9346c6
+[INFO 2023-05-18T10:35:28.342305552+00:00 kernel.cc:1046] Use fast generic engine
+i:83
+[INFO 2023-05-18T10:35:30.126093361+00:00 kernel.cc:1214] Loading model from path /tmp/tmpjp8omn7j/model/ with prefix 1911d6a9dc5245b5
+[INFO 2023-05-18T10:35:30.135542215+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:35:30.135591968+00:00 kernel.cc:1046] Use fast generic engine
+i:84
+[INFO 2023-05-18T10:35:32.510333746+00:00 kernel.cc:1214] Loading model from path /tmp/tmp1tja5r_e/model/ with prefix aa3f4c78bb394574
+[INFO 2023-05-18T10:35:32.531350922+00:00 kernel.cc:1046] Use fast generic engine
+i:85
+[INFO 2023-05-18T10:35:33.844042681+00:00 kernel.cc:1214] Loading model from path /tmp/tmp0r236t3e/model/ with prefix 19ff9f95ddc2438e
+[INFO 2023-05-18T10:35:33.851596791+00:00 kernel.cc:1046] Use fast generic engine
+i:86
+[INFO 2023-05-18T10:35:35.407022201+00:00 kernel.cc:1214] Loading model from path /tmp/tmpeuc6bj_3/model/ with prefix 6dd65111acdd4630
+[INFO 2023-05-18T10:35:35.424928648+00:00 kernel.cc:1046] Use fast generic engine
+i:87
+[INFO 2023-05-18T10:35:37.040148321+00:00 kernel.cc:1214] Loading model from path /tmp/tmp358yev21/model/ with prefix da78df557f754986
+[INFO 2023-05-18T10:35:37.060583254+00:00 kernel.cc:1046] Use fast generic engine
+i:88
+[INFO 2023-05-18T10:35:38.427411651+00:00 kernel.cc:1214] Loading model from path /tmp/tmpzakqb0xp/model/ with prefix ad35a17e9b86465b
+[INFO 2023-05-18T10:35:38.440438018+00:00 kernel.cc:1046] Use fast generic engine
+i:89
+[INFO 2023-05-18T10:35:39.638133755+00:00 kernel.cc:1214] Loading model from path /tmp/tmpildtvtld/model/ with prefix 0ac7f95660244655
+[INFO 2023-05-18T10:35:39.644023175+00:00 kernel.cc:1046] Use fast generic engine
+i:90
+[INFO 2023-05-18T10:35:41.008617146+00:00 kernel.cc:1214] Loading model from path /tmp/tmpkrivrsps/model/ with prefix 40280f0ab1094407
+[INFO 2023-05-18T10:35:41.019743959+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:35:41.019791788+00:00 kernel.cc:1046] Use fast generic engine
+i:91
+[INFO 2023-05-18T10:35:42.252408477+00:00 kernel.cc:1214] Loading model from path /tmp/tmptqwp8y1g/model/ with prefix b8cf07a7fb3c4ca6
+[INFO 2023-05-18T10:35:42.259792887+00:00 kernel.cc:1046] Use fast generic engine
+i:92
+[INFO 2023-05-18T10:35:43.792889728+00:00 kernel.cc:1214] Loading model from path /tmp/tmpj_4udme_/model/ with prefix d28fe4cbc6944242
+[INFO 2023-05-18T10:35:43.811495786+00:00 kernel.cc:1046] Use fast generic engine
+i:93
+[INFO 2023-05-18T10:35:45.144455819+00:00 kernel.cc:1214] Loading model from path /tmp/tmpgvv3j4l_/model/ with prefix cd5cbe19609841d7
+[INFO 2023-05-18T10:35:45.155137979+00:00 kernel.cc:1046] Use fast generic engine
+i:94
+[INFO 2023-05-18T10:35:46.376542268+00:00 kernel.cc:1214] Loading model from path /tmp/tmpa6bn46wq/model/ with prefix 7453510caac74087
+[INFO 2023-05-18T10:35:46.383601011+00:00 kernel.cc:1046] Use fast generic engine
+i:95
+[INFO 2023-05-18T10:35:47.676212833+00:00 kernel.cc:1214] Loading model from path /tmp/tmp7zbxz1bs/model/ with prefix c927c5dbf31844b1
+[INFO 2023-05-18T10:35:47.685251373+00:00 kernel.cc:1046] Use fast generic engine
+i:96
+[INFO 2023-05-18T10:35:48.987414626+00:00 kernel.cc:1214] Loading model from path /tmp/tmplvx1w0aj/model/ with prefix 73702a762b25465f
+[INFO 2023-05-18T10:35:48.998273203+00:00 kernel.cc:1046] Use fast generic engine
+i:97
+[INFO 2023-05-18T10:35:50.151145813+00:00 kernel.cc:1214] Loading model from path /tmp/tmp_j62smlb/model/ with prefix 2d637fb0572e4544
+[INFO 2023-05-18T10:35:50.156863027+00:00 kernel.cc:1046] Use fast generic engine
+i:98
+[INFO 2023-05-18T10:35:51.415486908+00:00 kernel.cc:1214] Loading model from path /tmp/tmp7aug1mjr/model/ with prefix a825629f8cc849b0
+[INFO 2023-05-18T10:35:51.423800281+00:00 abstract_model.cc:1311] Engine "GradientBoostedTreesQuickScorerExtended" built
+[INFO 2023-05-18T10:35:51.423847083+00:00 kernel.cc:1046] Use fast generic engine
+i:99
+[INFO 2023-05-18T10:35:52.90711379+00:00 kernel.cc:1214] Loading model from path /tmp/tmpf19kt4x7/model/ with prefix b150b8c0efe248fa
+[INFO 2023-05-18T10:35:52.922135177+00:00 kernel.cc:1046] Use fast generic engine
+Submission exported to /kaggle/working/submission.csv
+What is next
+If you want to learn more about TensorFlow Decision Forests and its advanced features, you can follow the official documentation here

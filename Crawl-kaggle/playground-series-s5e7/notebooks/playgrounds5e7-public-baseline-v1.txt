@@ -1,0 +1,446 @@
+In [ ]:
+ 
+ FOREWORD
+This is a starter kernel for the Playground Season-5 Episode 7 multiclass competition with accuracy metric. This needs to be maximized. Since accuracy is not a smooth metric and does not climb well, we use log-loss proxy while training the model.
+We start off with simple EDA and ML models and then improve the results as time passes! Let's get started!
+In this version, I use a simple offline ML models with 5-folds and make a submission. Let's see how this goes!
+NOTE
+I have simplified my ModelTrainer class for the concurrent playground episode. Please peruse it and provide me relevant feedback.
+IMPORTS
+unfold_moreShow hidden code
+---> Imports- part 1 done
+---> Sklearn = 1.7.0 | Pandas = 2.2.3 | Polars = 1.31.0
+---> Commencing imports-part2
+---> XGBoost = 3.0.2 | LightGBM = 4.6.0
+---> Imports- part 2 done
+---> Seeding everything
+
+---> Imports done
+CONFIGURATION
+unfold_moreShow hidden code
+CPU times: user 237 ms, sys: 0 ns, total: 237 ms
+Wall time: 238 ms
+Out[2]:
+0
+KEY CONFIG PARAMETERS
+Configuration parameter Explanation Data type Sample values
+version_nb Version Number int 1
+model_id Model ID string V1_1
+model_label Model Label string ML
+test_req Test Required bool True / False
+test_iter Test case iterations for models int 50
+gpu_switch Do we need GPU support bool True / False
+state Random state int 42
+target Target column str
+grouper CV grouper column str
+ip_path, op_path Data paths str
+pstprcs_* Do we need post-processing bool True / False
+ML Do we need machine learning models bool True / False
+test_preds_req Do we need test set predictions (training in inference kernel) bool True / False
+n_splits/ n_repeats N-splits and repeats for CV scheme int 3/5/10
+nbrnd_erly_stp Early stopping rounds int 40
+mdlcv_mthd Model CV method str RSKF
+ensemble_req Do we need ensemble bool True / False
+metric_obj Metric direction str minimize/ maximize
+PREPROCESSING
+unfold_moreShow hidden code
+Data shapes - train-test-original | (18524, 8) (6175, 7) (2512, 8)
+
+Train set head
+  Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency Personality
+id                
+0 0.000 No 6.000 4.000 No 15.000 5.000 Extrovert
+1 1.000 No 7.000 3.000 No 10.000 8.000 Extrovert
+2 6.000 Yes 1.000 0.000 nan 3.000 0.000 Introvert
+3 3.000 No 7.000 3.000 No 11.000 5.000 Extrovert
+4 1.000 No 4.000 4.000 No 13.000 nan Extrovert
+Test set head
+  Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency
+id              
+18524 3.000 No 7.000 4.000 No 6.000 nan
+18525 nan Yes 0.000 0.000 Yes 5.000 1.000
+18526 3.000 No 5.000 6.000 No 15.000 9.000
+18527 3.000 No 4.000 4.000 No 5.000 6.000
+18528 9.000 Yes 1.000 2.000 Yes 1.000 1.000
+Original set head
+  Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency Personality
+id                
+0 4.000 No 4.000 6.000 No 13.000 5.000 Extrovert
+1 9.000 Yes 0.000 0.000 Yes 0.000 3.000 Introvert
+2 9.000 Yes 1.000 2.000 Yes 5.000 2.000 Introvert
+3 0.000 No 6.000 7.000 No 14.000 8.000 Extrovert
+4 3.000 No 9.000 4.000 No 8.000 5.000 Extrovert
+-------------------- Information and description --------------------
+
+
+Train description
+  mean std min 5% 25% 50% 75% 90% 95% 99% max
+Time_spent_Alone 3.14 3.00 0.00 0.00 1.00 2.00 4.00 8.00 10.00 11.00 11.00
+Social_event_attendance 5.27 2.75 0.00 0.00 3.00 5.00 8.00 9.00 9.00 10.00 10.00
+Going_outside 4.04 2.06 0.00 0.00 3.00 4.00 6.00 7.00 7.00 7.00 7.00
+Friends_circle_size 8.00 4.22 0.00 1.00 5.00 8.00 12.00 14.00 15.00 15.00 15.00
+Post_frequency 4.98 2.88 0.00 0.00 3.00 5.00 7.00 9.00 9.00 10.00 10.00
+Train information
+
+<class 'pandas.core.frame.DataFrame'>
+Index: 18524 entries, 0 to 18523
+Data columns (total 9 columns):
+ #   Column                     Non-Null Count  Dtype  
+---  ------                     --------------  -----  
+ 0   Time_spent_Alone           17334 non-null  float64
+ 1   Stage_fear                 16631 non-null  object 
+ 2   Social_event_attendance    17344 non-null  float64
+ 3   Going_outside              17058 non-null  float64
+ 4   Drained_after_socializing  17375 non-null  object 
+ 5   Friends_circle_size        17470 non-null  float64
+ 6   Post_frequency             17260 non-null  float64
+ 7   Personality                18524 non-null  object 
+ 8   Source                     18524 non-null  object 
+dtypes: float64(5), object(4)
+memory usage: 1.4+ MB
+None
+Test description
+  mean std min 5% 25% 50% 75% 90% 95% 99% max
+Time_spent_Alone 3.12 2.99 0.00 0.00 1.00 2.00 4.00 8.00 10.00 11.00 11.00
+Social_event_attendance 5.29 2.76 0.00 0.00 3.00 5.00 8.00 9.00 9.00 10.00 10.00
+Going_outside 4.04 2.05 0.00 0.00 3.00 4.00 6.00 7.00 7.00 7.00 7.00
+Friends_circle_size 8.01 4.19 0.00 1.00 5.00 8.00 12.00 14.00 14.00 15.00 15.00
+Post_frequency 5.03 2.87 0.00 0.00 3.00 5.00 7.00 9.00 9.00 10.00 10.00
+Test information
+
+<class 'pandas.core.frame.DataFrame'>
+Index: 6175 entries, 18524 to 24698
+Data columns (total 8 columns):
+ #   Column                     Non-Null Count  Dtype  
+---  ------                     --------------  -----  
+ 0   Time_spent_Alone           5750 non-null   float64
+ 1   Stage_fear                 5577 non-null   object 
+ 2   Social_event_attendance    5778 non-null   float64
+ 3   Going_outside              5709 non-null   float64
+ 4   Drained_after_socializing  5743 non-null   object 
+ 5   Friends_circle_size        5825 non-null   float64
+ 6   Post_frequency             5767 non-null   float64
+ 7   Source                     6175 non-null   object 
+dtypes: float64(5), object(3)
+memory usage: 434.2+ KB
+None
+Original description
+  mean std min 5% 25% 50% 75% 90% 95% 99% max
+Time_spent_Alone 4.21 3.45 0.00 0.00 1.00 3.00 7.00 10.00 10.00 11.00 11.00
+Social_event_attendance 4.22 2.91 0.00 0.00 2.00 4.00 7.00 8.00 9.00 9.00 10.00
+Going_outside 3.20 2.25 0.00 0.00 1.00 3.00 5.00 6.00 7.00 7.00 7.00
+Friends_circle_size 6.61 4.32 0.00 1.00 3.00 6.00 10.00 13.00 14.00 15.00 15.00
+Post_frequency 3.83 2.95 0.00 0.00 1.00 3.00 6.00 8.00 9.00 9.00 10.00
+Original information
+
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 2512 entries, 0 to 2511
+Data columns (total 9 columns):
+ #   Column                     Non-Null Count  Dtype  
+---  ------                     --------------  -----  
+ 0   Time_spent_Alone           2451 non-null   float64
+ 1   Stage_fear                 2439 non-null   object 
+ 2   Social_event_attendance    2451 non-null   float64
+ 3   Going_outside              2447 non-null   float64
+ 4   Drained_after_socializing  2461 non-null   object 
+ 5   Friends_circle_size        2437 non-null   float64
+ 6   Post_frequency             2449 non-null   float64
+ 7   Personality                2512 non-null   object 
+ 8   Source                     2512 non-null   object 
+dtypes: float64(5), object(4)
+memory usage: 176.8+ KB
+None
+Unique and null values
+  Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency Source
+Train_Nunq 12 2 11 8 2 16 11 1
+Test_Nunq 12 2 11 8 2 16 11 1
+Original_Nunq 12 2 11 8 2 16 11 1
+Train_Nulls 1,190 1,893 1,180 1,466 1,149 1,054 1,264 0
+Test_Nulls 425 598 397 466 432 350 408 0
+Original_Nulls 61 73 61 65 51 75 63 0
+We are using the competition training data only
+CPU times: user 967 ms, sys: 30.4 ms, total: 998 ms
+Wall time: 1.05 s
+Out[3]:
+<__main__.Preprocessor at 0x7be2fe6dd710>
+ADVERSARIAL CV
+Adversarial cross-validation is an effective and easy check to see if the test set differs from the train-set.
+We do the below steps here and infer this -
+Consider any classifier as a base model, I prefer any boosted tree model as I don't have to focus too much on preprocessing
+Load the train and test set features
+Make a new target column with 1 for test set occurrances and 0 for train-set
+Classify to predict the test set instances with the features and new target from the step above
+If the AUC score hovers around 50% (random model), then we can be sure that the train and test set have similar distributions and the model is likely to generalize. Else, if our model is able to differentiate between the train and test data, then our model is unlikely to generalize as-is and further adjustments may be necesary
+unfold_moreShow hidden code
+---> Overall adversarial CV score = 0.5007
+---> Train-test distributions are similar
+
+CPU times: user 2.59 s, sys: 53.1 ms, total: 2.64 s
+Wall time: 1.38 s
+NOTES
+All features seem to be categorical
+Few nulls are present - we can easily deal with them by making a separate category / imputation
+Train-test data appear to be similar in distribution
+FEATURE CREATION
+We do the below here -
+Convert all columns to integer type using Ordinal Encoder
+Reduce memory for the datasets
+Use bigrams and trigrams for added features
+Add original data features as columns
+In [5]:
+%%time 
+
+Xtrain    = pp.train.drop(CFG.target, axis=1)
+Xtest     = pp.test.copy()
+ytrain    = pp.train[CFG.target]
+PrintColor(f"---> Shapes = {Xtrain.shape} {Xtest.shape}")
+
+df       = pd.concat([Xtrain, Xtest], axis = 0, ignore_index = True)
+num_cols = Xtest.select_dtypes(np.number).columns.tolist()
+
+pipe = \
+ColumnTransformer(
+    [
+        ("Cat", 
+         make_pipeline(
+            *[SimpleImputer(fill_value = "missing", strategy = "constant"), 
+              OrdinalEncoder(dtype = np.int16),
+              FunctionTransformer( lambda x : x + 1 )
+             ],
+          ),
+          pp.cat_cols
+        ),
+        ("Num", 
+         make_pipeline(
+             *[SimpleImputer(fill_value = -1, strategy = "constant"), 
+               FunctionTransformer( lambda x : (x+1).astype(np.int16) )
+              ] ,
+          ),
+          num_cols 
+        )
+    ], 
+    remainder = "passthrough", 
+    verbose_feature_names_out = False
+).set_output(transform = "pandas")
+
+Xtrain = pipe.fit_transform(Xtrain)
+Xtest  = pipe.transform(Xtest)
+print(f"---> Shapes = {Xtrain.shape} {Xtest.shape}")
+
+df = pp.original.copy()
+y  = df[CFG.target].map(CFG.tgt_mapper).astype(np.uint8)
+df = pipe.transform(df.drop(CFG.target, axis=1))
+df[CFG.target] = y
+del y
+
+for col in pp.strt_ftre[0: -1] :
+    df_ = df.groupby( col ).agg({CFG.target : ["mean", "count"]})
+    df_.columns = [f"O{col}_mean", f"O{col}_count"]
+    
+    Xtrain = Xtrain.merge(df_, how = "left", left_on = col, right_index = True)
+    Xtest  = Xtest.merge(df_, how = "left", left_on = col, right_index = True)
+    del df_
+
+del df
+print(f"---> Shapes = {Xtrain.shape} {Xtest.shape} | Original as columns")
+
+for col1, col2 in combinations(list(pp.strt_ftre[0:-1]), 2) :
+    label = f"{col1}-{col2}"
+    Xtrain[label] = Xtrain[col1].astype("string") + "-" + Xtrain[col2].astype("string")
+    Xtest[label]  = Xtest[col1].astype("string")  + "-" + Xtest[col2].astype("string")
+
+print(f"---> Shapes = {Xtrain.shape} {Xtest.shape} | 2-grams")
+
+for col1, col2, col3 in combinations(list(pp.strt_ftre[0:-1]), 3) :
+    label = f"{col1}-{col2}-{col3}"
+    Xtrain[label] = Xtrain[col1].astype("string") + "-" + Xtrain[col2].astype("string") + Xtrain[col3].astype("string") 
+    Xtest[label]  = Xtest[col1].astype("string")  + "-" + Xtest[col2].astype("string")  + Xtest[col3].astype("string") 
+
+print(f"---> Shapes = {Xtrain.shape} {Xtest.shape} | 3-grams")
+
+enc_cols = list(Xtest.filter(regex = "-", axis=1).columns)
+
+PrintColor(f"\n---> Target Encoding columns\n")
+with np.printoptions(linewidth = 150, threshold = 5000) :
+    pprint(np.array(enc_cols))
+
+_ = utils.CleanMemory()
+---> Shapes = (18524, 8) (6175, 8)
+---> Shapes = (18524, 8) (6175, 8)
+---> Shapes = (18524, 22) (6175, 22) | Original as columns
+---> Shapes = (18524, 43) (6175, 43) | 2-grams
+---> Shapes = (18524, 78) (6175, 78) | 3-grams
+
+---> Target Encoding columns
+
+array(['Time_spent_Alone-Stage_fear', 'Time_spent_Alone-Social_event_attendance', 'Time_spent_Alone-Going_outside',
+       'Time_spent_Alone-Drained_after_socializing', 'Time_spent_Alone-Friends_circle_size', 'Time_spent_Alone-Post_frequency',
+       'Stage_fear-Social_event_attendance', 'Stage_fear-Going_outside', 'Stage_fear-Drained_after_socializing', 'Stage_fear-Friends_circle_size',
+       'Stage_fear-Post_frequency', 'Social_event_attendance-Going_outside', 'Social_event_attendance-Drained_after_socializing',
+       'Social_event_attendance-Friends_circle_size', 'Social_event_attendance-Post_frequency', 'Going_outside-Drained_after_socializing',
+       'Going_outside-Friends_circle_size', 'Going_outside-Post_frequency', 'Drained_after_socializing-Friends_circle_size',
+       'Drained_after_socializing-Post_frequency', 'Friends_circle_size-Post_frequency', 'Time_spent_Alone-Stage_fear-Social_event_attendance',
+       'Time_spent_Alone-Stage_fear-Going_outside', 'Time_spent_Alone-Stage_fear-Drained_after_socializing',
+       'Time_spent_Alone-Stage_fear-Friends_circle_size', 'Time_spent_Alone-Stage_fear-Post_frequency',
+       'Time_spent_Alone-Social_event_attendance-Going_outside', 'Time_spent_Alone-Social_event_attendance-Drained_after_socializing',
+       'Time_spent_Alone-Social_event_attendance-Friends_circle_size', 'Time_spent_Alone-Social_event_attendance-Post_frequency',
+       'Time_spent_Alone-Going_outside-Drained_after_socializing', 'Time_spent_Alone-Going_outside-Friends_circle_size',
+       'Time_spent_Alone-Going_outside-Post_frequency', 'Time_spent_Alone-Drained_after_socializing-Friends_circle_size',
+       'Time_spent_Alone-Drained_after_socializing-Post_frequency', 'Time_spent_Alone-Friends_circle_size-Post_frequency',
+       'Stage_fear-Social_event_attendance-Going_outside', 'Stage_fear-Social_event_attendance-Drained_after_socializing',
+       'Stage_fear-Social_event_attendance-Friends_circle_size', 'Stage_fear-Social_event_attendance-Post_frequency',
+       'Stage_fear-Going_outside-Drained_after_socializing', 'Stage_fear-Going_outside-Friends_circle_size',
+       'Stage_fear-Going_outside-Post_frequency', 'Stage_fear-Drained_after_socializing-Friends_circle_size',
+       'Stage_fear-Drained_after_socializing-Post_frequency', 'Stage_fear-Friends_circle_size-Post_frequency',
+       'Social_event_attendance-Going_outside-Drained_after_socializing', 'Social_event_attendance-Going_outside-Friends_circle_size',
+       'Social_event_attendance-Going_outside-Post_frequency', 'Social_event_attendance-Drained_after_socializing-Friends_circle_size',
+       'Social_event_attendance-Drained_after_socializing-Post_frequency', 'Social_event_attendance-Friends_circle_size-Post_frequency',
+       'Going_outside-Drained_after_socializing-Friends_circle_size', 'Going_outside-Drained_after_socializing-Post_frequency',
+       'Going_outside-Friends_circle_size-Post_frequency', 'Drained_after_socializing-Friends_circle_size-Post_frequency'], dtype='<U69')
+CPU times: user 1.96 s, sys: 209 ms, total: 2.17 s
+Wall time: 2.17 s
+CV-SCHEME
+unfold_moreShow hidden cell
+MODEL TRAINING
+unfold_moreShow hidden cell
+unfold_moreShow hidden code
+100%
+6/6 [03:09<00:00, 22.66s/it]
+ XGB1C offline model training
+XGB1C:
+5/? [00:39<00:00,  7.75s/it]
+---> OOF score = 0.15409698 | Fold 1
+---> OOF score = 0.17002487 | Fold 2
+---> OOF score = 0.17747128 | Fold 3
+---> OOF score = 0.15174388 | Fold 4
+---> OOF score = 0.14920718 | Fold 5
+
+---> Overall score = 0.16050884 +- 0.01117088
+---> Overall score = 0.96912114 | Competition metric
+
+ CB1C offline model training
+CB1C:
+5/? [01:16<00:00, 15.26s/it]
+---> OOF score = 0.13043218 | Fold 1
+---> OOF score = 0.14259285 | Fold 2
+---> OOF score = 0.14536486 | Fold 3
+---> OOF score = 0.13146030 | Fold 4
+---> OOF score = 0.12781031 | Fold 5
+
+---> Overall score = 0.13553210 +- 0.00705340
+---> Overall score = 0.96895919 | Competition metric
+
+ LGBM1C offline model training
+LGBM1C:
+5/? [00:29<00:00,  5.91s/it]
+---> OOF score = 0.14896204 | Fold 1
+---> OOF score = 0.16276875 | Fold 2
+---> OOF score = 0.17154896 | Fold 3
+---> OOF score = 0.14750558 | Fold 4
+---> OOF score = 0.14308056 | Fold 5
+
+---> Overall score = 0.15477318 +- 0.01066453
+---> Overall score = 0.96901317 | Competition metric
+
+ LGBM2C offline model training
+LGBM2C:
+5/? [00:13<00:00,  2.62s/it]
+---> OOF score = 0.13016126 | Fold 1
+---> OOF score = 0.13883480 | Fold 2
+---> OOF score = 0.14511852 | Fold 3
+---> OOF score = 0.12846055 | Fold 4
+---> OOF score = 0.12381442 | Fold 5
+
+---> Overall score = 0.13327791 +- 0.00766234
+---> Overall score = 0.96912114 | Competition metric
+
+ RF1C offline model training
+RF1C:
+5/? [00:16<00:00,  3.27s/it]
+---> OOF score = 0.12641599 | Fold 1
+---> OOF score = 0.13398235 | Fold 2
+---> OOF score = 0.14029645 | Fold 3
+---> OOF score = 0.12625619 | Fold 4
+---> OOF score = 0.12025839 | Fold 5
+
+---> Overall score = 0.12944187 +- 0.00695814
+---> Overall score = 0.96928309 | Competition metric
+
+ HGB1C offline model training
+HGB1C:
+5/? [00:12<00:00,  2.62s/it]
+---> OOF score = 0.12919539 | Fold 1
+---> OOF score = 0.13723774 | Fold 2
+---> OOF score = 0.14452786 | Fold 3
+---> OOF score = 0.13083411 | Fold 4
+---> OOF score = 0.12544299 | Fold 5
+
+---> Overall score = 0.13344762 +- 0.00672492
+---> Overall score = 0.96885122 | Competition metric
+
+CPU times: user 7min 12s, sys: 33.3 s, total: 7min 45s
+Wall time: 3min 9s
+ENSEMBLE
+We use a simple logistic regression and blend all our single models
+unfold_moreShow hidden code
+ LR1C offline model training
+LR1C:
+5/? [00:00<00:00, 37.09it/s]
+---> OOF score = 0.13142938 | Fold 1
+---> OOF score = 0.13958153 | Fold 2
+---> OOF score = 0.14286946 | Fold 3
+---> OOF score = 0.13316012 | Fold 4
+---> OOF score = 0.12725359 | Fold 5
+
+---> Overall score = 0.13485882 +- 0.00563845
+---> Overall score = 0.96906716 | Competition metric
+
+CPU times: user 493 ms, sys: 13.3 ms, total: 506 ms
+Wall time: 385 ms
+THRESHOLD ADJUSTMENT
+This is a verbose representation of TunedThresholdClassifier
+unfold_moreShow hidden code
+1. Cutoff = 0.4270 0.96895877
+2. Cutoff = 0.5100 0.96943114
+3. Cutoff = 0.5680 0.96990350
+4. Cutoff = 0.5680 0.96875633
+5. Cutoff = 0.4790 0.96875843
+
+---> Best score = 0.96912114 | cutoff = 0.5104 
+
+CPU times: user 4.57 s, sys: 6.31 ms, total: 4.58 s
+Wall time: 4.57 s
+CLOSURE
+In [11]:
+%%time 
+
+pp.sub_fl[CFG.target] = np.where(test_preds >= thresholds, 1, 0)
+pp.sub_fl[CFG.target] = pp.sub_fl[CFG.target].map({v:k for k, v in CFG.tgt_mapper.items()})
+
+pp.sub_fl.to_csv("submission.csv", index = None)
+display(
+    pp.sub_fl[CFG.target].value_counts(normalize = True)
+)
+
+print()
+!ls submission.csv
+print()
+!head submission.csv
+Personality
+Extrovert    0.74834
+Introvert    0.25166
+Name: proportion, dtype: float64
+submission.csv
+
+id,Personality
+18524,Extrovert
+18525,Introvert
+18526,Extrovert
+18527,Extrovert
+18528,Introvert
+18529,Extrovert
+18530,Extrovert
+18531,Introvert
+18532,Extrovert
+CPU times: user 23.7 ms, sys: 36.1 ms, total: 59.8 ms
+Wall time: 312 ms

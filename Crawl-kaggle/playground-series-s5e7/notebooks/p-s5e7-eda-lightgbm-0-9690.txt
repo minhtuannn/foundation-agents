@@ -1,0 +1,1466 @@
+In [1]:
+pip install nbformat>=4.2.0
+Note: you may need to restart the kernel to use updated packages.
+In [2]:
+pip install optuna-integration[xgboost]
+Collecting optuna-integration[xgboost]
+  Downloading optuna_integration-4.4.0-py3-none-any.whl.metadata (12 kB)
+Requirement already satisfied: optuna in /usr/local/lib/python3.11/dist-packages (from optuna-integration[xgboost]) (4.3.0)
+Requirement already satisfied: xgboost in /usr/local/lib/python3.11/dist-packages (from optuna-integration[xgboost]) (2.0.3)
+Requirement already satisfied: alembic>=1.5.0 in /usr/local/lib/python3.11/dist-packages (from optuna->optuna-integration[xgboost]) (1.15.2)
+Requirement already satisfied: colorlog in /usr/local/lib/python3.11/dist-packages (from optuna->optuna-integration[xgboost]) (6.9.0)
+Requirement already satisfied: numpy in /usr/local/lib/python3.11/dist-packages (from optuna->optuna-integration[xgboost]) (1.26.4)
+Requirement already satisfied: packaging>=20.0 in /usr/local/lib/python3.11/dist-packages (from optuna->optuna-integration[xgboost]) (25.0)
+Requirement already satisfied: sqlalchemy>=1.4.2 in /usr/local/lib/python3.11/dist-packages (from optuna->optuna-integration[xgboost]) (2.0.40)
+Requirement already satisfied: tqdm in /usr/local/lib/python3.11/dist-packages (from optuna->optuna-integration[xgboost]) (4.67.1)
+Requirement already satisfied: PyYAML in /usr/local/lib/python3.11/dist-packages (from optuna->optuna-integration[xgboost]) (6.0.2)
+Requirement already satisfied: scipy in /usr/local/lib/python3.11/dist-packages (from xgboost->optuna-integration[xgboost]) (1.15.2)
+Requirement already satisfied: Mako in /usr/local/lib/python3.11/dist-packages (from alembic>=1.5.0->optuna->optuna-integration[xgboost]) (1.3.10)
+Requirement already satisfied: typing-extensions>=4.12 in /usr/local/lib/python3.11/dist-packages (from alembic>=1.5.0->optuna->optuna-integration[xgboost]) (4.13.2)
+Requirement already satisfied: greenlet>=1 in /usr/local/lib/python3.11/dist-packages (from sqlalchemy>=1.4.2->optuna->optuna-integration[xgboost]) (3.1.1)
+Requirement already satisfied: mkl_fft in /usr/local/lib/python3.11/dist-packages (from numpy->optuna->optuna-integration[xgboost]) (1.3.8)
+Requirement already satisfied: mkl_random in /usr/local/lib/python3.11/dist-packages (from numpy->optuna->optuna-integration[xgboost]) (1.2.4)
+Requirement already satisfied: mkl_umath in /usr/local/lib/python3.11/dist-packages (from numpy->optuna->optuna-integration[xgboost]) (0.1.1)
+Requirement already satisfied: mkl in /usr/local/lib/python3.11/dist-packages (from numpy->optuna->optuna-integration[xgboost]) (2025.1.0)
+Requirement already satisfied: tbb4py in /usr/local/lib/python3.11/dist-packages (from numpy->optuna->optuna-integration[xgboost]) (2022.1.0)
+Requirement already satisfied: mkl-service in /usr/local/lib/python3.11/dist-packages (from numpy->optuna->optuna-integration[xgboost]) (2.4.1)
+Requirement already satisfied: MarkupSafe>=0.9.2 in /usr/local/lib/python3.11/dist-packages (from Mako->alembic>=1.5.0->optuna->optuna-integration[xgboost]) (3.0.2)
+Requirement already satisfied: intel-openmp<2026,>=2024 in /usr/local/lib/python3.11/dist-packages (from mkl->numpy->optuna->optuna-integration[xgboost]) (2024.2.0)
+Requirement already satisfied: tbb==2022.* in /usr/local/lib/python3.11/dist-packages (from mkl->numpy->optuna->optuna-integration[xgboost]) (2022.1.0)
+Requirement already satisfied: tcmlib==1.* in /usr/local/lib/python3.11/dist-packages (from tbb==2022.*->mkl->numpy->optuna->optuna-integration[xgboost]) (1.3.0)
+Requirement already satisfied: intel-cmplr-lib-rt in /usr/local/lib/python3.11/dist-packages (from mkl_umath->numpy->optuna->optuna-integration[xgboost]) (2024.2.0)
+Requirement already satisfied: intel-cmplr-lib-ur==2024.2.0 in /usr/local/lib/python3.11/dist-packages (from intel-openmp<2026,>=2024->mkl->numpy->optuna->optuna-integration[xgboost]) (2024.2.0)
+Downloading optuna_integration-4.4.0-py3-none-any.whl (98 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 98.9/98.9 kB 2.5 MB/s eta 0:00:00
+Installing collected packages: optuna-integration
+Successfully installed optuna-integration-4.4.0
+Note: you may need to restart the kernel to use updated packages.
+In [3]:
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.express as px
+import plotly.graph_objects as go
+import plotly.io as pio
+import plotly.subplots as sp
+import plotly.figure_factory as ff
+import plotly.offline as pyo
+%matplotlib inline
+
+pio.renderers.default = "notebook"
+
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import cross_val_score, KFold, StratifiedKFold
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+import xgboost as xgb
+from xgboost import XGBClassifier
+import lightgbm as lgb
+from lightgbm import LGBMClassifier
+import catboost as cb
+from catboost import CatBoostClassifier
+import optuna
+from optuna.integration import XGBoostPruningCallback
+from optuna.integration import LightGBMPruningCallback
+from optuna.integration import CatBoostPruningCallback
+
+import warnings
+warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+In [4]:
+train = pd.read_csv("/kaggle/input/playground-series-s5e7/train.csv")
+test = pd.read_csv("/kaggle/input/playground-series-s5e7/test.csv")
+In [5]:
+train.head()
+Out[5]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency Personality
+0 0 0.0 No 6.0 4.0 No 15.0 5.0 Extrovert
+1 1 1.0 No 7.0 3.0 No 10.0 8.0 Extrovert
+2 2 6.0 Yes 1.0 0.0 NaN 3.0 0.0 Introvert
+3 3 3.0 No 7.0 3.0 No 11.0 5.0 Extrovert
+4 4 1.0 No 4.0 4.0 No 13.0 NaN Extrovert
+In [6]:
+test.head()
+Out[6]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency
+0 18524 3.0 No 7.0 4.0 No 6.0 NaN
+1 18525 NaN Yes 0.0 0.0 Yes 5.0 1.0
+2 18526 3.0 No 5.0 6.0 No 15.0 9.0
+3 18527 3.0 No 4.0 4.0 No 5.0 6.0
+4 18528 9.0 Yes 1.0 2.0 Yes 1.0 1.0
+In [7]:
+columns_to_fill = ['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 'Friends_circle_size', 'Post_frequency']
+
+for col in columns_to_fill:
+    
+    skewness = train[col].skew()
+    
+    if abs(skewness) > 1:
+        print(f"  -> {col} is skewed (|skewness| > 1)")
+    else:
+        print(f"  -> {col} is approximately normal")
+
+
+fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+axes = axes.ravel()
+
+for i, col in enumerate(columns_to_fill):
+    axes[i].hist(train[col].dropna(), bins=20, alpha=0.7, edgecolor='black')
+    axes[i].set_title(f'Distribution of {col}')
+    axes[i].set_xlabel(col)
+    axes[i].set_ylabel('Frequency')
+
+axes[5].remove()
+plt.tight_layout()
+plt.show()
+
+train['Time_spent_Alone'].fillna(train['Time_spent_Alone'].median(), inplace=True)
+train['Social_event_attendance'].fillna(train['Social_event_attendance'].mean(), inplace=True)
+train['Going_outside'].fillna(train['Going_outside'].mean(), inplace=True)
+train['Friends_circle_size'].fillna(train['Friends_circle_size'].median(), inplace=True)
+train['Post_frequency'].fillna(train['Post_frequency'].median(), inplace=True)
+  -> Time_spent_Alone is skewed (|skewness| > 1)
+  -> Social_event_attendance is approximately normal
+  -> Going_outside is approximately normal
+  -> Friends_circle_size is approximately normal
+  -> Post_frequency is approximately normal
+In [8]:
+def fill_categorical_missing(df, column, personality_weight=0.7):
+
+    overall_mode = df[column].mode()[0]
+
+    personality_modes = {}
+    for personality in df['Personality'].unique():
+        personality_data = df[(df['Personality'] == personality) & (df[column].notna())]
+        if len(personality_data) > 0:
+            personality_modes[personality] = personality_data[column].mode()[0]
+        else:
+            personality_modes[personality] = overall_mode
+
+    df_filled = df.copy()
+    for idx in df[df[column].isna()].index:
+        personality = df.loc[idx, 'Personality']
+        personality_mode = personality_modes[personality]
+
+        if np.random.random() < personality_weight:
+            df_filled.loc[idx, column] = personality_mode
+        else:
+            df_filled.loc[idx, column] = overall_mode
+    
+    return df_filled
+    
+from sklearn.impute import KNNImputer
+from sklearn.preprocessing import LabelEncoder
+
+def knn_impute_categorical(df, categorical_columns, numerical_columns):
+
+    df_impute = df.copy()
+    
+    le_dict = {}
+    for col in categorical_columns:
+        if col in df_impute.columns:
+            le = LabelEncoder()
+            temp_fill = df_impute[col].fillna('MISSING')
+            df_impute[col] = le.fit_transform(temp_fill)
+            le_dict[col] = le
+    
+    feature_columns = numerical_columns + categorical_columns
+    feature_data = df_impute[feature_columns].copy()
+    
+    imputer = KNNImputer(n_neighbors=5, weights='uniform')
+    imputed_data = imputer.fit_transform(feature_data)
+
+    df_imputed = df.copy()
+    for i, col in enumerate(feature_columns):
+        if col in categorical_columns:
+
+            rounded_values = np.round(imputed_data[:, i]).astype(int)
+            df_imputed[col] = le_dict[col].inverse_transform(rounded_values)
+        else:
+            df_imputed[col] = imputed_data[:, i]
+    
+    return df_imputed
+
+train_filled_mode = fill_categorical_missing(train, 'Stage_fear')
+train_filled_mode = fill_categorical_missing(train_filled_mode, 'Drained_after_socializing')
+
+numerical_cols = ['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 
+                  'Friends_circle_size', 'Post_frequency']
+categorical_cols = ['Stage_fear', 'Drained_after_socializing']
+
+for col in numerical_cols:
+    if train[col].isna().sum() > 0:
+        if abs(train[col].skew()) > 1:
+            train[col].fillna(train[col].median(), inplace=True)
+        else:
+            train[col].fillna(train[col].mean(), inplace=True)
+
+train_filled_knn = knn_impute_categorical(train, categorical_cols, numerical_cols)
+
+train = fill_categorical_missing(train, 'Stage_fear')
+train = fill_categorical_missing(train, 'Drained_after_socializing')
+In [9]:
+columns_to_fill = ['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 'Friends_circle_size', 'Post_frequency']
+
+for col in columns_to_fill:
+    if test[col].isna().sum() > 0:
+        skewness = test[col].dropna().skew()
+        
+        if abs(skewness) > 1:
+            print(f"  -> {col} is skewed (|skewness| > 1)")
+        else:
+            print(f"  -> {col} is approximately normal")
+
+fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+axes = axes.ravel()
+
+for i, col in enumerate(columns_to_fill):
+    if test[col].isna().sum() > 0:
+        axes[i].hist(test[col].dropna(), bins=20, alpha=0.7, edgecolor='black')
+        axes[i].set_title(f'Distribution of {col} (Test)')
+        axes[i].set_xlabel(col)
+        axes[i].set_ylabel('Frequency')
+    else:
+        axes[i].text(0.5, 0.5, f'{col}\nNo missing values', 
+                    ha='center', va='center', transform=axes[i].transAxes)
+        axes[i].set_title(f'{col} (Test)')
+
+axes[5].remove()
+plt.tight_layout()
+plt.show()
+
+test['Time_spent_Alone'].fillna(test['Time_spent_Alone'].median(), inplace=True)
+test['Social_event_attendance'].fillna(test['Social_event_attendance'].mean(), inplace=True)
+test['Going_outside'].fillna(test['Going_outside'].mean(), inplace=True)
+test['Friends_circle_size'].fillna(test['Friends_circle_size'].median(), inplace=True)
+test['Post_frequency'].fillna(test['Post_frequency'].median(), inplace=True)
+
+categorical_cols_test = ['Stage_fear', 'Drained_after_socializing']
+
+for col in categorical_cols_test:
+    if test[col].isna().sum() > 0:
+        mode_value = test[col].mode()[0]
+        test[col].fillna(mode_value, inplace=True)
+
+def knn_impute_test_data(df, categorical_columns, numerical_columns):
+
+    df_impute = df.copy()
+    
+    le_dict = {}
+    for col in categorical_columns:
+        if col in df_impute.columns:
+            le = LabelEncoder()
+            temp_fill = df_impute[col].fillna('MISSING')
+            df_impute[col] = le.fit_transform(temp_fill)
+            le_dict[col] = le
+    
+    feature_columns = numerical_columns + categorical_columns
+    feature_data = df_impute[feature_columns].copy()
+    
+    imputer = KNNImputer(n_neighbors=5, weights='uniform')
+    imputed_data = imputer.fit_transform(feature_data)
+
+    df_imputed = df.copy()
+    for i, col in enumerate(feature_columns):
+        if col in categorical_columns:
+            rounded_values = np.round(imputed_data[:, i]).astype(int)
+            df_imputed[col] = le_dict[col].inverse_transform(rounded_values)
+        else:
+            df_imputed[col] = imputed_data[:, i]
+    
+    return df_imputed
+
+numerical_cols = ['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 
+                  'Friends_circle_size', 'Post_frequency']
+categorical_cols = ['Stage_fear', 'Drained_after_socializing']
+
+test_filled_knn = knn_impute_test_data(test, categorical_cols, numerical_cols)
+  -> Time_spent_Alone is skewed (|skewness| > 1)
+  -> Social_event_attendance is approximately normal
+  -> Going_outside is approximately normal
+  -> Friends_circle_size is approximately normal
+  -> Post_frequency is approximately normal
+In [10]:
+train.isna().sum()
+Out[10]:
+id                           0
+Time_spent_Alone             0
+Stage_fear                   0
+Social_event_attendance      0
+Going_outside                0
+Drained_after_socializing    0
+Friends_circle_size          0
+Post_frequency               0
+Personality                  0
+dtype: int64
+In [11]:
+test.isna().sum()
+Out[11]:
+id                           0
+Time_spent_Alone             0
+Stage_fear                   0
+Social_event_attendance      0
+Going_outside                0
+Drained_after_socializing    0
+Friends_circle_size          0
+Post_frequency               0
+dtype: int64
+In [12]:
+train.head()
+Out[12]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency Personality
+0 0 0.0 No 6.0 4.0 No 15.0 5.0 Extrovert
+1 1 1.0 No 7.0 3.0 No 10.0 8.0 Extrovert
+2 2 6.0 Yes 1.0 0.0 Yes 3.0 0.0 Introvert
+3 3 3.0 No 7.0 3.0 No 11.0 5.0 Extrovert
+4 4 1.0 No 4.0 4.0 No 13.0 5.0 Extrovert
+In [13]:
+test.head()
+Out[13]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency
+0 18524 3.0 No 7.0 4.0 No 6.0 5.0
+1 18525 2.0 Yes 0.0 0.0 Yes 5.0 1.0
+2 18526 3.0 No 5.0 6.0 No 15.0 9.0
+3 18527 3.0 No 4.0 4.0 No 5.0 6.0
+4 18528 9.0 Yes 1.0 2.0 Yes 1.0 1.0
+In [14]:
+train_encoded = train.copy()
+
+le_personality = LabelEncoder()
+le_stage_fear = LabelEncoder()
+le_drained = LabelEncoder()
+
+train_encoded['Personality_encoded'] = le_personality.fit_transform(train['Personality'])
+train_encoded['Stage_fear_encoded'] = le_stage_fear.fit_transform(train['Stage_fear'])
+train_encoded['Drained_after_socializing_encoded'] = le_drained.fit_transform(train['Drained_after_socializing'])
+
+numerical_cols = ['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 
+                  'Friends_circle_size', 'Post_frequency']
+
+fig = sp.make_subplots(
+    rows=2, cols=3,
+    subplot_titles=['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 
+                   'Friends_circle_size', 'Post_frequency'],
+    specs=[[{"type": "histogram"}, {"type": "histogram"}, {"type": "histogram"}],
+           [{"type": "histogram"}, {"type": "histogram"}, {"type": "scatter"}]])
+
+for i, col in enumerate(numerical_cols):
+    row = (i // 3) + 1
+    col_pos = (i % 3) + 1
+    
+    fig.add_trace(go.Histogram(x=train[col], name=col, nbinsx=30, showlegend=False),
+        row=row, col=col_pos)
+
+fig.update_layout(title="Distribution of Numerical Variables",
+    height=600, showlegend=False)
+fig.show()
+
+fig = px.pie(train, names='Personality', 
+    title='Distribution of Personality Types',
+    color_discrete_sequence=px.colors.qualitative.Set3)
+
+fig.update_traces(textposition='inside', textinfo='percent+label')
+fig.show()
+
+fig = sp.make_subplots(rows=1, cols=2,
+    subplot_titles=['Stage Fear Distribution', 'Drained After Socializing Distribution'],
+    specs=[[{"type": "bar"}, {"type": "bar"}]])
+
+stage_fear_counts = train['Stage_fear'].value_counts()
+fig.add_trace(go.Bar(x=stage_fear_counts.index, y=stage_fear_counts.values, name='Stage Fear'),
+    row=1, col=1)
+
+drained_counts = train['Drained_after_socializing'].value_counts()
+fig.add_trace(go.Bar(x=drained_counts.index, y=drained_counts.values, name='Drained After Socializing'),
+    row=1, col=2)
+
+fig.update_layout(title="Distribution of Categorical Variables",
+    height=400, showlegend=False)
+fig.show()
+
+fig = sp.make_subplots(rows=2, cols=3,
+    subplot_titles=['Time_spent_Alone by Personality', 'Social_event_attendance by Personality', 
+                   'Going_outside by Personality', 'Friends_circle_size by Personality', 
+                   'Post_frequency by Personality'],
+    specs=[[{"type": "box"}, {"type": "box"}, {"type": "box"}],
+           [{"type": "box"}, {"type": "box"}, {"type": "scatter"}]])
+
+for i, col in enumerate(numerical_cols):
+    row = (i // 3) + 1
+    col_pos = (i % 3) + 1
+    
+    for personality in train['Personality'].unique():
+        data = train[train['Personality'] == personality][col]
+        fig.add_trace(go.Box(y=data, name=f'{personality}', showlegend=False),
+            row=row, col=col_pos)
+
+fig.update_layout(title="Box Plots of Numerical Variables by Personality",height=600)
+fig.show()
+
+fig = sp.make_subplots(rows=2, cols=3,
+    subplot_titles=['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 
+                   'Friends_circle_size', 'Post_frequency'],
+    specs=[[{"type": "violin"}, {"type": "violin"}, {"type": "violin"}],
+           [{"type": "violin"}, {"type": "violin"}, {"type": "scatter"}]])
+
+for i, col in enumerate(numerical_cols):
+    row = (i // 3) + 1
+    col_pos = (i % 3) + 1
+    
+    for personality in train['Personality'].unique():
+        data = train[train['Personality'] == personality][col]
+        fig.add_trace(go.Violin(y=data, name=f'{personality}', showlegend=False),
+            row=row, col=col_pos)
+
+fig.update_layout(title="Violin Plots of Numerical Variables by Personality",
+    height=600)
+fig.show()
+
+fig = px.scatter_3d(train, x='Time_spent_Alone', y='Social_event_attendance',
+    z='Going_outside', color='Personality',
+    title="3D Scatter Plot: Time Alone vs Social Events vs Going Outside",
+    opacity=0.7)
+
+fig.update_layout(height=600)
+fig.show()
+
+all_numerical_cols = numerical_cols + ['Personality_encoded', 'Stage_fear_encoded', 'Drained_after_socializing_encoded']
+target_correlations = train_encoded[all_numerical_cols].corr()['Personality_encoded'].abs().sort_values(ascending=False)
+
+fig = px.bar(x=target_correlations.index,
+    y=target_correlations.values,
+    title="Feature Importance (Correlation with Personality)",
+    labels={'x': 'Features', 'y': 'Absolute Correlation'})
+
+fig.update_layout(height=500)
+fig.show()
+
+fig = sp.make_subplots(rows=2, cols=3,
+    subplot_titles=['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 
+                   'Friends_circle_size', 'Post_frequency'],
+    specs=[[{"type": "histogram"}, {"type": "histogram"}, {"type": "histogram"}],
+           [{"type": "histogram"}, {"type": "histogram"}, {"type": "scatter"}]])
+
+for i, col in enumerate(numerical_cols):
+    row = (i // 3) + 1
+    col_pos = (i % 3) + 1
+    
+    for personality in train['Personality'].unique():
+        data = train[train['Personality'] == personality][col]
+        fig.add_trace(go.Histogram(x=data, name=f'{personality}', opacity=0.7, showlegend=False),
+            row=row, col=col_pos)
+
+fig.update_layout(title="Distribution Comparison: Extrovert vs Introvert",
+    height=600)
+fig.show()
+
+fig = px.scatter(train, x='Time_spent_Alone', y='Social_event_attendance',
+    color='Personality', size='Friends_circle_size', hover_data=['Going_outside', 'Post_frequency', 'Stage_fear', 'Drained_after_socializing'],
+    title="Interactive Scatter Plot with Multiple Features", opacity=0.7)
+fig.update_layout(height=600)
+fig.show()
+0
+5
+10
+0
+1000
+2000
+3000
+4000
+0
+5
+10
+0
+500
+1000
+1500
+2000
+0
+2
+4
+6
+0
+1000
+2000
+3000
+4000
+0
+5
+10
+15
+0
+500
+1000
+1500
+2000
+0
+5
+10
+0
+1000
+2000
+3000
+Distribution of Numerical Variables
+Time_spent_Alone
+Social_event_attendance
+Going_outside
+Friends_circle_size
+Post_frequency
+Extrovert74%
+Introvert26%
+Extrovert
+Introvert
+Distribution of Personality Types
+No
+Yes
+0
+5k
+10k
+No
+Yes
+0
+5k
+10k
+Distribution of Categorical Variables
+Stage Fear Distribution
+Drained After Socializing Distribution
+Extrovert
+Introvert
+0
+5
+10
+Extrovert
+Introvert
+0
+5
+10
+Extrovert
+Introvert
+0
+2
+4
+6
+Extrovert
+Introvert
+0
+5
+10
+15
+Extrovert
+Introvert
+0
+5
+10
+Box Plots of Numerical Variables by Personality
+Time_spent_Alone by Personality
+Social_event_attendance by Personality
+Going_outside by Personality
+Friends_circle_size by Personality
+Post_frequency by Personality
+Extrovert
+Introvert
+0
+5
+10
+Extrovert
+Introvert
+0
+5
+10
+Extrovert
+Introvert
+0
+2
+4
+6
+8
+Extrovert
+Introvert
+0
+5
+10
+15
+Extrovert
+Introvert
+0
+5
+10
+Violin Plots of Numerical Variables by Personality
+Time_spent_Alone
+Social_event_attendance
+Going_outside
+Friends_circle_size
+Post_frequency
+Personality
+Extrovert
+Introvert
+3D Scatter Plot: Time Alone vs Social Events vs Going Outside
+Personality_encoded
+Drained_after_socializing_encoded
+Stage_fear_encoded
+Time_spent_Alone
+Going_outside
+Social_event_attendance
+Post_frequency
+Friends_circle_size
+0
+0.2
+0.4
+0.6
+0.8
+1
+Feature Importance (Correlation with Personality)
+Features
+Absolute Correlation
+0
+5
+10
+0
+1000
+2000
+3000
+4000
+0
+5
+10
+0
+500
+1000
+1500
+2000
+0
+2
+4
+6
+0
+1000
+2000
+3000
+0
+5
+10
+15
+0
+500
+1000
+1500
+2000
+0
+5
+10
+0
+1000
+2000
+Distribution Comparison: Extrovert vs Introvert
+Time_spent_Alone
+Social_event_attendance
+Going_outside
+Friends_circle_size
+Post_frequency
+0
+2
+4
+6
+8
+10
+0
+2
+4
+6
+8
+10
+Personality
+Extrovert
+Introvert
+Interactive Scatter Plot with Multiple Features
+Time_spent_Alone
+Social_event_attendance
+In [15]:
+numerical_columns = train.select_dtypes(include=[np.number]).columns.tolist()
+
+correlation_matrix = train[numerical_columns].corr()
+
+plt.figure(figsize=(10, 8))
+sns.heatmap(correlation_matrix, annot=True, 
+            cmap='coolwarm', center=0,
+            square=True, fmt='.2f',
+            cbar_kws={'shrink': 0.8})
+
+plt.title('Correlation Matrix - Train Dataset', fontsize=16, fontweight='bold')
+plt.tight_layout()
+plt.show()
+
+correlation_pairs = []
+for i in range(len(correlation_matrix.columns)):
+    for j in range(i+1, len(correlation_matrix.columns)):
+        col1 = correlation_matrix.columns[i]
+        col2 = correlation_matrix.columns[j]
+        corr_value = correlation_matrix.iloc[i, j]
+        correlation_pairs.append((col1, col2, corr_value))
+
+correlation_pairs.sort(key=lambda x: abs(x[2]), reverse=True)
+In [16]:
+test_encoded = test.copy()
+
+le_stage_fear = LabelEncoder()
+le_drained = LabelEncoder()
+
+test_encoded['Stage_fear'] = test_encoded['Stage_fear'].fillna('Unknown')
+test_encoded['Drained_after_socializing'] = test_encoded['Drained_after_socializing'].fillna('Unknown')
+
+test_encoded['Stage_fear_encoded'] = le_stage_fear.fit_transform(test_encoded['Stage_fear'])
+test_encoded['Drained_after_socializing_encoded'] = le_drained.fit_transform(test_encoded['Drained_after_socializing'])
+
+numerical_cols = ['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 
+                  'Friends_circle_size', 'Post_frequency']
+
+fig = sp.make_subplots(rows=2, cols=3,
+    subplot_titles=['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 
+                   'Friends_circle_size', 'Post_frequency'],
+    specs=[[{"type": "histogram"}, {"type": "histogram"}, {"type": "histogram"}],
+           [{"type": "histogram"}, {"type": "histogram"}, {"type": "scatter"}]])
+
+for i, col in enumerate(numerical_cols):
+    row = (i // 3) + 1
+    col_pos = (i % 3) + 1
+    
+    fig.add_trace(go.Histogram(x=test[col], name=col, nbinsx=30, showlegend=False),
+        row=row, col=col_pos)
+
+fig.update_layout(title="Distribution of Numerical Variables (Test Dataset)",
+    height=600, showlegend=False)
+fig.show()
+
+fig = sp.make_subplots(rows=1, cols=2,
+    subplot_titles=['Stage Fear Distribution', 'Drained After Socializing Distribution'],
+    specs=[[{"type": "bar"}, {"type": "bar"}]])
+
+stage_fear_counts = test['Stage_fear'].value_counts()
+fig.add_trace(go.Bar(x=stage_fear_counts.index, y=stage_fear_counts.values, name='Stage Fear'),
+    row=1, col=1)
+
+drained_counts = test['Drained_after_socializing'].value_counts()
+fig.add_trace(go.Bar(x=drained_counts.index, y=drained_counts.values, name='Drained After Socializing'),
+    row=1, col=2)
+
+fig.update_layout(title="Distribution of Categorical Variables (Test Dataset)",
+    height=400, showlegend=False)
+fig.show()
+
+fig = sp.make_subplots(rows=2, cols=3,
+    subplot_titles=['Time_spent_Alone by Stage Fear', 'Social_event_attendance by Stage Fear', 
+                   'Going_outside by Stage Fear', 'Friends_circle_size by Stage Fear', 
+                   'Post_frequency by Stage Fear'],
+    specs=[[{"type": "box"}, {"type": "box"}, {"type": "box"}],
+           [{"type": "box"}, {"type": "box"}, {"type": "scatter"}]])
+
+for i, col in enumerate(numerical_cols):
+    row = (i // 3) + 1
+    col_pos = (i % 3) + 1
+    
+    for stage_fear in test['Stage_fear'].unique():
+        if pd.notna(stage_fear):
+            data = test[test['Stage_fear'] == stage_fear][col]
+            fig.add_trace(go.Box(y=data, name=f'{stage_fear}', showlegend=False),
+                row=row, col=col_pos)
+
+fig.update_layout(title="Box Plots of Numerical Variables by Stage Fear (Test Dataset)", height=600)
+fig.show()
+
+fig = sp.make_subplots(rows=2, cols=3,
+    subplot_titles=['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 
+                   'Friends_circle_size', 'Post_frequency'],
+    specs=[[{"type": "violin"}, {"type": "violin"}, {"type": "violin"}],
+           [{"type": "violin"}, {"type": "violin"}, {"type": "scatter"}]])
+
+for i, col in enumerate(numerical_cols):
+    row = (i // 3) + 1
+    col_pos = (i % 3) + 1
+    
+    for stage_fear in test['Stage_fear'].unique():
+        if pd.notna(stage_fear):
+            data = test[test['Stage_fear'] == stage_fear][col]
+            fig.add_trace(go.Violin(y=data, name=f'{stage_fear}', showlegend=False),
+                row=row, col=col_pos)
+
+fig.update_layout(title="Violin Plots of Numerical Variables by Stage Fear (Test Dataset)",
+    height=600)
+fig.show()
+
+fig = px.scatter_3d(test, x='Time_spent_Alone', y='Social_event_attendance',
+    z='Going_outside', color='Stage_fear',
+    title="3D Scatter Plot: Time Alone vs Social Events vs Going Outside (Test Dataset)",
+    opacity=0.7)
+
+fig.update_layout(height=600)
+fig.show()
+
+fig = sp.make_subplots(rows=2, cols=3,
+    subplot_titles=['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 
+                   'Friends_circle_size', 'Post_frequency'],
+    specs=[[{"type": "histogram"}, {"type": "histogram"}, {"type": "histogram"}],
+           [{"type": "histogram"}, {"type": "histogram"}, {"type": "scatter"}]])
+
+for i, col in enumerate(numerical_cols):
+    row = (i // 3) + 1
+    col_pos = (i % 3) + 1
+    
+    for stage_fear in test['Stage_fear'].unique():
+        if pd.notna(stage_fear):
+            data = test[test['Stage_fear'] == stage_fear][col]
+            fig.add_trace(go.Histogram(x=data, name=f'{stage_fear}', opacity=0.7, showlegend=False),
+                row=row, col=col_pos)
+
+fig.update_layout(title="Distribution Comparison: Stage Fear vs No Stage Fear (Test Dataset)",
+    height=600)
+fig.show()
+
+fig = px.scatter(test, x='Time_spent_Alone', y='Social_event_attendance',
+    color='Stage_fear', size='Friends_circle_size', 
+    hover_data=['Going_outside', 'Post_frequency', 'Drained_after_socializing'],
+    title="Interactive Scatter Plot with Multiple Features (Test Dataset)", 
+    opacity=0.7)
+
+fig.update_layout(height=600)
+fig.show()
+0
+5
+10
+0
+500
+1000
+0
+5
+10
+0
+200
+400
+600
+0
+2
+4
+6
+0
+500
+1000
+0
+5
+10
+15
+0
+200
+400
+600
+0
+5
+10
+0
+500
+1000
+Distribution of Numerical Variables (Test Dataset)
+Time_spent_Alone
+Social_event_attendance
+Going_outside
+Friends_circle_size
+Post_frequency
+No
+Yes
+0
+1000
+2000
+3000
+4000
+5000
+No
+Yes
+0
+1000
+2000
+3000
+4000
+5000
+Distribution of Categorical Variables (Test Dataset)
+Stage Fear Distribution
+Drained After Socializing Distribution
+No
+Yes
+0
+5
+10
+No
+Yes
+0
+5
+10
+No
+Yes
+0
+2
+4
+6
+No
+Yes
+0
+5
+10
+15
+No
+Yes
+0
+5
+10
+Box Plots of Numerical Variables by Stage Fear (Test Dataset)
+Time_spent_Alone by Stage Fear
+Social_event_attendance by Stage Fear
+Going_outside by Stage Fear
+Friends_circle_size by Stage Fear
+Post_frequency by Stage Fear
+No
+Yes
+0
+5
+10
+No
+Yes
+0
+5
+10
+No
+Yes
+0
+2
+4
+6
+8
+No
+Yes
+0
+5
+10
+15
+No
+Yes
+0
+5
+10
+Violin Plots of Numerical Variables by Stage Fear (Test Dataset)
+Time_spent_Alone
+Social_event_attendance
+Going_outside
+Friends_circle_size
+Post_frequency
+WebGL is not supported by your browser - visit https://get.webgl.org for more info
+Stage_fear
+No
+Yes
+3D Scatter Plot: Time Alone vs Social Events vs Going Outside (Test Dataset)
+0
+5
+10
+0
+500
+1000
+0
+5
+10
+0
+200
+400
+600
+0
+2
+4
+6
+0
+500
+1000
+0
+5
+10
+15
+0
+200
+400
+600
+0
+5
+10
+0
+200
+400
+600
+800
+Distribution Comparison: Stage Fear vs No Stage Fear (Test Dataset)
+Time_spent_Alone
+Social_event_attendance
+Going_outside
+Friends_circle_size
+Post_frequency
+0
+2
+4
+6
+8
+10
+0
+2
+4
+6
+8
+10
+WebGL is not supported by your browser - visit https://get.webgl.org for more info
+Stage_fear
+No
+Yes
+Interactive Scatter Plot with Multiple Features (Test Dataset)
+Time_spent_Alone
+Social_event_attendance
+In [17]:
+numerical_columns = test.select_dtypes(include=[np.number]).columns.tolist()
+
+correlation_matrix = test[numerical_columns].corr()
+
+plt.figure(figsize=(10, 8))
+sns.heatmap(correlation_matrix, annot=True, 
+            cmap='coolwarm', center=0,
+            square=True, fmt='.2f',
+            cbar_kws={'shrink': 0.8})
+
+plt.title('Correlation Matrix - Test Dataset', fontsize=16, fontweight='bold')
+plt.tight_layout()
+plt.show()
+
+correlation_pairs = []
+for i in range(len(correlation_matrix.columns)):
+    for j in range(i+1, len(correlation_matrix.columns)):
+        col1 = correlation_matrix.columns[i]
+        col2 = correlation_matrix.columns[j]
+        corr_value = correlation_matrix.iloc[i, j]
+        correlation_pairs.append((col1, col2, corr_value))
+
+correlation_pairs.sort(key=lambda x: abs(x[2]), reverse=True)
+In [18]:
+train.head()
+Out[18]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency Personality
+0 0 0.0 No 6.0 4.0 No 15.0 5.0 Extrovert
+1 1 1.0 No 7.0 3.0 No 10.0 8.0 Extrovert
+2 2 6.0 Yes 1.0 0.0 Yes 3.0 0.0 Introvert
+3 3 3.0 No 7.0 3.0 No 11.0 5.0 Extrovert
+4 4 1.0 No 4.0 4.0 No 13.0 5.0 Extrovert
+In [19]:
+test.head()
+Out[19]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency
+0 18524 3.0 No 7.0 4.0 No 6.0 5.0
+1 18525 2.0 Yes 0.0 0.0 Yes 5.0 1.0
+2 18526 3.0 No 5.0 6.0 No 15.0 9.0
+3 18527 3.0 No 4.0 4.0 No 5.0 6.0
+4 18528 9.0 Yes 1.0 2.0 Yes 1.0 1.0
+In [20]:
+cat_train = ["Stage_fear","Drained_after_socializing", "Personality"]
+cat_test = ["Stage_fear","Drained_after_socializing"]
+
+le_train = LabelEncoder()
+for col in cat_train:
+    train[col] = le_train.fit_transform(train[col].astype(str))
+
+le_test = LabelEncoder()
+for col in cat_test:
+    test[col] = le_test.fit_transform(test[col].astype(str))
+In [21]:
+train.head()
+Out[21]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency Personality
+0 0 0.0 0 6.0 4.0 0 15.0 5.0 0
+1 1 1.0 0 7.0 3.0 0 10.0 8.0 0
+2 2 6.0 1 1.0 0.0 1 3.0 0.0 1
+3 3 3.0 0 7.0 3.0 0 11.0 5.0 0
+4 4 1.0 0 4.0 4.0 0 13.0 5.0 0
+In [22]:
+test.head()
+Out[22]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency
+0 18524 3.0 0 7.0 4.0 0 6.0 5.0
+1 18525 2.0 1 0.0 0.0 1 5.0 1.0
+2 18526 3.0 0 5.0 6.0 0 15.0 9.0
+3 18527 3.0 0 4.0 4.0 0 5.0 6.0
+4 18528 9.0 1 1.0 2.0 1 1.0 1.0
+In [23]:
+columns_to_scale = ['Time_spent_Alone', 'Social_event_attendance', 'Going_outside', 'Friends_circle_size', 'Post_frequency']
+
+ss = StandardScaler()
+
+train[columns_to_scale] = ss.fit_transform(train[columns_to_scale])
+test[columns_to_scale] = ss.transform(test[columns_to_scale])
+In [24]:
+train.head()
+Out[24]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency Personality
+0 0 -1.049913 0 0.275846 -0.022392 0 1.707463 0.006002 0
+1 1 -0.707327 0 0.651201 -0.527641 0 0.488383 1.085490 0
+2 2 1.005601 1 -1.600930 -2.043388 1 -1.218331 -1.793144 1
+3 3 -0.022156 0 0.651201 -0.527641 0 0.732199 0.006002 0
+4 4 -0.707327 0 -0.474864 -0.022392 0 1.219831 0.006002 0
+In [25]:
+test.head()
+Out[25]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency
+0 18524 -0.022156 0 0.651201 -0.022392 0 -0.486882 0.006002
+1 18525 -0.364742 1 -1.976285 -2.043388 1 -0.730698 -1.433314
+2 18526 -0.022156 0 -0.099509 0.988105 0 1.707463 1.445319
+3 18527 -0.022156 0 -0.474864 -0.022392 0 -0.730698 0.365832
+4 18528 2.033358 1 -1.600930 -1.032890 1 -1.705963 -1.433314
+In [26]:
+X = train.drop(columns=['Personality','id'])
+y = train['Personality']
+
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+
+kfold = StratifiedKFold(n_splits=6, shuffle=True, random_state=42)
+
+
+def objective_lgbm(trial):
+
+    params = {'objective': 'binary',
+        'metric': 'binary_logloss',
+        'boosting_type': 'gbdt',
+        'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'num_leaves': trial.suggest_int('num_leaves', 10, 100),
+        'min_child_samples': trial.suggest_int('min_child_samples', 5, 50),
+        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+        'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
+        'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
+        'random_state': 42,
+        'verbose': -1}
+    
+    model = lgb.LGBMClassifier(**params)
+    scores = cross_val_score(model, X_train, y_train, cv=kfold, scoring='accuracy')
+    return scores.mean()
+
+def objective_xgb(trial):
+
+    params = {'objective': 'binary:logistic',
+        'eval_metric': 'logloss',
+        'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+        'gamma': trial.suggest_float('gamma', 1e-8, 1.0, log=True),
+        'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
+        'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
+        'random_state': 42}
+    
+    model = xgb.XGBClassifier(**params)
+    scores = cross_val_score(model, X_train, y_train, cv=kfold, scoring='accuracy')
+    return scores.mean()
+
+def objective_cb(trial):
+    params = {'objective': 'Logloss',
+        'eval_metric': 'Logloss',
+        'iterations': trial.suggest_int('iterations', 100, 1000),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+        'depth': trial.suggest_int('depth', 3, 10),
+        'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1e-8, 10.0, log=True),
+        'border_count': trial.suggest_int('border_count', 32, 255),
+        'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),
+        'random_strength': trial.suggest_float('random_strength', 1e-8, 10.0, log=True),
+        'random_state': 42,
+        'verbose': False}
+    
+    model = CatBoostClassifier(**params)
+    scores = cross_val_score(model, X_train, y_train, cv=kfold, scoring='accuracy')
+    return scores.mean()
+
+
+print("\n1. Optimizing LightGBM...")
+study_lgbm = optuna.create_study(direction='maximize')
+study_lgbm.optimize(objective_lgbm, n_trials=50)
+
+print(f"Best LightGBM CV Score: {study_lgbm.best_value:.4f}")
+print(f"Best LightGBM Parameters: {study_lgbm.best_params}")
+
+print("\n2. Optimizing XGBoost...")
+study_xgb = optuna.create_study(direction='maximize')
+study_xgb.optimize(objective_xgb, n_trials=50)
+
+print(f"Best XGBoost CV Score: {study_xgb.best_value:.4f}")
+print(f"Best XGBoost Parameters: {study_xgb.best_params}")
+
+print("\n3. Optimizing CatBoost...")
+study_cb = optuna.create_study(direction='maximize')
+study_cb.optimize(objective_cb, n_trials=50)
+
+print(f"Best CatBoost CV Score: {study_cb.best_value:.4f}")
+print(f"Best CatBoost Parameters: {study_cb.best_params}")
+[I 2025-07-04 15:41:07,587] A new study created in memory with name: no-name-2ae4e7ff-c0e3-437a-a91f-ba6981ee05a6
+1. Optimizing LightGBM...
+[I 2025-07-04 15:41:09,461] Trial 0 finished with value: 0.967811660815434 and parameters: {'n_estimators': 165, 'learning_rate': 0.07041584743971366, 'max_depth': 7, 'num_leaves': 85, 'min_child_samples': 11, 'subsample': 0.9457171929600282, 'colsample_bytree': 0.8015030068780697, 'reg_alpha': 0.026574044566722434, 'reg_lambda': 2.621900140342806e-07}. Best is trial 0 with value: 0.967811660815434.
+[I 2025-07-04 15:41:12,097] Trial 1 finished with value: 0.9690262630436576 and parameters: {'n_estimators': 859, 'learning_rate': 0.14066197728163277, 'max_depth': 8, 'num_leaves': 48, 'min_child_samples': 35, 'subsample': 0.81014818501702, 'colsample_bytree': 0.606399418204771, 'reg_alpha': 0.9434333585127789, 'reg_lambda': 2.5677432409217926e-08}. Best is trial 1 with value: 0.9690262630436576.
+[I 2025-07-04 15:41:13,007] Trial 2 finished with value: 0.9680140899652315 and parameters: {'n_estimators': 183, 'learning_rate': 0.22203831367664542, 'max_depth': 8, 'num_leaves': 12, 'min_child_samples': 9, 'subsample': 0.6022624571128019, 'colsample_bytree': 0.6953428205340905, 'reg_alpha': 0.08894018728101655, 'reg_lambda': 0.025619913643014667}. Best is trial 1 with value: 0.9690262630436576.
+[I 2025-07-04 15:41:14,256] Trial 3 finished with value: 0.9657197562870006 and parameters: {'n_estimators': 101, 'learning_rate': 0.28696972624716705, 'max_depth': 9, 'num_leaves': 60, 'min_child_samples': 13, 'subsample': 0.8546268396466463, 'colsample_bytree': 0.9966995344386333, 'reg_alpha': 2.444774356241845e-06, 'reg_lambda': 0.5701583266602105}. Best is trial 1 with value: 0.9690262630436576.
+[I 2025-07-04 15:41:19,788] Trial 4 finished with value: 0.9562722700760687 and parameters: {'n_estimators': 646, 'learning_rate': 0.2911475416442671, 'max_depth': 9, 'num_leaves': 45, 'min_child_samples': 30, 'subsample': 0.7504534306464411, 'colsample_bytree': 0.9591460650644312, 'reg_alpha': 0.06646673438618006, 'reg_lambda': 3.604571463517658e-06}. Best is trial 1 with value: 0.9690262630436576.
+[I 2025-07-04 15:41:20,623] Trial 5 finished with value: 0.9669344131741012 and parameters: {'n_estimators': 154, 'learning_rate': 0.25235736937765363, 'max_depth': 4, 'num_leaves': 96, 'min_child_samples': 6, 'subsample': 0.6720966046070274, 'colsample_bytree': 0.9977053410629, 'reg_alpha': 7.137390867937294e-05, 'reg_lambda': 3.0956003224872824e-07}. Best is trial 1 with value: 0.9690262630436576.
+[I 2025-07-04 15:41:23,284] Trial 6 finished with value: 0.967271931737622 and parameters: {'n_estimators': 532, 'learning_rate': 0.13560586963885954, 'max_depth': 4, 'num_leaves': 46, 'min_child_samples': 35, 'subsample': 0.7187878584887428, 'colsample_bytree': 0.8367459342474793, 'reg_alpha': 0.011906739634506893, 'reg_lambda': 1.5792257802382996e-06}. Best is trial 1 with value: 0.9690262630436576.
+[I 2025-07-04 15:41:24,303] Trial 7 finished with value: 0.9678116881448723 and parameters: {'n_estimators': 164, 'learning_rate': 0.22652762949773875, 'max_depth': 7, 'num_leaves': 20, 'min_child_samples': 28, 'subsample': 0.6933785852175962, 'colsample_bytree': 0.8391371658131457, 'reg_alpha': 0.023106108990759214, 'reg_lambda': 1.4269462599069484e-08}. Best is trial 1 with value: 0.9690262630436576.
+[I 2025-07-04 15:41:28,229] Trial 8 finished with value: 0.9667994604075694 and parameters: {'n_estimators': 863, 'learning_rate': 0.1369055333585165, 'max_depth': 9, 'num_leaves': 34, 'min_child_samples': 47, 'subsample': 0.941503028980402, 'colsample_bytree': 0.9853085046810531, 'reg_alpha': 0.4628766603558011, 'reg_lambda': 3.862377107562285e-05}. Best is trial 1 with value: 0.9690262630436576.
+[I 2025-07-04 15:41:28,879] Trial 9 finished with value: 0.9692962232355978 and parameters: {'n_estimators': 190, 'learning_rate': 0.17296564519073068, 'max_depth': 10, 'num_leaves': 29, 'min_child_samples': 47, 'subsample': 0.994713197096811, 'colsample_bytree': 0.6797842022882441, 'reg_alpha': 4.869942250848264, 'reg_lambda': 3.7565080261258763}. Best is trial 9 with value: 0.9692962232355978.
+[I 2025-07-04 15:41:30,586] Trial 10 finished with value: 0.9695661287686611 and parameters: {'n_estimators': 384, 'learning_rate': 0.0129577322416074, 'max_depth': 10, 'num_leaves': 28, 'min_child_samples': 49, 'subsample': 0.980002562281971, 'colsample_bytree': 0.709266828041979, 'reg_alpha': 8.836010995980258, 'reg_lambda': 4.919613157928993}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:41:32,443] Trial 11 finished with value: 0.9693636996188637 and parameters: {'n_estimators': 438, 'learning_rate': 0.029947108825325804, 'max_depth': 10, 'num_leaves': 27, 'min_child_samples': 49, 'subsample': 0.9875115501591488, 'colsample_bytree': 0.6873819324397115, 'reg_alpha': 9.098854628175582, 'reg_lambda': 7.420782871897029}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:41:39,423] Trial 12 finished with value: 0.9690937667563619 and parameters: {'n_estimators': 464, 'learning_rate': 0.012833884972934726, 'max_depth': 10, 'num_leaves': 71, 'min_child_samples': 50, 'subsample': 0.9009853991511643, 'colsample_bytree': 0.7342786871460513, 'reg_alpha': 5.759428516005727e-08, 'reg_lambda': 0.023357360745139177}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:41:41,273] Trial 13 finished with value: 0.9686213774146242 and parameters: {'n_estimators': 391, 'learning_rate': 0.010021669021423006, 'max_depth': 5, 'num_leaves': 29, 'min_child_samples': 41, 'subsample': 0.999513957063063, 'colsample_bytree': 0.624696709458362, 'reg_alpha': 0.0003117001669716501, 'reg_lambda': 6.907591511844089}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:41:42,304] Trial 14 finished with value: 0.9693636996188637 and parameters: {'n_estimators': 323, 'learning_rate': 0.07540155968397211, 'max_depth': 6, 'num_leaves': 10, 'min_child_samples': 41, 'subsample': 0.8772452115724354, 'colsample_bytree': 0.7365025242126818, 'reg_alpha': 4.939776790744892, 'reg_lambda': 0.0328151530670241}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:41:48,100] Trial 15 finished with value: 0.96632709839527 and parameters: {'n_estimators': 674, 'learning_rate': 0.062099969370011346, 'max_depth': 10, 'num_leaves': 37, 'min_child_samples': 22, 'subsample': 0.9311299444589248, 'colsample_bytree': 0.6707975838837228, 'reg_alpha': 0.0014937680668236058, 'reg_lambda': 0.0011148167156970236}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:41:49,322] Trial 16 finished with value: 0.9692962505650361 and parameters: {'n_estimators': 290, 'learning_rate': 0.0401207542001802, 'max_depth': 3, 'num_leaves': 62, 'min_child_samples': 42, 'subsample': 0.8158683607432674, 'colsample_bytree': 0.7532021893562687, 'reg_alpha': 2.714526833817534e-05, 'reg_lambda': 0.36208721591260434}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:41:50,817] Trial 17 finished with value: 0.9689588139898301 and parameters: {'n_estimators': 649, 'learning_rate': 0.10440394115299115, 'max_depth': 8, 'num_leaves': 21, 'min_child_samples': 21, 'subsample': 0.970983363691091, 'colsample_bytree': 0.8807621088401467, 'reg_alpha': 9.070134981862228, 'reg_lambda': 0.0006696585695003289}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:41:53,675] Trial 18 finished with value: 0.9691612704690661 and parameters: {'n_estimators': 436, 'learning_rate': 0.03735527800130836, 'max_depth': 10, 'num_leaves': 20, 'min_child_samples': 50, 'subsample': 0.8955940046458444, 'colsample_bytree': 0.634320751294905, 'reg_alpha': 0.4024997275882146, 'reg_lambda': 0.4008631016662346}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:41:58,008] Trial 19 finished with value: 0.9661921182993 and parameters: {'n_estimators': 552, 'learning_rate': 0.10625958231211348, 'max_depth': 6, 'num_leaves': 72, 'min_child_samples': 36, 'subsample': 0.8538321880306845, 'colsample_bytree': 0.766357730388488, 'reg_alpha': 3.522734451957319e-07, 'reg_lambda': 0.004437414495432744}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:42:01,119] Trial 20 finished with value: 0.9682840774866098 and parameters: {'n_estimators': 299, 'learning_rate': 0.10282944538374891, 'max_depth': 9, 'num_leaves': 43, 'min_child_samples': 44, 'subsample': 0.7786998331018691, 'colsample_bytree': 0.6848781468827477, 'reg_alpha': 0.0033685963085818473, 'reg_lambda': 1.5124249727015244}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:42:02,457] Trial 21 finished with value: 0.9692287195228936 and parameters: {'n_estimators': 315, 'learning_rate': 0.06217058056482273, 'max_depth': 6, 'num_leaves': 10, 'min_child_samples': 40, 'subsample': 0.8831272721484862, 'colsample_bytree': 0.7333036837242576, 'reg_alpha': 2.4035539508021917, 'reg_lambda': 0.03968276765248427}. Best is trial 10 with value: 0.9695661287686611.
+[I 2025-07-04 15:42:03,982] Trial 22 finished with value: 0.9695661560980994 and parameters: {'n_estimators': 364, 'learning_rate': 0.042738124130209, 'max_depth': 6, 'num_leaves': 17, 'min_child_samples': 45, 'subsample': 0.9655281398564011, 'colsample_bytree': 0.7860201087204268, 'reg_alpha': 6.478849783435924, 'reg_lambda': 0.21819487776717764}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:07,295] Trial 23 finished with value: 0.9692961959061593 and parameters: {'n_estimators': 519, 'learning_rate': 0.03661373354521708, 'max_depth': 5, 'num_leaves': 25, 'min_child_samples': 46, 'subsample': 0.953782926962031, 'colsample_bytree': 0.7891625912575642, 'reg_alpha': 0.43384739812123824, 'reg_lambda': 7.614801041095583}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:10,013] Trial 24 finished with value: 0.9694311760021295 and parameters: {'n_estimators': 381, 'learning_rate': 0.02136908230241056, 'max_depth': 7, 'num_leaves': 35, 'min_child_samples': 50, 'subsample': 0.9195286756680714, 'colsample_bytree': 0.71417398770927, 'reg_alpha': 8.325400771758272, 'reg_lambda': 0.5073733188215684}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:13,842] Trial 25 finished with value: 0.9638302809083648 and parameters: {'n_estimators': 403, 'learning_rate': 0.17869845263257475, 'max_depth': 7, 'num_leaves': 38, 'min_child_samples': 37, 'subsample': 0.9219248962665062, 'colsample_bytree': 0.9128625259126385, 'reg_alpha': 0.16462056162914435, 'reg_lambda': 0.19662154395558662}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:15,425] Trial 26 finished with value: 0.9690263177025343 and parameters: {'n_estimators': 246, 'learning_rate': 0.08213202537967239, 'max_depth': 5, 'num_leaves': 55, 'min_child_samples': 45, 'subsample': 0.9645631485478762, 'colsample_bytree': 0.807146351360574, 'reg_alpha': 0.8708554748246055, 'reg_lambda': 0.11029614854894755}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:17,276] Trial 27 finished with value: 0.9691612431396277 and parameters: {'n_estimators': 365, 'learning_rate': 0.04924905982755344, 'max_depth': 4, 'num_leaves': 17, 'min_child_samples': 32, 'subsample': 0.8526389520808426, 'colsample_bytree': 0.7126467842509292, 'reg_alpha': 1.2202659913977463, 'reg_lambda': 0.002843548283740536}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:22,154] Trial 28 finished with value: 0.9689588413192686 and parameters: {'n_estimators': 589, 'learning_rate': 0.017908330902438412, 'max_depth': 8, 'num_leaves': 33, 'min_child_samples': 21, 'subsample': 0.9263798751149932, 'colsample_bytree': 0.6528110083059468, 'reg_alpha': 0.003491392993315894, 'reg_lambda': 7.178708934887827e-05}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:29,228] Trial 29 finished with value: 0.9659895798317492 and parameters: {'n_estimators': 770, 'learning_rate': 0.0860249823523685, 'max_depth': 7, 'num_leaves': 52, 'min_child_samples': 44, 'subsample': 0.9678128102963361, 'colsample_bytree': 0.7856751290991328, 'reg_alpha': 0.05822761115537876, 'reg_lambda': 1.1475186554548615}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:31,189] Trial 30 finished with value: 0.9689588413192686 and parameters: {'n_estimators': 495, 'learning_rate': 0.05998436340155073, 'max_depth': 6, 'num_leaves': 41, 'min_child_samples': 38, 'subsample': 0.9458269137376349, 'colsample_bytree': 0.7142404240467194, 'reg_alpha': 2.438817524879545, 'reg_lambda': 0.006981983747818699}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:32,896] Trial 31 finished with value: 0.9693636722894253 and parameters: {'n_estimators': 438, 'learning_rate': 0.029685400982392723, 'max_depth': 9, 'num_leaves': 26, 'min_child_samples': 49, 'subsample': 0.988919733944141, 'colsample_bytree': 0.6536870775764577, 'reg_alpha': 9.980358495947835, 'reg_lambda': 1.8012469146669345}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:38,343] Trial 32 finished with value: 0.9690937667563618 and parameters: {'n_estimators': 1000, 'learning_rate': 0.02273495225284061, 'max_depth': 10, 'num_leaves': 16, 'min_child_samples': 50, 'subsample': 0.9107805109282818, 'colsample_bytree': 0.7075145590171089, 'reg_alpha': 2.3226966413101255, 'reg_lambda': 9.953394403384447}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:40,427] Trial 33 finished with value: 0.9692962232355976 and parameters: {'n_estimators': 250, 'learning_rate': 0.04629676157424483, 'max_depth': 8, 'num_leaves': 26, 'min_child_samples': 47, 'subsample': 0.9779527288153569, 'colsample_bytree': 0.8203745179278641, 'reg_alpha': 0.19636087627739182, 'reg_lambda': 0.12700400754139443}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:44,173] Trial 34 finished with value: 0.9688913649360026 and parameters: {'n_estimators': 359, 'learning_rate': 0.025491977201035538, 'max_depth': 7, 'num_leaves': 34, 'min_child_samples': 43, 'subsample': 0.966249098837902, 'colsample_bytree': 0.6029953782846011, 'reg_alpha': 1.0555651609904044, 'reg_lambda': 1.6302487640155625}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:45,300] Trial 35 finished with value: 0.9694986523853953 and parameters: {'n_estimators': 234, 'learning_rate': 0.048617625672993096, 'max_depth': 8, 'num_leaves': 15, 'min_child_samples': 48, 'subsample': 0.9399535433814956, 'colsample_bytree': 0.7653989016079695, 'reg_alpha': 9.969977996880553, 'reg_lambda': 0.7430719456020322}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:46,606] Trial 36 finished with value: 0.9693636722894253 and parameters: {'n_estimators': 240, 'learning_rate': 0.0902435024503922, 'max_depth': 8, 'num_leaves': 13, 'min_child_samples': 39, 'subsample': 0.6219633400486472, 'colsample_bytree': 0.7622168985182699, 'reg_alpha': 5.900053691642372e-06, 'reg_lambda': 0.7553355582713551}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:48,021] Trial 37 finished with value: 0.9685540103491116 and parameters: {'n_estimators': 207, 'learning_rate': 0.12284443426920713, 'max_depth': 7, 'num_leaves': 22, 'min_child_samples': 33, 'subsample': 0.8280010367010581, 'colsample_bytree': 0.8634180103194464, 'reg_alpha': 0.1155634137826638, 'reg_lambda': 0.09483141383371849}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:50,061] Trial 38 finished with value: 0.9688913922654409 and parameters: {'n_estimators': 349, 'learning_rate': 0.05193795313620195, 'max_depth': 9, 'num_leaves': 16, 'min_child_samples': 13, 'subsample': 0.8813899124767154, 'colsample_bytree': 0.779326850891929, 'reg_alpha': 0.02455025364748151, 'reg_lambda': 0.015706372014332663}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:50,948] Trial 39 finished with value: 0.9690263177025343 and parameters: {'n_estimators': 133, 'learning_rate': 0.1582792915470531, 'max_depth': 6, 'num_leaves': 98, 'min_child_samples': 47, 'subsample': 0.7798958219699678, 'colsample_bytree': 0.7480689452904158, 'reg_alpha': 2.4054016534395846, 'reg_lambda': 0.00011816115693633683}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:51,856] Trial 40 finished with value: 0.969363726948302 and parameters: {'n_estimators': 101, 'learning_rate': 0.06878924850214288, 'max_depth': 8, 'num_leaves': 31, 'min_child_samples': 26, 'subsample': 0.9458068803689984, 'colsample_bytree': 0.8118254308865309, 'reg_alpha': 0.5116921094632868, 'reg_lambda': 6.784382507963321e-06}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:52,941] Trial 41 finished with value: 0.9692962232355976 and parameters: {'n_estimators': 125, 'learning_rate': 0.06728409198882412, 'max_depth': 8, 'num_leaves': 31, 'min_child_samples': 24, 'subsample': 0.9434480688968035, 'colsample_bytree': 0.8177147142239203, 'reg_alpha': 0.6859815757834203, 'reg_lambda': 9.80052417600512e-06}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:54,420] Trial 42 finished with value: 0.9690263177025343 and parameters: {'n_estimators': 203, 'learning_rate': 0.04803475300535223, 'max_depth': 7, 'num_leaves': 23, 'min_child_samples': 17, 'subsample': 0.9164818190311669, 'colsample_bytree': 0.8615231701098496, 'reg_alpha': 3.6553197339441246, 'reg_lambda': 1.900530764690948e-06}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:57,351] Trial 43 finished with value: 0.9644375956871961 and parameters: {'n_estimators': 275, 'learning_rate': 0.20363282496429377, 'max_depth': 8, 'num_leaves': 49, 'min_child_samples': 27, 'subsample': 0.9521579453742588, 'colsample_bytree': 0.7701102133422373, 'reg_alpha': 0.2911643418604398, 'reg_lambda': 1.3338413736482357e-07}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:57,915] Trial 44 finished with value: 0.9688238612232984 and parameters: {'n_estimators': 100, 'learning_rate': 0.012856648162158422, 'max_depth': 9, 'num_leaves': 38, 'min_child_samples': 26, 'subsample': 0.9334057388477306, 'colsample_bytree': 0.7247366906352223, 'reg_alpha': 1.397938335284845, 'reg_lambda': 1.3116086560956476e-05}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:58,732] Trial 45 finished with value: 0.9695661560980994 and parameters: {'n_estimators': 170, 'learning_rate': 0.07427284184034541, 'max_depth': 8, 'num_leaves': 17, 'min_child_samples': 48, 'subsample': 0.9002026935784154, 'colsample_bytree': 0.8333834327960209, 'reg_alpha': 7.589621108143857, 'reg_lambda': 1.026701345074787e-07}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:42:59,257] Trial 46 finished with value: 0.969363726948302 and parameters: {'n_estimators': 182, 'learning_rate': 0.2709804037972675, 'max_depth': 7, 'num_leaves': 14, 'min_child_samples': 48, 'subsample': 0.9006823278421224, 'colsample_bytree': 0.8412218419669235, 'reg_alpha': 9.353651968584533, 'reg_lambda': 2.3092131777510243e-07}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:43:01,607] Trial 47 finished with value: 0.9692962505650361 and parameters: {'n_estimators': 392, 'learning_rate': 0.026931010278295992, 'max_depth': 5, 'num_leaves': 18, 'min_child_samples': 45, 'subsample': 0.8715166282980532, 'colsample_bytree': 0.9111398628404119, 'reg_alpha': 1.3836175434572982e-08, 'reg_lambda': 2.8131489345349116e-08}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:43:05,704] Trial 48 finished with value: 0.9682165737739057 and parameters: {'n_estimators': 333, 'learning_rate': 0.05523724651817857, 'max_depth': 9, 'num_leaves': 91, 'min_child_samples': 42, 'subsample': 0.8309058394092688, 'colsample_bytree': 0.7489403547511749, 'reg_alpha': 0.06478338878025902, 'reg_lambda': 0.2808663499199345}. Best is trial 22 with value: 0.9695661560980994.
+[I 2025-07-04 15:43:07,316] Trial 49 finished with value: 0.9696336324813654 and parameters: {'n_estimators': 481, 'learning_rate': 0.040137311843940246, 'max_depth': 7, 'num_leaves': 10, 'min_child_samples': 48, 'subsample': 0.9970960439864031, 'colsample_bytree': 0.8008478217069228, 'reg_alpha': 5.3170313566730805, 'reg_lambda': 4.082004208772357}. Best is trial 49 with value: 0.9696336324813654.
+[I 2025-07-04 15:43:07,318] A new study created in memory with name: no-name-25787538-d90b-44a1-a2b2-60e485b50809
+Best LightGBM CV Score: 0.9696
+Best LightGBM Parameters: {'n_estimators': 481, 'learning_rate': 0.040137311843940246, 'max_depth': 7, 'num_leaves': 10, 'min_child_samples': 48, 'subsample': 0.9970960439864031, 'colsample_bytree': 0.8008478217069228, 'reg_alpha': 5.3170313566730805, 'reg_lambda': 4.082004208772357}
+
+2. Optimizing XGBoost...
+[I 2025-07-04 15:43:16,171] Trial 0 finished with value: 0.9663945747785357 and parameters: {'n_estimators': 841, 'learning_rate': 0.08200600857521279, 'max_depth': 10, 'min_child_weight': 4, 'subsample': 0.6297408996848006, 'colsample_bytree': 0.6950868395029115, 'gamma': 0.01027417868424052, 'reg_alpha': 0.0002263499768892684, 'reg_lambda': 5.596888534176195e-08}. Best is trial 0 with value: 0.9663945747785357.
+[I 2025-07-04 15:43:22,276] Trial 1 finished with value: 0.9646401888136236 and parameters: {'n_estimators': 846, 'learning_rate': 0.08518572610357557, 'max_depth': 7, 'min_child_weight': 3, 'subsample': 0.7659375630492902, 'colsample_bytree': 0.875846244708487, 'gamma': 4.590136948677564e-06, 'reg_alpha': 1.0355359155990069e-07, 'reg_lambda': 3.607900065498829e-08}. Best is trial 0 with value: 0.9663945747785357.
+[I 2025-07-04 15:43:25,782] Trial 2 finished with value: 0.9683515265404375 and parameters: {'n_estimators': 706, 'learning_rate': 0.12163991181308464, 'max_depth': 4, 'min_child_weight': 7, 'subsample': 0.7416431650790434, 'colsample_bytree': 0.6970856128919366, 'gamma': 5.262234937279045e-06, 'reg_alpha': 0.00010717824567052704, 'reg_lambda': 0.0024268859155299524}. Best is trial 2 with value: 0.9683515265404375.
+[I 2025-07-04 15:43:31,312] Trial 3 finished with value: 0.9656523892214882 and parameters: {'n_estimators': 977, 'learning_rate': 0.25299254268817706, 'max_depth': 5, 'min_child_weight': 4, 'subsample': 0.6525183055709958, 'colsample_bytree': 0.7093821958371278, 'gamma': 1.1333718536728734e-07, 'reg_alpha': 1.0226779862340162e-07, 'reg_lambda': 2.637672799727336}. Best is trial 2 with value: 0.9683515265404375.
+[I 2025-07-04 15:43:33,812] Trial 4 finished with value: 0.9692287741817701 and parameters: {'n_estimators': 320, 'learning_rate': 0.0335229529782878, 'max_depth': 8, 'min_child_weight': 10, 'subsample': 0.8935425339775183, 'colsample_bytree': 0.8747884711923616, 'gamma': 0.00011643876571149071, 'reg_alpha': 9.352158201775676e-08, 'reg_lambda': 0.0011422506900731148}. Best is trial 4 with value: 0.9692287741817701.
+[I 2025-07-04 15:43:35,598] Trial 5 finished with value: 0.9688913922654411 and parameters: {'n_estimators': 432, 'learning_rate': 0.07467881102937271, 'max_depth': 3, 'min_child_weight': 1, 'subsample': 0.6485518174571272, 'colsample_bytree': 0.6666727075177291, 'gamma': 1.1727578833000333e-08, 'reg_alpha': 1.046996086552278, 'reg_lambda': 0.08896186888647836}. Best is trial 4 with value: 0.9692287741817701.
+[I 2025-07-04 15:43:39,628] Trial 6 finished with value: 0.9609286597807413 and parameters: {'n_estimators': 548, 'learning_rate': 0.21874630610170126, 'max_depth': 7, 'min_child_weight': 2, 'subsample': 0.6281268239020718, 'colsample_bytree': 0.8590495628857129, 'gamma': 2.8000349932172075e-07, 'reg_alpha': 2.759550719102967e-07, 'reg_lambda': 6.174376103946178e-07}. Best is trial 4 with value: 0.9692287741817701.
+[I 2025-07-04 15:43:48,619] Trial 7 finished with value: 0.9613335727392133 and parameters: {'n_estimators': 836, 'learning_rate': 0.19635552194651917, 'max_depth': 10, 'min_child_weight': 4, 'subsample': 0.9459759918992341, 'colsample_bytree': 0.6848809995467424, 'gamma': 2.1615559038808296e-07, 'reg_alpha': 8.978992938862607e-08, 'reg_lambda': 0.01594182209359038}. Best is trial 4 with value: 0.9692287741817701.
+[I 2025-07-04 15:43:50,902] Trial 8 finished with value: 0.9689588413192686 and parameters: {'n_estimators': 379, 'learning_rate': 0.08050246742654482, 'max_depth': 5, 'min_child_weight': 10, 'subsample': 0.6639070558823718, 'colsample_bytree': 0.6216242534276539, 'gamma': 2.6288314428472523e-05, 'reg_alpha': 0.0006056697629764833, 'reg_lambda': 3.860661590124079e-08}. Best is trial 4 with value: 0.9692287741817701.
+[I 2025-07-04 15:43:53,672] Trial 9 finished with value: 0.9690262903730961 and parameters: {'n_estimators': 585, 'learning_rate': 0.03318452264400233, 'max_depth': 4, 'min_child_weight': 2, 'subsample': 0.8378430071646277, 'colsample_bytree': 0.7407305485566205, 'gamma': 1.7563509212756707e-07, 'reg_alpha': 0.0003174812745255487, 'reg_lambda': 1.927565628301918e-08}. Best is trial 4 with value: 0.9692287741817701.
+[I 2025-07-04 15:43:54,824] Trial 10 finished with value: 0.9689588139898301 and parameters: {'n_estimators': 150, 'learning_rate': 0.16137727921294748, 'max_depth': 8, 'min_child_weight': 10, 'subsample': 0.9991698183597485, 'colsample_bytree': 0.9806894422420107, 'gamma': 0.006332224030818724, 'reg_alpha': 4.476316996348051e-06, 'reg_lambda': 1.941571033231539e-05}. Best is trial 4 with value: 0.9692287741817701.
+[I 2025-07-04 15:43:56,626] Trial 11 finished with value: 0.9695661834275379 and parameters: {'n_estimators': 224, 'learning_rate': 0.020764272828147304, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.8560138282797685, 'colsample_bytree': 0.7885066690469099, 'gamma': 0.0005563510679132845, 'reg_alpha': 0.148584600617003, 'reg_lambda': 5.8783137020010134e-05}. Best is trial 11 with value: 0.9695661834275379.
+[I 2025-07-04 15:43:57,600] Trial 12 finished with value: 0.9696336324813654 and parameters: {'n_estimators': 143, 'learning_rate': 0.01243679763435987, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.8667083233151911, 'colsample_bytree': 0.8207606185576243, 'gamma': 0.0006592005600658087, 'reg_alpha': 0.4609972446222476, 'reg_lambda': 5.927166194552131e-05}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:43:58,158] Trial 13 finished with value: 0.9695661014392228 and parameters: {'n_estimators': 101, 'learning_rate': 0.022939589000139506, 'max_depth': 9, 'min_child_weight': 7, 'subsample': 0.8490982229617065, 'colsample_bytree': 0.7965677944980383, 'gamma': 0.6915854095241193, 'reg_alpha': 3.7801420550210145, 'reg_lambda': 2.3711880254815945e-05}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:00,050] Trial 14 finished with value: 0.9696336324813654 and parameters: {'n_estimators': 235, 'learning_rate': 0.013809645039436214, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.8847369444200773, 'colsample_bytree': 0.8010346553256316, 'gamma': 0.0013616157858629878, 'reg_alpha': 0.1173000436396693, 'reg_lambda': 3.6040027875834854e-05}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:01,723] Trial 15 finished with value: 0.9674741969107895 and parameters: {'n_estimators': 256, 'learning_rate': 0.28599858858613003, 'max_depth': 6, 'min_child_weight': 8, 'subsample': 0.9068085084117263, 'colsample_bytree': 0.9367528625309054, 'gamma': 0.0032155637537410017, 'reg_alpha': 0.025252667669234573, 'reg_lambda': 3.5360957630459387e-06}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:05,428] Trial 16 finished with value: 0.9670019168868054 and parameters: {'n_estimators': 458, 'learning_rate': 0.1358977168889084, 'max_depth': 9, 'min_child_weight': 6, 'subsample': 0.7936674309079081, 'colsample_bytree': 0.833471466809678, 'gamma': 0.05375030629166099, 'reg_alpha': 0.012236017163297495, 'reg_lambda': 0.00016292320390324638}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:06,446] Trial 17 finished with value: 0.9690937394269236 and parameters: {'n_estimators': 205, 'learning_rate': 0.060962167922921875, 'max_depth': 6, 'min_child_weight': 8, 'subsample': 0.9564036114591771, 'colsample_bytree': 0.7508806237384746, 'gamma': 0.0005450154809212157, 'reg_alpha': 9.082235378650198, 'reg_lambda': 1.1064951373091865e-06}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:08,523] Trial 18 finished with value: 0.9694986797148336 and parameters: {'n_estimators': 306, 'learning_rate': 0.010420588469851205, 'max_depth': 8, 'min_child_weight': 5, 'subsample': 0.7397256288943576, 'colsample_bytree': 0.908392232018959, 'gamma': 0.3169132330736438, 'reg_alpha': 0.2597969911499718, 'reg_lambda': 0.0007674574097311723}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:09,431] Trial 19 finished with value: 0.9688238885527367 and parameters: {'n_estimators': 100, 'learning_rate': 0.12229982187422155, 'max_depth': 9, 'min_child_weight': 8, 'subsample': 0.9095315029039384, 'colsample_bytree': 0.8182894043821981, 'gamma': 0.0005204890594991853, 'reg_alpha': 0.004740575614278332, 'reg_lambda': 0.17146907951142307}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:13,033] Trial 20 finished with value: 0.9683515265404373 and parameters: {'n_estimators': 527, 'learning_rate': 0.055833880825535254, 'max_depth': 7, 'min_child_weight': 6, 'subsample': 0.8104712487334622, 'colsample_bytree': 0.7641660135332982, 'gamma': 0.03901429166028062, 'reg_alpha': 0.12436275254746278, 'reg_lambda': 4.484349332120514e-06}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:14,780] Trial 21 finished with value: 0.9696336324813654 and parameters: {'n_estimators': 227, 'learning_rate': 0.010904353787429627, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.8584923040511082, 'colsample_bytree': 0.7799934413753588, 'gamma': 0.0005314158915423713, 'reg_alpha': 0.19243090221119935, 'reg_lambda': 8.472753884104355e-05}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:16,049] Trial 22 finished with value: 0.9689588413192686 and parameters: {'n_estimators': 191, 'learning_rate': 0.04686319140063992, 'max_depth': 9, 'min_child_weight': 9, 'subsample': 0.880551279280009, 'colsample_bytree': 0.8386862256335039, 'gamma': 8.881498796258302e-05, 'reg_alpha': 1.8841773665934458, 'reg_lambda': 0.00019408950704752004}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:20,404] Trial 23 finished with value: 0.9694312033315677 and parameters: {'n_estimators': 312, 'learning_rate': 0.010673919844643331, 'max_depth': 8, 'min_child_weight': 6, 'subsample': 0.941591941165906, 'colsample_bytree': 0.790477418733401, 'gamma': 0.0018963575695880805, 'reg_alpha': 0.003967790476063536, 'reg_lambda': 0.0036568252046835464}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:23,137] Trial 24 finished with value: 0.9681490973906399 and parameters: {'n_estimators': 366, 'learning_rate': 0.10820687923935975, 'max_depth': 7, 'min_child_weight': 5, 'subsample': 0.8155256615198223, 'colsample_bytree': 0.7412287916498161, 'gamma': 1.9924666711698878e-05, 'reg_alpha': 0.049045852138535795, 'reg_lambda': 4.0778764851386415e-07}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:25,192] Trial 25 finished with value: 0.9691612977985044 and parameters: {'n_estimators': 267, 'learning_rate': 0.041567841892652474, 'max_depth': 10, 'min_child_weight': 9, 'subsample': 0.8702975934515926, 'colsample_bytree': 0.9103444092953458, 'gamma': 0.04035315562742021, 'reg_alpha': 0.5879781739117806, 'reg_lambda': 7.100346543876261e-06}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:26,558] Trial 26 finished with value: 0.9684190029237033 and parameters: {'n_estimators': 162, 'learning_rate': 0.16882584089679253, 'max_depth': 9, 'min_child_weight': 7, 'subsample': 0.9230228043670115, 'colsample_bytree': 0.7738896336807887, 'gamma': 0.0001574442871089067, 'reg_alpha': 1.6899256806663007e-05, 'reg_lambda': 8.670372683174601e-05}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:30,434] Trial 27 finished with value: 0.9687563848400326 and parameters: {'n_estimators': 652, 'learning_rate': 0.059271712565241566, 'max_depth': 6, 'min_child_weight': 9, 'subsample': 0.9773305514669781, 'colsample_bytree': 0.8156175686282736, 'gamma': 0.0014591424312631876, 'reg_alpha': 0.004883227249980599, 'reg_lambda': 0.0004613605566043487}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:33,711] Trial 28 finished with value: 0.9680141172946698 and parameters: {'n_estimators': 440, 'learning_rate': 0.0953362995137512, 'max_depth': 8, 'min_child_weight': 8, 'subsample': 0.834350279651781, 'colsample_bytree': 0.7212254330006274, 'gamma': 0.010630478239456407, 'reg_alpha': 1.0117889530948593e-08, 'reg_lambda': 0.01307657883139303}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:35,196] Trial 29 finished with value: 0.9686889084567668 and parameters: {'n_estimators': 164, 'learning_rate': 0.06513770830720286, 'max_depth': 10, 'min_child_weight': 5, 'subsample': 0.7757292245436334, 'colsample_bytree': 0.6488694352877873, 'gamma': 0.014599849188123622, 'reg_alpha': 0.06469355494627939, 'reg_lambda': 2.634676398164648e-07}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:37,069] Trial 30 finished with value: 0.9690263450319726 and parameters: {'n_estimators': 256, 'learning_rate': 0.03860835773623844, 'max_depth': 7, 'min_child_weight': 6, 'subsample': 0.8764257698870036, 'colsample_bytree': 0.8548039644062878, 'gamma': 1.8513392661952555e-05, 'reg_alpha': 0.001346669311294931, 'reg_lambda': 1.4917944130939598e-05}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:38,583] Trial 31 finished with value: 0.9695661560980996 and parameters: {'n_estimators': 207, 'learning_rate': 0.017164045199041505, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.8580670152399372, 'colsample_bytree': 0.7814265589045762, 'gamma': 0.0004974032866983437, 'reg_alpha': 0.2611178219061418, 'reg_lambda': 8.222438683781001e-05}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:40,336] Trial 32 finished with value: 0.9694312306610063 and parameters: {'n_estimators': 239, 'learning_rate': 0.027885078273917514, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.8260989518996821, 'colsample_bytree': 0.8099437415820492, 'gamma': 0.0003338446605767897, 'reg_alpha': 0.47991047385516594, 'reg_lambda': 4.600794026551968e-05}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:41,731] Trial 33 finished with value: 0.9689587593309535 and parameters: {'n_estimators': 338, 'learning_rate': 0.09077887833106117, 'max_depth': 7, 'min_child_weight': 7, 'subsample': 0.924913437434833, 'colsample_bytree': 0.7657851693677228, 'gamma': 0.001441692975769476, 'reg_alpha': 9.030256262873992, 'reg_lambda': 1.716264880912074e-06}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:42,984] Trial 34 finished with value: 0.9690262903730961 and parameters: {'n_estimators': 122, 'learning_rate': 0.01273552145994453, 'max_depth': 9, 'min_child_weight': 8, 'subsample': 0.7594720039884386, 'colsample_bytree': 0.7292051949936638, 'gamma': 2.5786608951939325e-06, 'reg_alpha': 0.018461045366913433, 'reg_lambda': 0.0002657218421686514}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:46,093] Trial 35 finished with value: 0.9688913649360026 and parameters: {'n_estimators': 403, 'learning_rate': 0.04241930799331603, 'max_depth': 8, 'min_child_weight': 6, 'subsample': 0.886887649560337, 'colsample_bytree': 0.8915489413221115, 'gamma': 5.04979767747267e-05, 'reg_alpha': 0.11050674326644316, 'reg_lambda': 1.3934282084611954e-07}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:50,903] Trial 36 finished with value: 0.9687563848400326 and parameters: {'n_estimators': 492, 'learning_rate': 0.06900443128919363, 'max_depth': 7, 'min_child_weight': 7, 'subsample': 0.7244183250592361, 'colsample_bytree': 0.8368223754885501, 'gamma': 4.17756955355596e-06, 'reg_alpha': 1.6827475931350642, 'reg_lambda': 0.0014862635350706534}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:53,366] Trial 37 finished with value: 0.9691612977985044 and parameters: {'n_estimators': 284, 'learning_rate': 0.0266977673730336, 'max_depth': 9, 'min_child_weight': 9, 'subsample': 0.852628766308496, 'colsample_bytree': 0.7965661170968346, 'gamma': 0.00026255707635434533, 'reg_alpha': 0.19095353326459266, 'reg_lambda': 3.617291697307355e-05}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:44:58,344] Trial 38 finished with value: 0.9684190302531417 and parameters: {'n_estimators': 820, 'learning_rate': 0.052098825623147695, 'max_depth': 6, 'min_child_weight': 4, 'subsample': 0.7935721245264598, 'colsample_bytree': 0.6997319449927771, 'gamma': 0.0012319897204403107, 'reg_alpha': 9.22268673078388e-05, 'reg_lambda': 0.003928970395034963}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:45:00,128] Trial 39 finished with value: 0.967541727952932 and parameters: {'n_estimators': 219, 'learning_rate': 0.2246126578908863, 'max_depth': 10, 'min_child_weight': 5, 'subsample': 0.6041687796186206, 'colsample_bytree': 0.876608672554646, 'gamma': 0.004054978466713681, 'reg_alpha': 0.8464187974496958, 'reg_lambda': 7.306499742385976e-06}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:45:05,280] Trial 40 finished with value: 0.968756412169471 and parameters: {'n_estimators': 954, 'learning_rate': 0.0771344667130708, 'max_depth': 5, 'min_child_weight': 8, 'subsample': 0.8960966985254641, 'colsample_bytree': 0.7551825907092007, 'gamma': 1.1384042329622706e-06, 'reg_alpha': 3.1263546499748656, 'reg_lambda': 1.344894811365895}. Best is trial 12 with value: 0.9696336324813654.
+[I 2025-07-04 15:45:06,677] Trial 41 finished with value: 0.9696336598108038 and parameters: {'n_estimators': 182, 'learning_rate': 0.020014594925478905, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.8644096825084613, 'colsample_bytree': 0.7798729062325456, 'gamma': 0.0005882626592809355, 'reg_alpha': 0.29181115513853007, 'reg_lambda': 6.542420149965506e-05}. Best is trial 41 with value: 0.9696336598108038.
+[I 2025-07-04 15:45:08,044] Trial 42 finished with value: 0.9695661834275379 and parameters: {'n_estimators': 157, 'learning_rate': 0.027635760048018487, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.8524158210777177, 'colsample_bytree': 0.822167857341428, 'gamma': 5.239983992765632e-05, 'reg_alpha': 0.06648370938158753, 'reg_lambda': 0.00010390188296927486}. Best is trial 41 with value: 0.9696336598108038.
+[I 2025-07-04 15:45:09,329] Trial 43 finished with value: 0.9692962778944745 and parameters: {'n_estimators': 183, 'learning_rate': 0.03463205313865002, 'max_depth': 7, 'min_child_weight': 6, 'subsample': 0.8625481853872632, 'colsample_bytree': 0.7825192185777885, 'gamma': 0.00014215795132558617, 'reg_alpha': 0.5329702394134566, 'reg_lambda': 0.00048106888387527573}. Best is trial 41 with value: 0.9696336598108038.
+[I 2025-07-04 15:45:12,236] Trial 44 finished with value: 0.9696336324813654 and parameters: {'n_estimators': 344, 'learning_rate': 0.01047188174819767, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.8339486977330625, 'colsample_bytree': 0.8580450651515041, 'gamma': 0.007242903316021615, 'reg_alpha': 0.0013288104723600956, 'reg_lambda': 1.2498696229180558e-05}. Best is trial 41 with value: 0.9696336598108038.
+[I 2025-07-04 15:45:13,883] Trial 45 finished with value: 0.9690937940858002 and parameters: {'n_estimators': 355, 'learning_rate': 0.04670957576483538, 'max_depth': 3, 'min_child_weight': 8, 'subsample': 0.8258006866766617, 'colsample_bytree': 0.8565481872188345, 'gamma': 0.1156821665116152, 'reg_alpha': 0.001531283545353115, 'reg_lambda': 1.4567317123456867e-05}. Best is trial 41 with value: 0.9696336598108038.
+[I 2025-07-04 15:45:15,282] Trial 46 finished with value: 0.9692287741817701 and parameters: {'n_estimators': 131, 'learning_rate': 0.010750332024881485, 'max_depth': 9, 'min_child_weight': 3, 'subsample': 0.7004149245847939, 'colsample_bytree': 0.8741794779789389, 'gamma': 0.007042505549056372, 'reg_alpha': 0.0003450567553474627, 'reg_lambda': 1.6759095952533498e-06}. Best is trial 41 with value: 0.9696336598108038.
+[I 2025-07-04 15:45:17,596] Trial 47 finished with value: 0.9690263723614111 and parameters: {'n_estimators': 291, 'learning_rate': 0.028825975117560527, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.9149911307309943, 'colsample_bytree': 0.808432267213579, 'gamma': 0.02329804009643978, 'reg_alpha': 5.546894425619263e-05, 'reg_lambda': 1.0713322757833081e-05}. Best is trial 41 with value: 0.9696336598108038.
+[I 2025-07-04 15:45:19,470] Trial 48 finished with value: 0.9680815936779356 and parameters: {'n_estimators': 238, 'learning_rate': 0.18790600503852337, 'max_depth': 8, 'min_child_weight': 6, 'subsample': 0.8929281532805785, 'colsample_bytree': 0.9505754270659528, 'gamma': 0.003315736047823796, 'reg_alpha': 3.0871215543271484e-06, 'reg_lambda': 2.7017251328187454e-06}. Best is trial 41 with value: 0.9696336598108038.
+[I 2025-07-04 15:45:25,796] Trial 49 finished with value: 0.9681491247200782 and parameters: {'n_estimators': 606, 'learning_rate': 0.14186554908187463, 'max_depth': 9, 'min_child_weight': 8, 'subsample': 0.7805519834912283, 'colsample_bytree': 0.8491967671787882, 'gamma': 0.0008358796674345116, 'reg_alpha': 0.029252260560701883, 'reg_lambda': 3.886567420361968e-05}. Best is trial 41 with value: 0.9696336598108038.
+[I 2025-07-04 15:45:25,798] A new study created in memory with name: no-name-980c8b46-e825-4fff-bcb3-985bb2827a0e
+Best XGBoost CV Score: 0.9696
+Best XGBoost Parameters: {'n_estimators': 182, 'learning_rate': 0.020014594925478905, 'max_depth': 8, 'min_child_weight': 7, 'subsample': 0.8644096825084613, 'colsample_bytree': 0.7798729062325456, 'gamma': 0.0005882626592809355, 'reg_alpha': 0.29181115513853007, 'reg_lambda': 6.542420149965506e-05}
+
+3. Optimizing CatBoost...
+[I 2025-07-04 15:45:57,103] Trial 0 finished with value: 0.9605236375045161 and parameters: {'iterations': 799, 'learning_rate': 0.08669303289603153, 'depth': 8, 'l2_leaf_reg': 0.0007010337047195649, 'border_count': 80, 'bagging_temperature': 0.9049591275938964, 'random_strength': 2.3416039119665573e-05}. Best is trial 0 with value: 0.9605236375045161.
+[I 2025-07-04 15:46:48,308] Trial 1 finished with value: 0.9593091172646074 and parameters: {'iterations': 985, 'learning_rate': 0.1878672929919118, 'depth': 10, 'l2_leaf_reg': 0.000745564594245822, 'border_count': 33, 'bagging_temperature': 0.7380833947063163, 'random_strength': 0.21077085103988383}. Best is trial 0 with value: 0.9605236375045161.
+[I 2025-07-04 15:47:03,001] Trial 2 finished with value: 0.9663269890775167 and parameters: {'iterations': 349, 'learning_rate': 0.0604367704150077, 'depth': 8, 'l2_leaf_reg': 0.021488729548109733, 'border_count': 67, 'bagging_temperature': 0.6547031459374658, 'random_strength': 1.438654294870275e-07}. Best is trial 2 with value: 0.9663269890775167.
+[I 2025-07-04 15:47:10,064] Trial 3 finished with value: 0.9681490973906398 and parameters: {'iterations': 387, 'learning_rate': 0.1164260487586833, 'depth': 3, 'l2_leaf_reg': 0.01210418106722365, 'border_count': 55, 'bagging_temperature': 0.29880007049236257, 'random_strength': 4.345265397769866}. Best is trial 3 with value: 0.9681490973906398.
+[I 2025-07-04 15:47:21,355] Trial 4 finished with value: 0.9682840501571716 and parameters: {'iterations': 209, 'learning_rate': 0.037597441406071685, 'depth': 9, 'l2_leaf_reg': 6.656249407457988e-05, 'border_count': 72, 'bagging_temperature': 0.7901203323481736, 'random_strength': 2.68287836331385e-05}. Best is trial 4 with value: 0.9682840501571716.
+[I 2025-07-04 15:48:17,462] Trial 5 finished with value: 0.9594440153722625 and parameters: {'iterations': 731, 'learning_rate': 0.24630093776530512, 'depth': 10, 'l2_leaf_reg': 0.1604802230269261, 'border_count': 55, 'bagging_temperature': 0.8601967116558267, 'random_strength': 1.589995471079711}. Best is trial 4 with value: 0.9682840501571716.
+[I 2025-07-04 15:48:25,791] Trial 6 finished with value: 0.9670693932700712 and parameters: {'iterations': 324, 'learning_rate': 0.07247808706092444, 'depth': 6, 'l2_leaf_reg': 1.7965254014915657e-05, 'border_count': 195, 'bagging_temperature': 0.749401588479089, 'random_strength': 0.18106324110555722}. Best is trial 4 with value: 0.9682840501571716.
+[I 2025-07-04 15:48:38,995] Trial 7 finished with value: 0.9656522799037348 and parameters: {'iterations': 570, 'learning_rate': 0.11161015400287613, 'depth': 5, 'l2_leaf_reg': 7.049574949943325e-07, 'border_count': 32, 'bagging_temperature': 0.24639919599388138, 'random_strength': 0.38001044507849413}. Best is trial 4 with value: 0.9682840501571716.
+[I 2025-07-04 15:49:21,246] Trial 8 finished with value: 0.9616033689545235 and parameters: {'iterations': 509, 'learning_rate': 0.10459034184123389, 'depth': 10, 'l2_leaf_reg': 1.0080373038130473e-07, 'border_count': 95, 'bagging_temperature': 0.2601692429848582, 'random_strength': 2.728045229701615e-08}. Best is trial 4 with value: 0.9682840501571716.
+[I 2025-07-04 15:49:26,633] Trial 9 finished with value: 0.9679466955702806 and parameters: {'iterations': 300, 'learning_rate': 0.15266728758854575, 'depth': 3, 'l2_leaf_reg': 2.6155039386319035e-05, 'border_count': 161, 'bagging_temperature': 0.2214171176359605, 'random_strength': 0.0003715703920644457}. Best is trial 4 with value: 0.9682840501571716.
+[I 2025-07-04 15:49:28,988] Trial 10 finished with value: 0.9697011088646312 and parameters: {'iterations': 128, 'learning_rate': 0.02427775622488998, 'depth': 8, 'l2_leaf_reg': 8.399680787606213, 'border_count': 117, 'bagging_temperature': 0.5602395311851693, 'random_strength': 0.0002582851422175004}. Best is trial 10 with value: 0.9697011088646312.
+[I 2025-07-04 15:49:31,434] Trial 11 finished with value: 0.969768585247897 and parameters: {'iterations': 137, 'learning_rate': 0.011995458279847042, 'depth': 8, 'l2_leaf_reg': 5.046546607352891, 'border_count': 125, 'bagging_temperature': 0.5145720063854655, 'random_strength': 0.00041145405573640167}. Best is trial 11 with value: 0.969768585247897.
+[I 2025-07-04 15:49:33,047] Trial 12 finished with value: 0.9697010815351929 and parameters: {'iterations': 104, 'learning_rate': 0.011910705666444667, 'depth': 7, 'l2_leaf_reg': 2.096584864847912, 'border_count': 126, 'bagging_temperature': 0.465082408832324, 'random_strength': 0.0022248391417255342}. Best is trial 11 with value: 0.969768585247897.
+[I 2025-07-04 15:49:34,736] Trial 13 finished with value: 0.9698360616311631 and parameters: {'iterations': 105, 'learning_rate': 0.0223422731385506, 'depth': 7, 'l2_leaf_reg': 4.623879166601457, 'border_count': 133, 'bagging_temperature': 0.5172588041159418, 'random_strength': 0.005708431014209974}. Best is trial 13 with value: 0.9698360616311631.
+[I 2025-07-04 15:49:36,826] Trial 14 finished with value: 0.9679466955702806 and parameters: {'iterations': 174, 'learning_rate': 0.208027725894973, 'depth': 5, 'l2_leaf_reg': 0.532736232145361, 'border_count': 247, 'bagging_temperature': 0.007108896912564222, 'random_strength': 0.005304388930130149}. Best is trial 13 with value: 0.9698360616311631.
+[I 2025-07-04 15:49:50,980] Trial 15 finished with value: 0.9606586995888012 and parameters: {'iterations': 494, 'learning_rate': 0.27328056305415005, 'depth': 6, 'l2_leaf_reg': 0.05567245166646635, 'border_count': 160, 'bagging_temperature': 0.488548694041141, 'random_strength': 0.01868795858422277}. Best is trial 13 with value: 0.9698360616311631.
+[I 2025-07-04 15:49:58,551] Trial 16 finished with value: 0.9687564394989092 and parameters: {'iterations': 233, 'learning_rate': 0.05258135970505022, 'depth': 7, 'l2_leaf_reg': 7.022324640711789, 'border_count': 183, 'bagging_temperature': 0.41306738896628015, 'random_strength': 1.6175448190374787e-05}. Best is trial 13 with value: 0.9698360616311631.
+[I 2025-07-04 15:50:14,085] Trial 17 finished with value: 0.9647076651968893 and parameters: {'iterations': 678, 'learning_rate': 0.14905426137564123, 'depth': 5, 'l2_leaf_reg': 0.0034008816189676017, 'border_count': 122, 'bagging_temperature': 0.6162145774651322, 'random_strength': 4.849800471594167e-07}. Best is trial 13 with value: 0.9698360616311631.
+[I 2025-07-04 15:50:38,500] Trial 18 finished with value: 0.9684864519775308 and parameters: {'iterations': 408, 'learning_rate': 0.012761952351908305, 'depth': 9, 'l2_leaf_reg': 0.3898227734911702, 'border_count': 221, 'bagging_temperature': 0.9811015495893199, 'random_strength': 0.0004190957715652727}. Best is trial 13 with value: 0.9698360616311631.
+[I 2025-07-04 15:50:46,993] Trial 19 finished with value: 0.9684190029237033 and parameters: {'iterations': 258, 'learning_rate': 0.04738651339069444, 'depth': 7, 'l2_leaf_reg': 1.1166820576001668, 'border_count': 140, 'bagging_temperature': 0.37568810213674697, 'random_strength': 2.4092757890371662e-06}. Best is trial 13 with value: 0.9698360616311631.
+[I 2025-07-04 15:51:17,123] Trial 20 finished with value: 0.9589715713716481 and parameters: {'iterations': 944, 'learning_rate': 0.2997392264200814, 'depth': 9, 'l2_leaf_reg': 3.136306477483709e-06, 'border_count': 103, 'bagging_temperature': 0.06331736045450487, 'random_strength': 0.01169945383719891}. Best is trial 13 with value: 0.9698360616311631.
+[I 2025-07-04 15:51:19,523] Trial 21 finished with value: 0.9698360889606011 and parameters: {'iterations': 133, 'learning_rate': 0.026716821825238317, 'depth': 8, 'l2_leaf_reg': 4.8836758852777855, 'border_count': 114, 'bagging_temperature': 0.6157639100198098, 'random_strength': 8.626209813202038e-05}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:51:21,931] Trial 22 finished with value: 0.969768585247897 and parameters: {'iterations': 117, 'learning_rate': 0.08505950353066588, 'depth': 8, 'l2_leaf_reg': 8.929039566843993, 'border_count': 150, 'bagging_temperature': 0.5645559476623654, 'random_strength': 0.00011725563252016002}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:51:24,435] Trial 23 finished with value: 0.9692962778944745 and parameters: {'iterations': 182, 'learning_rate': 0.035998416083989675, 'depth': 6, 'l2_leaf_reg': 0.1013424340645181, 'border_count': 101, 'bagging_temperature': 0.67971598120523, 'random_strength': 0.0011444358378575438}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:51:31,362] Trial 24 finished with value: 0.9695661834275379 and parameters: {'iterations': 211, 'learning_rate': 0.012018194322665862, 'depth': 7, 'l2_leaf_reg': 1.7929868933356963, 'border_count': 175, 'bagging_temperature': 0.5558990505888186, 'random_strength': 4.893261011268038e-06}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:51:47,336] Trial 25 finished with value: 0.9643701193039301 and parameters: {'iterations': 283, 'learning_rate': 0.07111639497965844, 'depth': 9, 'l2_leaf_reg': 1.4076409267212611e-08, 'border_count': 135, 'bagging_temperature': 0.3446894589315425, 'random_strength': 0.02371475544601785}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:52:05,362] Trial 26 finished with value: 0.967001889557367 and parameters: {'iterations': 441, 'learning_rate': 0.03916097751892141, 'depth': 8, 'l2_leaf_reg': 0.0053058327600587875, 'border_count': 113, 'bagging_temperature': 0.46727171908291165, 'random_strength': 5.4936957158877e-05}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:52:07,079] Trial 27 finished with value: 0.9694987070442721 and parameters: {'iterations': 149, 'learning_rate': 0.08888442894369347, 'depth': 4, 'l2_leaf_reg': 0.26483191760293284, 'border_count': 85, 'bagging_temperature': 0.601838517844622, 'random_strength': 0.0020519582679435436}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:52:26,050] Trial 28 finished with value: 0.9648424813162295 and parameters: {'iterations': 578, 'learning_rate': 0.12605263797490215, 'depth': 7, 'l2_leaf_reg': 2.0615628810630393, 'border_count': 162, 'bagging_temperature': 0.7048564573112863, 'random_strength': 0.048870443238635486}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:52:52,865] Trial 29 finished with value: 0.9597813699591535 and parameters: {'iterations': 872, 'learning_rate': 0.18248877772820501, 'depth': 8, 'l2_leaf_reg': 0.0009585854425423186, 'border_count': 140, 'bagging_temperature': 0.12432240704182718, 'random_strength': 9.749918657849992e-06}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:52:55,298] Trial 30 finished with value: 0.9692962505650361 and parameters: {'iterations': 100, 'learning_rate': 0.029489003415294902, 'depth': 9, 'l2_leaf_reg': 0.039360147886754016, 'border_count': 85, 'bagging_temperature': 0.41692367051877166, 'random_strength': 8.370391010886613e-05}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:52:58,108] Trial 31 finished with value: 0.9696336598108038 and parameters: {'iterations': 146, 'learning_rate': 0.08764436073605392, 'depth': 8, 'l2_leaf_reg': 8.256276253538664, 'border_count': 151, 'bagging_temperature': 0.5525478293531136, 'random_strength': 8.706337833161086e-05}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:53:09,163] Trial 32 finished with value: 0.9678791645281382 and parameters: {'iterations': 255, 'learning_rate': 0.06783087026994528, 'depth': 8, 'l2_leaf_reg': 3.289332101599851, 'border_count': 130, 'bagging_temperature': 0.8018256190709757, 'random_strength': 0.0007162159636861789}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:53:10,828] Trial 33 finished with value: 0.9694987070442721 and parameters: {'iterations': 101, 'learning_rate': 0.05249674990822927, 'depth': 7, 'l2_leaf_reg': 0.6859206194934251, 'border_count': 202, 'bagging_temperature': 0.5255010938178633, 'random_strength': 0.00014422472839223678}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:53:31,854] Trial 34 finished with value: 0.9667994057486927 and parameters: {'iterations': 348, 'learning_rate': 0.13580719230719665, 'depth': 9, 'l2_leaf_reg': 9.333766999055847, 'border_count': 152, 'bagging_temperature': 0.6271249149759199, 'random_strength': 0.005549015360575158}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:53:35,336] Trial 35 finished with value: 0.9678792191870148 and parameters: {'iterations': 189, 'learning_rate': 0.09723998297985183, 'depth': 8, 'l2_leaf_reg': 0.20623068150659818, 'border_count': 110, 'bagging_temperature': 0.683174037004262, 'random_strength': 4.4049069827986004e-07}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:53:41,460] Trial 36 finished with value: 0.9687564394989092 and parameters: {'iterations': 226, 'learning_rate': 0.026553275444950626, 'depth': 6, 'l2_leaf_reg': 0.0147435714899145, 'border_count': 172, 'bagging_temperature': 0.43148259771991576, 'random_strength': 2.8766759886533358e-05}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:53:44,566] Trial 37 finished with value: 0.9674068571747155 and parameters: {'iterations': 170, 'learning_rate': 0.07682605049611091, 'depth': 8, 'l2_leaf_reg': 0.0002032252445075994, 'border_count': 50, 'bagging_temperature': 0.7507587070546932, 'random_strength': 2.2279969319363785e-06}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:54:27,321] Trial 38 finished with value: 0.9664620511618018 and parameters: {'iterations': 371, 'learning_rate': 0.052856824064825426, 'depth': 10, 'l2_leaf_reg': 0.897788746240352, 'border_count': 147, 'bagging_temperature': 0.5909144437577757, 'random_strength': 0.06292106801932826}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:54:37,255] Trial 39 finished with value: 0.966192200287615 and parameters: {'iterations': 287, 'learning_rate': 0.17359709897147269, 'depth': 7, 'l2_leaf_reg': 3.38280526559994, 'border_count': 69, 'bagging_temperature': 0.3481504256523701, 'random_strength': 0.0039929650766869565}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:55:22,913] Trial 40 finished with value: 0.9611309796127855 and parameters: {'iterations': 747, 'learning_rate': 0.06039863006319936, 'depth': 9, 'l2_leaf_reg': 0.07819715095936292, 'border_count': 89, 'bagging_temperature': 0.829093919618784, 'random_strength': 0.3184324146973581}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:55:25,542] Trial 41 finished with value: 0.9697686125773354 and parameters: {'iterations': 136, 'learning_rate': 0.031108634623407204, 'depth': 8, 'l2_leaf_reg': 9.67620912676369, 'border_count': 116, 'bagging_temperature': 0.5220403555886004, 'random_strength': 0.00019859103150133938}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:55:28,673] Trial 42 finished with value: 0.9698360889606011 and parameters: {'iterations': 173, 'learning_rate': 0.021053521257346833, 'depth': 8, 'l2_leaf_reg': 4.941179164801816, 'border_count': 125, 'bagging_temperature': 0.5088097103236692, 'random_strength': 0.0002245886095190252}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:55:31,566] Trial 43 finished with value: 0.9696336324813655 and parameters: {'iterations': 158, 'learning_rate': 0.02850263480917837, 'depth': 8, 'l2_leaf_reg': 3.0611636074950295, 'border_count': 107, 'bagging_temperature': 0.5005104637969413, 'random_strength': 0.000626974432344773}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:55:38,714] Trial 44 finished with value: 0.9686889631156433 and parameters: {'iterations': 216, 'learning_rate': 0.020355484864521788, 'depth': 7, 'l2_leaf_reg': 0.8590834294993483, 'border_count': 126, 'bagging_temperature': 0.6320490528307796, 'random_strength': 0.00024433156323783016}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:55:42,193] Trial 45 finished with value: 0.9674742788991048 and parameters: {'iterations': 143, 'learning_rate': 0.21446686817760705, 'depth': 9, 'l2_leaf_reg': 0.21255828560178647, 'border_count': 117, 'bagging_temperature': 0.4526681982050199, 'random_strength': 3.5076083193893785e-05}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:55:51,803] Trial 46 finished with value: 0.9686889631156435 and parameters: {'iterations': 329, 'learning_rate': 0.04248528185999052, 'depth': 6, 'l2_leaf_reg': 4.070406730118668, 'border_count': 76, 'bagging_temperature': 0.300871678055011, 'random_strength': 0.001727410595720484}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:56:00,644] Trial 47 finished with value: 0.9696336324813654 and parameters: {'iterations': 259, 'learning_rate': 0.010167367589098197, 'depth': 8, 'l2_leaf_reg': 1.5237414520299843, 'border_count': 97, 'bagging_temperature': 0.5067007294225334, 'random_strength': 5.677389179425602}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:56:06,093] Trial 48 finished with value: 0.9691613251279426 and parameters: {'iterations': 183, 'learning_rate': 0.03631116387403254, 'depth': 10, 'l2_leaf_reg': 0.5107986275324798, 'border_count': 133, 'bagging_temperature': 0.39025327910149704, 'random_strength': 0.00025885055409132965}. Best is trial 21 with value: 0.9698360889606011.
+[I 2025-07-04 15:56:16,836] Trial 49 finished with value: 0.9682166011033441 and parameters: {'iterations': 306, 'learning_rate': 0.060852571351347716, 'depth': 7, 'l2_leaf_reg': 2.692514409547663, 'border_count': 123, 'bagging_temperature': 0.7287127902602157, 'random_strength': 1.2042034004468858e-05}. Best is trial 21 with value: 0.9698360889606011.
+Best CatBoost CV Score: 0.9698
+Best CatBoost Parameters: {'iterations': 133, 'learning_rate': 0.026716821825238317, 'depth': 8, 'l2_leaf_reg': 4.8836758852777855, 'border_count': 114, 'bagging_temperature': 0.6157639100198098, 'random_strength': 8.626209813202038e-05}
+In [27]:
+study_lgbm.best_params
+Out[27]:
+{'n_estimators': 481,
+ 'learning_rate': 0.040137311843940246,
+ 'max_depth': 7,
+ 'num_leaves': 10,
+ 'min_child_samples': 48,
+ 'subsample': 0.9970960439864031,
+ 'colsample_bytree': 0.8008478217069228,
+ 'reg_alpha': 5.3170313566730805,
+ 'reg_lambda': 4.082004208772357}
+In [28]:
+test
+Out[28]:
+id Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency
+0 18524 -0.022156 0 0.651201 -0.022392 0 -0.486882 0.006002
+1 18525 -0.364742 1 -1.976285 -2.043388 1 -0.730698 -1.433314
+2 18526 -0.022156 0 -0.099509 0.988105 0 1.707463 1.445319
+3 18527 -0.022156 0 -0.474864 -0.022392 0 -0.730698 0.365832
+4 18528 2.033358 1 -1.600930 -1.032890 1 -1.705963 -1.433314
+... ... ... ... ... ... ... ... ...
+6170 24694 -0.022156 0 -0.099509 0.482856 0 0.244566 0.365832
+6171 24695 1.690772 1 -1.225575 -1.538139 1 -1.949779 -1.793144
+6172 24696 -0.364742 0 -0.474864 -0.527641 0 0.244566 0.725661
+6173 24697 -0.022156 0 -0.474864 -0.022392 0 0.732199 1.445319
+6174 24698 -0.364742 1 -1.600930 -1.538139 1 -1.705963 -1.793144
+6175 rows × 8 columns
+In [29]:
+id = test["id"]
+X_test = test.drop(columns=['id'])
+X_test
+Out[29]:
+Time_spent_Alone Stage_fear Social_event_attendance Going_outside Drained_after_socializing Friends_circle_size Post_frequency
+0 -0.022156 0 0.651201 -0.022392 0 -0.486882 0.006002
+1 -0.364742 1 -1.976285 -2.043388 1 -0.730698 -1.433314
+2 -0.022156 0 -0.099509 0.988105 0 1.707463 1.445319
+3 -0.022156 0 -0.474864 -0.022392 0 -0.730698 0.365832
+4 2.033358 1 -1.600930 -1.032890 1 -1.705963 -1.433314
+... ... ... ... ... ... ... ...
+6170 -0.022156 0 -0.099509 0.482856 0 0.244566 0.365832
+6171 1.690772 1 -1.225575 -1.538139 1 -1.949779 -1.793144
+6172 -0.364742 0 -0.474864 -0.527641 0 0.244566 0.725661
+6173 -0.022156 0 -0.474864 -0.022392 0 0.732199 1.445319
+6174 -0.364742 1 -1.600930 -1.538139 1 -1.705963 -1.793144
+6175 rows × 7 columns
+In [30]:
+best_lgbm_params = study_lgbm.best_params
+
+best_lgbm_params.update({'objective': 'binary',
+    'metric': 'binary_logloss', 'boosting_type': 'gbdt',
+    'random_state': 42, 'verbose': -1})
+
+final_lgbm_model = lgb.LGBMClassifier(**best_lgbm_params)
+
+final_lgbm_model.fit(X_train, y_train)
+
+predictions = final_lgbm_model.predict(X_test)
+In [31]:
+submission = pd.DataFrame({'id': id,
+    'Personality': predictions})
+In [32]:
+submission
+Out[32]:
+id Personality
+0 18524 0
+1 18525 1
+2 18526 0
+3 18527 0
+4 18528 1
+... ... ...
+6170 24694 0
+6171 24695 1
+6172 24696 0
+6173 24697 0
+6174 24698 1
+6175 rows × 2 columns
+In [33]:
+original_personality_values = le_personality.inverse_transform(predictions)
+
+submission['Personality'] = original_personality_values
+
+submission
+Out[33]:
+id Personality
+0 18524 Extrovert
+1 18525 Introvert
+2 18526 Extrovert
+3 18527 Extrovert
+4 18528 Introvert
+... ... ...
+6170 24694 Extrovert
+6171 24695 Introvert
+6172 24696 Extrovert
+6173 24697 Extrovert
+6174 24698 Introvert
+6175 rows × 2 columns
+In [34]:
+submission.to_csv('predictions.csv', index=False)

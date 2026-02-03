@@ -1,0 +1,298 @@
+📦 Imports
+In [1]:
+import os, gc
+from collections import defaultdict
+
+import pandas as pd
+from tqdm.auto import tqdm
+import numpy as np
+ƒ Utility Functions
+In [2]:
+def read_train_terms(path):
+    mapping = defaultdict(list)
+    df = pd.read_csv(path, sep="\t", header=None, names=["protein","go","ont"], dtype=str)
+    for _, r in tqdm(df.iterrows(), total=len(df)): 
+        mapping[r.protein].append(r.go)
+    print(f"[io] Read training annotations for {len(mapping)} proteins from {path}")
+    return mapping
+
+def parse_obo(go_obo_path):
+    parents = defaultdict(set)
+    children = defaultdict(set)
+    
+    if not os.path.exists(go_obo_path): 
+        return parents, children
+        
+    with open(go_obo_path,"r") as f:
+        cur_id=None
+        for line in f:
+            line=line.strip()
+            if line=="[Term]": 
+                cur_id=None
+            elif line.startswith("id: "): 
+                cur_id=line.split("id: ")[1].strip()
+            elif line.startswith("is_a: "):
+                pid=line.split()[1].strip()
+                if cur_id: 
+                    parents[cur_id].add(pid)
+                    children[pid].add(cur_id)
+            elif line.startswith("relationship: part_of "):
+                parts=line.split(); 
+                if len(parts)>=3:
+                    pid=parts[2].strip()
+                    if cur_id: 
+                        parents[cur_id].add(pid)
+                        children[pid].add(cur_id)
+    print(f"[io] Parsed OBO: {len(parents)} nodes with parents")
+    return parents, children
+
+def get_ancestors(go_id, parents):
+    ans=set()
+    stack=[go_id]
+    while stack:
+        cur=stack.pop()
+        for p in parents.get(cur,[]): 
+            if p not in ans:
+                ans.add(p)
+                stack.append(p)
+    return ans
+
+def get_descendants(go_id):
+    desc = set()
+    stack = [go_id]
+    while stack:
+        cur = stack.pop()
+        for child in children_map.get(cur, []):
+            if child not in desc:
+                desc.add(child)
+                stack.append(child)
+    return desc
+🥇 Competition Data
+In [3]:
+train_terms = read_train_terms("/kaggle/input/cafa-6-protein-function-prediction/Train/train_terms.tsv")
+parents_map, children_map = parse_obo("/kaggle/input/cafa-6-protein-function-prediction/Train/go-basic.obo")
+100%
+537028/537028 [00:28<00:00, 18568.91it/s]
+[io] Read training annotations for 82405 proteins from /kaggle/input/cafa-6-protein-function-prediction/Train/train_terms.tsv
+[io] Parsed OBO: 40121 nodes with parents
+🧬 Load GOA Uniprot Data
+In [4]:
+go_annotations = pd.read_csv('/kaggle/input/protein-go-annotations/goa_uniprot_all.csv')
+go_annotations = go_annotations.drop_duplicates()
+print(f'[+] Dataset shape: {go_annotations.shape}')
+go_annotations.head()
+[+] Dataset shape: (2583077, 3)
+Out[4]:
+protein_id go_term qualifier
+0 A1CHB5 GO:0042407 involved_in
+1 A1CHB5 GO:0061617 part_of
+2 A1CHB5 GO:0005743 located_in
+3 Q9ZFU7 GO:0000987 enables
+4 Q9ZFU7 GO:0003700 enables
+In [5]:
+go_annotations.qualifier.value_counts()
+Out[5]:
+qualifier
+involved_in                                       901478
+enables                                           791908
+located_in                                        487152
+acts_upstream_of_or_within                        145517
+is_active_in                                      135499
+part_of                                            98512
+contributes_to                                      7198
+acts_upstream_of                                    5207
+colocalizes_with                                    3837
+NOT|involved_in                                     2078
+NOT|enables                                         1919
+NOT|located_in                                      1101
+acts_upstream_of_or_within_positive_effect           552
+acts_upstream_of_positive_effect                     524
+acts_upstream_of_negative_effect                     217
+acts_upstream_of_or_within_negative_effect           182
+NOT|is_active_in                                      81
+NOT|part_of                                           47
+NOT|colocalizes_with                                  27
+NOT|contributes_to                                    17
+NOT|acts_upstream_of_or_within                        17
+NOT|acts_upstream_of_or_within_negative_effect         4
+NOT|acts_upstream_of                                   2
+NOT|acts_upstream_of_or_within_positive_effect         1
+Name: count, dtype: int64
+🧬 NOT qualifiers explicitly indicate that a protein is not associated with a given GO term. These annotations serve as reliable negative examples.
+If a protein is not linked to a specific GO term, it is also not linked to any of its descendants within the Gene Ontology hierarchy.
+By propagating these negative annotations through the ontology, we can reduce false positives and achieve a more accurate leaderboard score.
+In [6]:
+print(f"[1/3] Filtering Negative Annotations ..")
+negative_annots = go_annotations[go_annotations['qualifier'].str.contains('NOT', na=False)]
+negative_annots = negative_annots.drop(columns=['qualifier']).drop_duplicates()
+
+print(f"[2/3] Propagate Negative Terms ..")
+negative_annots = negative_annots.groupby('protein_id')['go_term'].apply(list).to_dict()
+
+propagated={}
+for p in tqdm(negative_annots.keys()):
+    terms=set(negative_annots[p])
+    extra=set()
+    for t in list(terms): 
+        extra |= get_descendants(t)
+    propagated[p] = sorted(terms | extra)
+        
+negative_annots = propagated
+
+print(f"[3/3] Extract Unique Keys ..")
+rows = [(protein_id, go_term) for protein_id, terms in negative_annots.items() for go_term in terms]
+negative_df = pd.DataFrame(rows, columns=["protein_id", "go_term"])
+negative_df['pred_key'] = negative_df.protein_id.apply(str) + '_' + negative_df.go_term.apply(str)
+negative_keys = set(negative_df['pred_key'])
+
+del negative_df
+gc.collect()
+
+print(f"Total unique negative protein-GO pairs: {len(negative_keys)}")
+[1/3] Filtering Negative Annotations ..
+[2/3] Propagate Negative Terms ..
+100%
+3863/3863 [00:00<00:00, 17877.53it/s]
+[3/3] Extract Unique Keys ..
+Total unique negative protein-GO pairs: 238553
+In [7]:
+print(f"[1/4] Loading GOA Annotations ..")
+go_annotations = pd.read_csv('/kaggle/input/protein-go-annotations/goa_uniprot_all.csv')
+
+print(f"[2/4] Removing unwanted annotations ..")
+go_annotations = go_annotations[~go_annotations['qualifier'].str.contains('NOT', na=False)]
+go_annotations.drop(columns=['qualifier'], inplace=True)
+go_annotations = go_annotations.drop_duplicates()
+
+print(f"[3/4] Set Ground-Truth Score ..")
+go_annotations['score'] = round(1.0, 3)
+
+print(f"[4/4] Setting Key ..")
+go_annotations['pred_key'] = go_annotations['protein_id'].astype(str) + '_' + go_annotations['go_term'].astype(str)
+go_annotations = go_annotations[~go_annotations['pred_key'].isin(negative_keys)]
+goa_pred_keys = set(go_annotations['pred_key'])
+print(f"[+] Total unique ground truth protein-GO pairs: {len(goa_pred_keys)}")
+print(f"[✅] Done.")
+[1/4] Loading GOA Annotations ..
+[2/4] Removing unwanted annotations ..
+[3/4] Set Ground-Truth Score ..
+[4/4] Setting Key ..
+[+] Total unique ground truth protein-GO pairs: 2462485
+[✅] Done.
+⏳ Load Submissions
+In [8]:
+def load_submission(path, chunksize=50000, num_rows = None):
+    total = None
+    if num_rows:
+        total = int(num_rows / chunksize) + 1 
+    chunks = []
+    for chunk in tqdm(pd.read_csv(path, sep='\t', header=None, chunksize=chunksize), total = total):
+        chunk['pred_key'] = chunk[0].astype(str) + '_' + chunk[1].astype(str)
+        chunks.append(chunk)
+    df = pd.concat(chunks, ignore_index=True)
+    df.columns = ['protein_id', 'go_term', 'score', 'pred_key']
+    return df
+In [9]:
+print(f"[1/2] Loading 1st submission ..")
+A = load_submission('/kaggle/input/merge-of-2submission-lb-0-25/submission.tsv', num_rows = 50169025)
+A.drop(A.index[A['score'] < 0.04], inplace=True)
+A['score'] = A['score'].clip(upper=1.0)
+
+print(f"[2/2] Loading 2nd submission ..")
+B = load_submission('/kaggle/input/cafa-6-t5-embeddings-with-ensemble/submission.tsv', num_rows = 80380202)
+B.dropna(inplace=True)
+
+A.shape, B.shape
+[1/2] Loading 1st submission ..
+100%
+1004/1004 [00:41<00:00, 24.43it/s]
+[2/2] Loading 2nd submission ..
+100%
+1608/1608 [02:16<00:00, 10.87it/s]
+Out[9]:
+((33947631, 4), (11977749, 4))
+🧹 Post-Processing
+In [10]:
+print(f"[1/4] Removing Ground-Truth from A ..")
+A = A[~A.pred_key.isin(goa_pred_keys)]
+print(f"[2/4] Removing Ground-Truth from B ..")
+B = B[~B.pred_key.isin(goa_pred_keys)]
+
+print(f"[3/4] Removing Negatives from A ..")
+A = A[~A.pred_key.isin(negative_keys)]
+print(f"[4/4] Removing Negatives from B ..")
+B = B[~B.pred_key.isin(negative_keys)]
+[1/4] Removing Ground-Truth from A ..
+[2/4] Removing Ground-Truth from B ..
+[3/4] Removing Negatives from A ..
+[4/4] Removing Negatives from B ..
+🔗 Merge Submission
+In [11]:
+print(f"[1/3] Intersection keys ..")
+A_keys = set(A.pred_key)
+B_keys = set(B.pred_key)
+intersect_keys = A_keys & B_keys
+
+# Takes a while
+print(f"[2/3] Intersection ..")
+# LeaderBoard Scores
+wa = 0.250
+wb = 0.211
+
+A_inter = A[A.pred_key.isin(intersect_keys)].copy()
+B_inter = B[B.pred_key.isin(intersect_keys)].copy()
+
+inter = A_inter.merge(
+    B_inter[['pred_key','score']],
+    on='pred_key',
+    suffixes=('_a','_b')
+)
+
+
+print(f"[3/3] Weighted average Sum ..")
+inter['score'] = (inter['score_a'] * wa + inter['score_b'] * wb) / (wa + wb)
+inter.drop(columns = ['score_a', 'score_b'], inplace=True)
+print(f"[✅] Done.")
+inter.shape
+[1/3] Intersection keys ..
+[2/3] Intersection ..
+[3/3] Weighted average Sum ..
+[✅] Done.
+Out[11]:
+(9998976, 4)
+In [12]:
+# Takes a while
+print(f"[1/2] Add Missing Rows ..")
+AnotB = A[~A.pred_key.isin(B_keys)]
+BnotA = B[~B.pred_key.isin(A_keys)]
+
+
+print(f"[2/2] Merging ..")
+submission = pd.concat([go_annotations, inter, AnotB, BnotA], axis=0)
+submission.drop(columns=['pred_key'], inplace=True)
+submission.shape
+[1/2] Add Missing Rows ..
+[2/2] Merging ..
+Out[12]:
+(34772314, 3)
+📤 Submit
+In [13]:
+print(f'[⏳] Saving Submission ...')
+submission.to_csv('submission.tsv',sep='\t', index=False, header=None)
+print(f"[✅] Done.")
+[⏳] Saving Submission ...
+[✅] Done.
+In [14]:
+!head submission.tsv
+A1CHB5 GO:0042407 1.0
+A1CHB5 GO:0061617 1.0
+A1CHB5 GO:0005743 1.0
+Q9ZFU7 GO:0000987 1.0
+Q9ZFU7 GO:0003700 1.0
+Q9ZFU7 GO:0006355 1.0
+Q9ZFU7 GO:0043565 1.0
+Q9ZFU7 GO:0003677 1.0
+Q9ZFU7 GO:0046336 1.0
+A0A2I6PJ05 GO:0004659 1.0
+In [ ]:
+ 

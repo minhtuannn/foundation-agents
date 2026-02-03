@@ -1,0 +1,2239 @@
+Import Libraries
+In [1]:
+# 📦 Core Libraries
+import pandas as pd
+import numpy as np
+import warnings
+
+# ⚙️ ML & Preprocessing Libraries
+from cuml.preprocessing import TargetEncoder
+from catboost import CatBoostClassifier
+import xgboost as xgb
+import lightgbm as lgb
+from sklearn.model_selection import StratifiedKFold
+from sklearn.metrics import roc_auc_score
+
+
+# 📊 Visualization Libraries
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# 🔧 Settings
+warnings.filterwarnings("ignore")
+pd.set_option('display.max_columns', None)
+sns.set(style="whitegrid")
+
+# 📌 Jupyter Notebook Magic
+%matplotlib inline
+Load Data
+In [2]:
+# 📥 Load the dataset
+train = pd.read_csv("/kaggle/input/playground-series-s5e8/train.csv")
+test  = pd.read_csv("/kaggle/input/playground-series-s5e8/test.csv")
+
+original = pd.read_csv("/kaggle/input/bank-marketing-dataset-full/bank-full.csv", sep=';', engine='python')
+original['y'] = original['y'].map({'no': 0, 'yes': 1})
+
+# Add a 'dataset' column to track source
+train['dataset'] = 'train'
+test['dataset'] = 'test'
+
+original['dataset'] = 'train'
+
+
+
+# Combine train and test datasets for unified preprocessing
+df = pd.concat([train, test], axis=0).reset_index(drop=True)
+
+# 🧾 Display dataset shape
+print("Dataset shape:", df.shape)
+
+# 👁️ Preview the data
+df
+Dataset shape: (1000000, 19)
+Out[2]:
+id age job marital education default balance housing loan contact day month duration campaign pdays previous poutcome y dataset
+0 0 42 technician married secondary no 7 no no cellular 25 aug 117 3 -1 0 unknown 0.0 train
+1 1 38 blue-collar married secondary no 514 no no unknown 18 jun 185 1 -1 0 unknown 0.0 train
+2 2 36 blue-collar married secondary no 602 yes no unknown 14 may 111 2 -1 0 unknown 0.0 train
+3 3 27 student single secondary no 34 yes no unknown 28 may 10 2 -1 0 unknown 0.0 train
+4 4 26 technician married secondary no 889 yes no cellular 3 feb 902 1 -1 0 unknown 1.0 train
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+999995 999995 43 management married tertiary no 0 yes no cellular 18 nov 65 2 -1 0 unknown NaN test
+999996 999996 40 services married unknown no 522 yes no cellular 19 nov 531 1 189 1 failure NaN test
+999997 999997 63 retired married primary no 33 no no cellular 3 jul 178 1 92 8 success NaN test
+999998 999998 50 blue-collar married primary no 2629 yes no unknown 30 may 163 2 -1 0 unknown NaN test
+999999 999999 29 student single tertiary no 722 no no cellular 6 apr 119 1 -1 0 unknown NaN test
+1000000 rows × 19 columns
+In [3]:
+train
+Out[3]:
+id age job marital education default balance housing loan contact day month duration campaign pdays previous poutcome y dataset
+0 0 42 technician married secondary no 7 no no cellular 25 aug 117 3 -1 0 unknown 0 train
+1 1 38 blue-collar married secondary no 514 no no unknown 18 jun 185 1 -1 0 unknown 0 train
+2 2 36 blue-collar married secondary no 602 yes no unknown 14 may 111 2 -1 0 unknown 0 train
+3 3 27 student single secondary no 34 yes no unknown 28 may 10 2 -1 0 unknown 0 train
+4 4 26 technician married secondary no 889 yes no cellular 3 feb 902 1 -1 0 unknown 1 train
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+749995 749995 29 services single secondary no 1282 no yes unknown 4 jul 1006 2 -1 0 unknown 1 train
+749996 749996 69 retired divorced tertiary no 631 no no cellular 19 aug 87 1 -1 0 unknown 0 train
+749997 749997 50 blue-collar married secondary no 217 yes no cellular 17 apr 113 1 -1 0 unknown 0 train
+749998 749998 32 technician married secondary no -274 no no cellular 26 aug 108 6 -1 0 unknown 0 train
+749999 749999 42 technician married secondary no 1559 no no cellular 4 aug 143 1 1 7 failure 0 train
+750000 rows × 19 columns
+In [4]:
+test
+Out[4]:
+id age job marital education default balance housing loan contact day month duration campaign pdays previous poutcome dataset
+0 750000 32 blue-collar married secondary no 1397 yes no unknown 21 may 224 1 -1 0 unknown test
+1 750001 44 management married tertiary no 23 yes no cellular 3 apr 586 2 -1 0 unknown test
+2 750002 36 self-employed married primary no 46 yes yes cellular 13 may 111 2 -1 0 unknown test
+3 750003 58 blue-collar married secondary no -1380 yes yes unknown 29 may 125 1 -1 0 unknown test
+4 750004 28 technician single secondary no 1950 yes no cellular 22 jul 181 1 -1 0 unknown test
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+249995 999995 43 management married tertiary no 0 yes no cellular 18 nov 65 2 -1 0 unknown test
+249996 999996 40 services married unknown no 522 yes no cellular 19 nov 531 1 189 1 failure test
+249997 999997 63 retired married primary no 33 no no cellular 3 jul 178 1 92 8 success test
+249998 999998 50 blue-collar married primary no 2629 yes no unknown 30 may 163 2 -1 0 unknown test
+249999 999999 29 student single tertiary no 722 no no cellular 6 apr 119 1 -1 0 unknown test
+250000 rows × 18 columns
+In [5]:
+# original
+Initial Data Inspection
+In [6]:
+df.shape
+Out[6]:
+(1000000, 19)
+In [7]:
+# 📋 Check column types and non-null counts
+df.info()
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 1000000 entries, 0 to 999999
+Data columns (total 19 columns):
+ #   Column     Non-Null Count    Dtype  
+---  ------     --------------    -----  
+ 0   id         1000000 non-null  int64  
+ 1   age        1000000 non-null  int64  
+ 2   job        1000000 non-null  object 
+ 3   marital    1000000 non-null  object 
+ 4   education  1000000 non-null  object 
+ 5   default    1000000 non-null  object 
+ 6   balance    1000000 non-null  int64  
+ 7   housing    1000000 non-null  object 
+ 8   loan       1000000 non-null  object 
+ 9   contact    1000000 non-null  object 
+ 10  day        1000000 non-null  int64  
+ 11  month      1000000 non-null  object 
+ 12  duration   1000000 non-null  int64  
+ 13  campaign   1000000 non-null  int64  
+ 14  pdays      1000000 non-null  int64  
+ 15  previous   1000000 non-null  int64  
+ 16  poutcome   1000000 non-null  object 
+ 17  y          750000 non-null   float64
+ 18  dataset    1000000 non-null  object 
+dtypes: float64(1), int64(8), object(10)
+memory usage: 145.0+ MB
+In [8]:
+# ✅ Separate numerical and categorical columns
+numerical_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
+categorical_cols = df.select_dtypes(include=['object', 'bool']).columns.tolist()
+
+print("Numerical Columns:", numerical_cols)
+print("Categorical Columns:", categorical_cols)
+Numerical Columns: ['id', 'age', 'balance', 'day', 'duration', 'campaign', 'pdays', 'previous', 'y']
+Categorical Columns: ['job', 'marital', 'education', 'default', 'housing', 'loan', 'contact', 'month', 'poutcome', 'dataset']
+In [9]:
+# 🔍 Check for missing values
+missing_values = df.isnull().sum()
+missing_percent = (missing_values / len(df)) * 100
+missing_df = pd.DataFrame({'Missing Values': missing_values, 'Percentage': missing_percent})
+missing_df = missing_df[missing_df['Missing Values'] > 0]
+missing_df
+Out[9]:
+Missing Values Percentage
+y 250000 25.0
+In [10]:
+# 📊 Descriptive statistics for numerical columns
+df[numerical_cols].describe()
+Out[10]:
+id age balance day duration campaign pdays previous y
+count 1000000.000000 1000000.000000 1000000.000000 1000000.000000 1000000.000000 1000000.000000 1000000.000000 1000000.000000 750000.000000
+mean 499999.500000 40.927879 1202.407136 16.116924 256.007423 2.576143 22.379557 0.299841 0.120651
+std 288675.278933 10.094523 2812.750998 8.252748 272.268420 2.716302 77.219149 1.348254 0.325721
+min 0.000000 18.000000 -8019.000000 1.000000 1.000000 1.000000 -1.000000 0.000000 0.000000
+25% 249999.750000 33.000000 0.000000 9.000000 91.000000 1.000000 -1.000000 0.000000 0.000000
+50% 499999.500000 39.000000 634.000000 17.000000 133.000000 2.000000 -1.000000 0.000000 0.000000
+75% 749999.250000 48.000000 1390.000000 21.000000 359.000000 3.000000 -1.000000 0.000000 0.000000
+max 999999.000000 95.000000 99717.000000 31.000000 4918.000000 63.000000 871.000000 200.000000 1.000000
+In [11]:
+# 🔢 Unique value counts for categorical columns
+for col in categorical_cols:
+    print(f"\nUnique values in '{col}':")
+    print(df[col].value_counts())
+Unique values in 'job':
+job
+management       234177
+blue-collar      227468
+technician       184043
+admin.           108501
+services          85521
+retired           46796
+self-employed     25444
+entrepreneur      23673
+unemployed        23647
+housemaid         21157
+student           15634
+unknown            3939
+Name: count, dtype: int64
+
+Unique values in 'marital':
+marital
+married     641171
+single      259551
+divorced     99278
+Name: count, dtype: int64
+
+Unique values in 'education':
+education
+secondary    535407
+tertiary     303545
+primary      132499
+unknown       28549
+Name: count, dtype: int64
+
+Unique values in 'default':
+default
+no     982994
+yes     17006
+Name: count, dtype: int64
+
+Unique values in 'housing':
+housing
+yes    547822
+no     452178
+Name: count, dtype: int64
+
+Unique values in 'loan':
+loan
+no     859980
+yes    140020
+Name: count, dtype: int64
+
+Unique values in 'contact':
+contact
+cellular     649117
+unknown      308523
+telephone     42360
+Name: count, dtype: int64
+
+Unique values in 'month':
+month
+may    304420
+aug    171733
+jul    147475
+jun    124865
+nov     88099
+apr     55197
+feb     50127
+jan     25378
+oct     12358
+sep      9838
+mar      7746
+dec      2764
+Name: count, dtype: int64
+
+Unique values in 'poutcome':
+poutcome
+unknown    896565
+failure     59959
+success     23694
+other       19782
+Name: count, dtype: int64
+
+Unique values in 'dataset':
+dataset
+train    750000
+test     250000
+Name: count, dtype: int64
+Exploratory Data Analysis (EDA)
+In [12]:
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Assuming df is your DataFrame
+# 🎯 Target Variable Distribution
+# We begin by analyzing the distribution of our target variable, 'y', to see if the dataset is balanced between the two categories (0.0 and 1.0).
+
+# ===== Target Variable Distribution =====
+
+plt.figure(figsize=(6, 4))
+sns.countplot(data=df, x='y', palette='pastel', edgecolor='black')
+plt.title('Distribution of Subscription to Term Deposit (y)', fontsize=14)
+plt.xlabel('Subscribed to Term Deposit (y)', fontsize=12)
+plt.ylabel('Count', fontsize=12)
+plt.grid(axis='y', linestyle='--', alpha=0.5)
+plt.tight_layout()
+plt.show()
+
+# Display normalized value counts (as proportions)
+print("\n📊 Subscription to Term Deposit Value Counts (Proportions):")
+print(df['y'].value_counts(normalize=True).round(3))
+📊 Subscription to Term Deposit Value Counts (Proportions):
+y
+0.0    0.879
+1.0    0.121
+Name: proportion, dtype: float64
+In [13]:
+# 📈 Distribution of Numerical Features
+# Next, we explore the distribution of the numerical features using histograms. This helps us understand the spread and skewness of the data.
+
+# ===== Visualize Distribution of Numerical Features =====
+
+# List the numerical columns from your dataset
+num_cols = ['age', 'balance', 'duration', 'campaign', 'pdays', 'previous']
+
+for col in num_cols:
+    plt.figure(figsize=(6, 4))
+    sns.histplot(df[col], kde=True, color='skyblue', edgecolor='black')
+    plt.title(f'Distribution of {col}', fontsize=14)
+    plt.xlabel(col, fontsize=12)
+    plt.ylabel('Count', fontsize=12)
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+
+    # Print descriptive statistics
+    print(f'\n📊 Descriptive Stats for {col}:\n')
+    print(df[col].describe(), '\n' + '-'*40)
+📊 Descriptive Stats for age:
+
+count    1000000.000000
+mean          40.927879
+std           10.094523
+min           18.000000
+25%           33.000000
+50%           39.000000
+75%           48.000000
+max           95.000000
+Name: age, dtype: float64 
+----------------------------------------
+📊 Descriptive Stats for balance:
+
+count    1000000.000000
+mean        1202.407136
+std         2812.750998
+min        -8019.000000
+25%            0.000000
+50%          634.000000
+75%         1390.000000
+max        99717.000000
+Name: balance, dtype: float64 
+----------------------------------------
+📊 Descriptive Stats for duration:
+
+count    1000000.000000
+mean         256.007423
+std          272.268420
+min            1.000000
+25%           91.000000
+50%          133.000000
+75%          359.000000
+max         4918.000000
+Name: duration, dtype: float64 
+----------------------------------------
+📊 Descriptive Stats for campaign:
+
+count    1000000.000000
+mean           2.576143
+std            2.716302
+min            1.000000
+25%            1.000000
+50%            2.000000
+75%            3.000000
+max           63.000000
+Name: campaign, dtype: float64 
+----------------------------------------
+📊 Descriptive Stats for pdays:
+
+count    1000000.000000
+mean          22.379557
+std           77.219149
+min           -1.000000
+25%           -1.000000
+50%           -1.000000
+75%           -1.000000
+max          871.000000
+Name: pdays, dtype: float64 
+----------------------------------------
+📊 Descriptive Stats for previous:
+
+count    1000000.000000
+mean           0.299841
+std            1.348254
+min            0.000000
+25%            0.000000
+50%            0.000000
+75%            0.000000
+max          200.000000
+Name: previous, dtype: float64 
+----------------------------------------
+Age
+Adults range from 18 up to 95, with a mean around 41.
+The middle 50% lie between 33 and 48 — a fairly tight spread around the mean.
+Balance
+Very heavy right‐tail:
+Maximum ≈ 99,717
+75th percentile = 1,390
+Some negative balances (min ≈ –8,019), suggesting overdrafts.
+Most customers have zero or modest balances (50th percentile = 634).
+Duration (Call Length)
+Wide distribution:
+25% of calls last less than 91 seconds
+75th percentile at 359 seconds
+Maximum near 4,918 seconds
+Likely long‐tail — a few calls last over an hour.
+Campaign (Contacts This Campaign)
+Mostly between 1–3 contacts (75% ≤ 3)
+Some outliers with up to 63 contacts
+Pdays (Days Since Last Contact)
+Most entries are –1 (never previously contacted) — even at or below the 75th percentile.
+Positive tail extends up to 871 days.
+Previous (Number of Contacts Before This Campaign)
+75% of customers had zero prior contacts
+A very small fraction had many prior contacts — maximum = 200
+In [14]:
+# 📦 Outlier Detection via Boxplots
+plt.figure(figsize=(18, 10))
+for i, col in enumerate(num_cols):
+    plt.subplot(3, 3, i + 1)
+    sns.boxplot(data=df, y=col, color='#FFA726')
+    plt.title(f"Boxplot: {col}")
+    plt.grid(True)
+plt.tight_layout()
+plt.show()
+In [15]:
+# 📊 Distribution of Categorical Features
+
+cat_cols = ['job', 'marital', 'education', 'default', 'housing', 'loan', 'contact', 'month', 'poutcome']
+
+for col in cat_cols:
+    plt.figure(figsize=(10, 4))
+    sns.countplot(
+        data=df,
+        x=col,
+        order=df[col].value_counts().index,
+        palette='Set2',
+        edgecolor='black'
+    )
+    plt.title(f'{col} Distribution', fontsize=14)
+    plt.xlabel(col, fontsize=12)
+    plt.ylabel('Count', fontsize=12)
+    plt.xticks(rotation=45, ha='right')
+    plt.grid(axis='y', linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.show()
+
+    # 🧮 Print Category Proportions
+    print(f'\n📊 Proportion of Each Category in "{col}":\n')
+    print(df[col].value_counts(normalize=True).round(3), '\n' + '-'*40)
+📊 Proportion of Each Category in "job":
+
+job
+management       0.234
+blue-collar      0.227
+technician       0.184
+admin.           0.109
+services         0.086
+retired          0.047
+self-employed    0.025
+entrepreneur     0.024
+unemployed       0.024
+housemaid        0.021
+student          0.016
+unknown          0.004
+Name: proportion, dtype: float64 
+----------------------------------------
+📊 Proportion of Each Category in "marital":
+
+marital
+married     0.641
+single      0.260
+divorced    0.099
+Name: proportion, dtype: float64 
+----------------------------------------
+📊 Proportion of Each Category in "education":
+
+education
+secondary    0.535
+tertiary     0.304
+primary      0.132
+unknown      0.029
+Name: proportion, dtype: float64 
+----------------------------------------
+📊 Proportion of Each Category in "default":
+
+default
+no     0.983
+yes    0.017
+Name: proportion, dtype: float64 
+----------------------------------------
+📊 Proportion of Each Category in "housing":
+
+housing
+yes    0.548
+no     0.452
+Name: proportion, dtype: float64 
+----------------------------------------
+📊 Proportion of Each Category in "loan":
+
+loan
+no     0.86
+yes    0.14
+Name: proportion, dtype: float64 
+----------------------------------------
+📊 Proportion of Each Category in "contact":
+
+contact
+cellular     0.649
+unknown      0.309
+telephone    0.042
+Name: proportion, dtype: float64 
+----------------------------------------
+📊 Proportion of Each Category in "month":
+
+month
+may    0.304
+aug    0.172
+jul    0.147
+jun    0.125
+nov    0.088
+apr    0.055
+feb    0.050
+jan    0.025
+oct    0.012
+sep    0.010
+mar    0.008
+dec    0.003
+Name: proportion, dtype: float64 
+----------------------------------------
+📊 Proportion of Each Category in "poutcome":
+
+poutcome
+unknown    0.897
+failure    0.060
+success    0.024
+other      0.020
+Name: proportion, dtype: float64 
+----------------------------------------
+In [16]:
+# 🎨 Categorical Feature Distributions by Subscription Status (y) - Custom Colors
+
+cols_to_plot = ['housing', 'loan', 'contact', 'poutcome']
+custom_palette = ['#1F77B4', '#FF7F0E']  # Blue for 0, Orange for 1
+
+for col in cols_to_plot:
+    plt.figure(figsize=(6, 4))
+    sns.countplot(
+        data=df,
+        x=col,
+        hue='y',
+        palette=custom_palette,
+        edgecolor='black'
+    )
+    plt.title(f'Distribution of {col} by Subscription (y)', fontsize=14)
+    plt.xlabel(f'{col}', fontsize=12)
+    plt.ylabel('Count', fontsize=12)
+    plt.xticks(rotation=45, ha='right')
+    plt.legend(title='Subscribed (y)', labels=['No (0)', 'Yes (1)'])
+    plt.grid(axis='y', linestyle='--', alpha=0.4)
+    plt.tight_layout()
+    plt.show()
+In [17]:
+# 🔗 Correlation Between Numerical Features
+
+plt.figure(figsize=(10, 6))
+sns.heatmap(
+    df[num_cols].corr(),
+    annot=True,
+    cmap='coolwarm',
+    fmt=".2f",
+    linewidths=0.5,
+    linecolor='white',
+    annot_kws={"size": 10},
+    cbar_kws={"shrink": 0.8}
+)
+plt.title("Correlation Between Numerical Features", fontsize=14)
+plt.xticks(rotation=45, ha='right')
+plt.yticks(rotation=0)
+plt.tight_layout()
+plt.show()
+In [18]:
+# 🧠 Feature vs Target Relationship (Numerical Features by Subscription)
+
+plt.figure(figsize=(18, 10))
+
+for i, col in enumerate(num_cols):
+    plt.subplot(2, 4, i + 1)
+    sns.boxplot(
+        data=df,
+        x='y',
+        y=col,
+        palette=['#1F77B4', '#FF7F0E'],  # Blue for 0, Orange for 1
+        linewidth=1.2,
+        fliersize=4
+    )
+    plt.title(f'{col} by Subscription', fontsize=14, fontweight='semibold', color='#2E4057')
+    plt.xlabel('Subscribed (y)', fontsize=12)
+    plt.ylabel(col, fontsize=12)
+    plt.grid(axis='y', linestyle='--', alpha=0.4)
+
+plt.tight_layout()
+plt.show()
+Feature Engineering
+In [19]:
+########
+
+# Log-transform balance and duration
+df['log_balance']  = np.log1p(df['balance'] - df['balance'].min() + 1)
+df['log_duration'] = np.log1p(df['duration'])
+Data Preprocessing
+In [20]:
+# Handling Missing Values
+In [21]:
+# 👀 Count "unknown" values (treated as missing in many cases)
+for col in df.columns:
+    if df[col].dtype == 'object':
+        print(f'{col} → unknowns: {df[col].isin(["unknown"]).sum()}')
+job → unknowns: 3939
+marital → unknowns: 0
+education → unknowns: 28549
+default → unknowns: 0
+housing → unknowns: 0
+loan → unknowns: 0
+contact → unknowns: 308523
+month → unknowns: 0
+poutcome → unknowns: 896565
+dataset → unknowns: 0
+In [22]:
+# Encoding
+
+binary_map = {'yes': 1, 'no': 0}
+df['default'] = df['default'].map(binary_map)
+df['housing'] = df['housing'].map(binary_map)
+df['loan'] = df['loan'].map(binary_map)
+
+# df['y'] = df['y'].astype(int)  # 0 or 1
+
+multi_cat_cols = ['job', 'marital', 'education', 'contact', 'month', 'poutcome']
+df = pd.get_dummies(df, columns=multi_cat_cols, drop_first=True)
+In [23]:
+df
+Out[23]:
+id age default balance housing loan day duration campaign pdays previous y dataset log_balance log_duration job_blue-collar job_entrepreneur job_housemaid job_management job_retired job_self-employed job_services job_student job_technician job_unemployed job_unknown marital_married marital_single education_secondary education_tertiary education_unknown contact_telephone contact_unknown month_aug month_dec month_feb month_jan month_jul month_jun month_mar month_may month_nov month_oct month_sep poutcome_other poutcome_success poutcome_unknown
+0 0 42 0 7 0 0 25 117 3 -1 0 0.0 train 8.990691 4.770685 False False False False False False False False True False False True False True False False False False True False False False False False False False False False False False False True
+1 1 38 0 514 0 0 18 185 1 -1 0 0.0 train 9.051931 5.225747 True False False False False False False False False False False True False True False False False True False False False False False True False False False False False False False True
+2 2 36 0 602 1 0 14 111 2 -1 0 0.0 train 9.062188 4.718499 True False False False False False False False False False False True False True False False False True False False False False False False False True False False False False False True
+3 3 27 0 34 1 0 28 10 2 -1 0 0.0 train 8.994048 2.397895 False False False False False False False True False False False False True True False False False True False False False False False False False True False False False False False True
+4 4 26 0 889 1 0 3 902 1 -1 0 1.0 train 9.094930 6.805723 False False False False False False False False True False False True False True False False False False False False True False False False False False False False False False False True
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+999995 999995 43 0 0 1 0 18 65 2 -1 0 NaN test 8.989818 4.189655 False False False True False False False False False False False True False False True False False False False False False False False False False False True False False False False True
+999996 999996 40 0 522 1 0 19 531 1 189 1 NaN test 9.052868 6.276643 False False False False False False True False False False False True False False False True False False False False False False False False False False True False False False False False
+999997 999997 63 0 33 0 0 3 178 1 92 8 NaN test 8.993924 5.187386 False False False False True False False False False False False True False False False False False False False False False False True False False False False False False False True False
+999998 999998 50 0 2629 1 0 30 163 2 -1 0 NaN test 9.273315 5.099866 True False False False False False False False False False False True False False False False False True False False False False False False False True False False False False False True
+999999 999999 29 0 722 0 0 6 119 1 -1 0 NaN test 9.076009 4.787492 False False False False False False False True False False False False True False True False False False False False False False False False False False False False False False False True
+1000000 rows × 47 columns
+In [24]:
+# 🧪 Separate Train and Test Sets
+train_df = df[df['dataset'] == 'train'].drop(columns=['dataset'], errors='ignore')
+test_df  = df[df['dataset'] == 'test'].drop(columns=['dataset'], errors='ignore')
+
+# 🧹 Drop Unnecessary Columns
+train_df = train_df.drop(columns=['id', 'balance', 'duration'], errors='ignore')  # duration is a data leak
+test_df  = test_df.drop(columns=['y', 'balance', 'duration'], errors='ignore')
+
+# 🎯 Separate Features and Target
+X = train_df.drop('y', axis=1)
+# y = train_df['y'].astype(int)  # ensure target is integer
+y = train_df['y']
+In [25]:
+X
+Out[25]:
+age default housing loan day campaign pdays previous log_balance log_duration job_blue-collar job_entrepreneur job_housemaid job_management job_retired job_self-employed job_services job_student job_technician job_unemployed job_unknown marital_married marital_single education_secondary education_tertiary education_unknown contact_telephone contact_unknown month_aug month_dec month_feb month_jan month_jul month_jun month_mar month_may month_nov month_oct month_sep poutcome_other poutcome_success poutcome_unknown
+0 42 0 0 0 25 3 -1 0 8.990691 4.770685 False False False False False False False False True False False True False True False False False False True False False False False False False False False False False False False True
+1 38 0 0 0 18 1 -1 0 9.051931 5.225747 True False False False False False False False False False False True False True False False False True False False False False False True False False False False False False False True
+2 36 0 1 0 14 2 -1 0 9.062188 4.718499 True False False False False False False False False False False True False True False False False True False False False False False False False True False False False False False True
+3 27 0 1 0 28 2 -1 0 8.994048 2.397895 False False False False False False False True False False False False True True False False False True False False False False False False False True False False False False False True
+4 26 0 1 0 3 1 -1 0 9.094930 6.805723 False False False False False False False False True False False True False True False False False False False False True False False False False False False False False False False True
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+749995 29 0 0 1 4 2 -1 0 9.138092 6.914731 False False False False False False True False False False False False True True False False False True False False False False True False False False False False False False False True
+749996 69 0 0 0 19 1 -1 0 9.065546 4.477337 False False False False True False False False False False False False False False True False False False True False False False False False False False False False False False False True
+749997 50 0 1 0 17 1 -1 0 9.016513 4.736198 True False False False False False False False False False False True False True False False False False False False False False False False False False False False False False False True
+749998 32 0 0 0 26 6 -1 0 8.955061 4.691348 False False False False False False False False True False False True False True False False False False True False False False False False False False False False False False False True
+749999 42 0 0 0 4 1 1 7 9.167433 4.969813 False False False False False False False False True False False True False True False False False False True False False False False False False False False False False False False False
+750000 rows × 42 columns
+In [26]:
+y
+Out[26]:
+0         0.0
+1         0.0
+2         0.0
+3         0.0
+4         1.0
+         ... 
+749995    1.0
+749996    0.0
+749997    0.0
+749998    0.0
+749999    0.0
+Name: y, Length: 750000, dtype: float64
+Machine Learning
+In [27]:
+# # Modeling with target encoding
+
+# # Parameters
+# n_splits = 10
+# random_state = 42
+
+# # Containers for metrics
+# catboost_oof_preds = np.zeros(len(X))
+# xgb_oof_preds = np.zeros(len(X))
+
+# catboost_auc_scores = []
+# xgb_auc_scores = []
+
+# catboost_feature_importances = []
+# xgb_feature_importances = []
+# feature_names = X.columns
+
+# # # Initialize K-Fold
+# skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+
+# # Specify categorical columns to encode
+# categorical_cols = ['job', 'marital', 'education', 'contact', 'month', 'poutcome']
+# # categorical_cols = ['age', 'job', 'marital', 'education', 'default', 'housing', 'loan',
+# #        'contact', 'day', 'month', 'campaign', 'pdays', 'previous', 'poutcome',
+# #        'log_balance', 'log_duration']
+# # Add placeholders for encoded feature names
+# for col in categorical_cols:
+#     X[f'TE_{col}'] = np.nan
+
+# # Begin Cross-Validation
+# for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
+#     print(f"\n--- Fold {fold} ---")
+
+#     X_train, X_val = X.iloc[train_idx].copy(), X.iloc[val_idx].copy()
+#     y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+#     # --- Target Encoding ---
+#     for col in categorical_cols:
+#         te = TargetEncoder(n_folds=25, smooth=20, split_method='random', stat='mean')
+#         X_train[f'TE_{col}'] = te.fit_transform(X_train[col], y_train)
+#         X_val[f'TE_{col}'] = te.transform(X_val[col])
+    
+#     # Drop original categorical columns
+#     X_train_enc = X_train.drop(columns=categorical_cols)
+#     X_val_enc = X_val.drop(columns=categorical_cols)
+
+#     feature_names = X_train_enc.columns  # update
+
+#     # ----- CatBoost -----
+#     cat_model = CatBoostClassifier(
+#         iterations=1000,
+#         learning_rate=0.05,
+#         depth=6,
+#         eval_metric='AUC',
+#         random_seed=random_state,
+#         early_stopping_rounds=50,
+#         verbose=100,
+#         task_type='GPU',
+#         devices='0'
+#     )
+#     cat_model.fit(X_train_enc, y_train, eval_set=(X_val_enc, y_val), use_best_model=True)
+#     val_pred_cat = cat_model.predict_proba(X_val_enc)[:, 1]
+#     auc_cat = roc_auc_score(y_val, val_pred_cat)
+#     catboost_auc_scores.append(auc_cat)
+#     catboost_oof_preds[val_idx] = val_pred_cat
+#     catboost_feature_importances.append(cat_model.get_feature_importance())
+#     print(f"CatBoost Fold {fold} AUC: {auc_cat:.4f}")
+
+#     # ----- XGBoost -----
+#     xgb_model = xgb.XGBClassifier(
+#         max_depth=13,
+#         learning_rate=0.01036808915308291,
+#         min_child_weight=7,
+#         subsample=0.4406,
+#         colsample_bytree=0.8033,
+#         gamma=2.46,
+#         reg_alpha=2.14,
+#         reg_lambda=1.57,
+#         n_estimators=50000,
+#         eval_metric='auc',
+#         use_label_encoder=False,
+#         random_state=random_state,
+#         verbosity=1,
+#         early_stopping_rounds=50,
+#         tree_method='gpu_hist',
+#         predictor='gpu_predictor'
+#     )
+#     xgb_model.fit(X_train_enc, y_train, eval_set=[(X_val_enc, y_val)], verbose=100)
+#     val_pred_xgb = xgb_model.predict_proba(X_val_enc)[:, 1]
+#     auc_xgb = roc_auc_score(y_val, val_pred_xgb)
+#     xgb_auc_scores.append(auc_xgb)
+#     xgb_oof_preds[val_idx] = val_pred_xgb
+#     xgb_feature_importances.append(xgb_model.feature_importances_)
+#     print(f"XGBoost Fold {fold} AUC: {auc_xgb:.4f}")
+
+# # Convert lists to arrays
+# catboost_feature_importances = np.array(catboost_feature_importances)
+# xgb_feature_importances = np.array(xgb_feature_importances)
+
+# # Average feature importances across folds
+# avg_catboost_importance = np.mean(catboost_feature_importances, axis=0)
+# avg_xgb_importance = np.mean(xgb_feature_importances, axis=0)
+
+# # Create DataFrames for easier interpretation
+# catboost_importance_df = pd.DataFrame({
+#     'Feature': feature_names,
+#     'Importance': avg_catboost_importance
+# }).sort_values(by='Importance', ascending=False)
+
+# xgb_importance_df = pd.DataFrame({
+#     'Feature': feature_names,
+#     'Importance': avg_xgb_importance
+# }).sort_values(by='Importance', ascending=False)
+
+# print("\n=== CatBoost Feature Importance ===")
+# print(catboost_importance_df)
+
+# print("\n=== XGBoost Feature Importance ===")
+# print(xgb_importance_df)
+
+    
+# # Summary
+# print("\n=== Summary ===")
+# print(f"CatBoost Mean AUC: {np.mean(catboost_auc_scores):.4f} ± {np.std(catboost_auc_scores):.4f}")
+# print(f"XGBoost Mean AUC: {np.mean(xgb_auc_scores):.4f} ± {np.std(xgb_auc_scores):.4f}")
+In [28]:
+# # Modeling without target encoding
+
+# # Parameters
+# n_splits = 10
+# random_state = 42
+
+# # Initialize K-Fold
+# skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+# # Containers for metrics
+# catboost_oof_preds = np.zeros(len(X))
+# xgb_oof_preds = np.zeros(len(X))
+
+# catboost_auc_scores = []
+# xgb_auc_scores = []
+
+# catboost_feature_importances = []
+# xgb_feature_importances = []
+# feature_names = X.columns
+
+
+# for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
+#     print(f"\n--- Fold {fold} ---")
+
+#     X_train, X_val = X.iloc[train_idx].copy(), X.iloc[val_idx].copy()
+#     y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+    
+#     # ----- CatBoost with GPU -----
+#     cat_model = CatBoostClassifier(
+#         iterations=1000,
+#         learning_rate=0.05,
+#         depth=6,
+#         eval_metric='AUC',
+#         random_seed=random_state,
+#         early_stopping_rounds=50,
+#         verbose=100,
+#         task_type='GPU',
+#         devices='0'
+#     )
+#     cat_model.fit(X_train, y_train, eval_set=(X_val, y_val), use_best_model=True)
+#     val_pred_cat = cat_model.predict_proba(X_val)[:, 1]
+#     auc_cat = roc_auc_score(y_val, val_pred_cat)
+#     catboost_auc_scores.append(auc_cat)
+#     catboost_oof_preds[val_idx] = val_pred_cat
+#     catboost_feature_importances.append(cat_model.get_feature_importance())
+#     print(f"CatBoost Fold {fold} AUC: {auc_cat:.4f}")
+    
+#     # ----- XGBoost with GPU -----
+#     xgb_model = xgb.XGBClassifier(
+#         max_depth=13,
+#         learning_rate=0.01036808915308291,
+#         min_child_weight=7,
+#         subsample=0.4406011562109482,
+#         colsample_bytree=0.8033679369123714,
+#         gamma=2.4652180617514747,
+#         reg_alpha=2.1421895943084053,
+#         reg_lambda=1.5758614095439158,
+#         n_estimators=50000,
+#         eval_metric='auc',
+#         use_label_encoder=False,
+#         random_state=random_state,
+#         verbosity=1,
+#         early_stopping_rounds=50,
+#         tree_method='gpu_hist',
+#         predictor='gpu_predictor'
+#         )
+#     # After XGBoost model fitting
+#     xgb_model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
+#     val_pred_xgb = xgb_model.predict_proba(X_val)[:, 1]
+#     auc_xgb = roc_auc_score(y_val, val_pred_xgb)
+#     xgb_auc_scores.append(auc_xgb)
+#     xgb_oof_preds[val_idx] = val_pred_xgb
+#     xgb_feature_importances.append(xgb_model.feature_importances_)
+#     print(f"XGBoost Fold {fold} AUC: {auc_xgb:.4f}")
+
+
+
+# # Convert lists to arrays
+# catboost_feature_importances = np.array(catboost_feature_importances)
+# xgb_feature_importances = np.array(xgb_feature_importances)
+
+# # Average feature importances across folds
+# avg_catboost_importance = np.mean(catboost_feature_importances, axis=0)
+# avg_xgb_importance = np.mean(xgb_feature_importances, axis=0)
+
+# # Create DataFrames for easier interpretation
+# catboost_importance_df = pd.DataFrame({
+#     'Feature': feature_names,
+#     'Importance': avg_catboost_importance
+# }).sort_values(by='Importance', ascending=False)
+
+# xgb_importance_df = pd.DataFrame({
+#     'Feature': feature_names,
+#     'Importance': avg_xgb_importance
+# }).sort_values(by='Importance', ascending=False)
+
+# print("\n=== CatBoost Feature Importance ===")
+# print(catboost_importance_df)
+
+# print("\n=== XGBoost Feature Importance ===")
+# print(xgb_importance_df)
+
+    
+# # Summary
+# print("\n=== Summary ===")
+# print(f"CatBoost Mean AUC: {np.mean(catboost_auc_scores):.4f} ± {np.std(catboost_auc_scores):.4f}")
+# print(f"XGBoost Mean AUC: {np.mean(xgb_auc_scores):.4f} ± {np.std(xgb_auc_scores):.4f}")
+In [29]:
+# Modeling without target encoding
+
+# Parameters
+n_splits = 7
+random_state = 42
+
+# Initialize K-Fold
+skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+# Containers for metrics
+catboost_oof_preds = np.zeros(len(X))
+xgb_oof_preds      = np.zeros(len(X))
+lgbm_oof_preds     = np.zeros(len(X))
+
+catboost_auc_scores = []
+xgb_auc_scores      = []
+lgbm_auc_scores     = []
+
+catboost_feature_importances = []
+xgb_feature_importances      = []
+lgbm_feature_importances     = []
+
+feature_names = X.columns
+
+for fold, (train_idx, val_idx) in enumerate(skf.split(X, y), 1):
+    print(f"\n--- Fold {fold} ---")
+
+    X_train, X_val = X.iloc[train_idx].copy(), X.iloc[val_idx].copy()
+    y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+    # ----- CatBoost with GPU -----
+    cat_model = CatBoostClassifier(
+        iterations=1000,
+        learning_rate=0.05,
+        depth=6,
+        eval_metric='AUC',
+        random_seed=random_state,
+        early_stopping_rounds=50,
+        verbose=100,
+        task_type='GPU',
+        devices='0'
+    )
+    cat_model.fit(X_train, y_train, eval_set=(X_val, y_val), use_best_model=True)
+    val_pred_cat = cat_model.predict_proba(X_val)[:, 1]
+    auc_cat = roc_auc_score(y_val, val_pred_cat)
+    catboost_auc_scores.append(auc_cat)
+    catboost_oof_preds[val_idx] = val_pred_cat
+    catboost_feature_importances.append(cat_model.get_feature_importance())
+    print(f"CatBoost Fold {fold} AUC: {auc_cat:.4f}")
+
+    # ----- XGBoost with GPU -----
+    import xgboost as xgb
+
+    xgb_params = {
+        'n_estimators': 8000,         
+        'max_leaves': 127,            
+        'min_child_weight': 1.5,     
+        'max_depth': 0,               
+        'grow_policy': 'lossguide',   
+        'learning_rate': 0.008,      
+        'tree_method': 'hist',        
+        'subsample': 0.85,            
+        'colsample_bylevel': 0.7,     
+        'colsample_bytree': 0.75,       
+        'colsample_bynode': 0.85,     
+        'sampling_method': 'gradient_based',  
+        'reg_alpha': 2.5,             
+        'reg_lambda': 0.8,            
+        'enable_categorical': True,    
+        'max_cat_to_onehot': 1,       
+        'device': 'cuda',            
+        'n_jobs': -1,                 
+        'random_state': 42,     
+        'verbosity': 0,               
+        'objective': 'binary:logistic',
+        # 'eval_metric': 'auc'
+    }
+
+    xgb_model = xgb.XGBClassifier(**xgb_params)
+
+    xgb_model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
+    val_pred_xgb = xgb_model.predict_proba(X_val)[:, 1]
+    auc_xgb = roc_auc_score(y_val, val_pred_xgb)
+    xgb_auc_scores.append(auc_xgb)
+    xgb_oof_preds[val_idx] = val_pred_xgb
+    xgb_feature_importances.append(xgb_model.feature_importances_)
+    print(f"XGBoost Fold {fold} AUC: {auc_xgb:.4f}")
+
+    # ----- LightGBM with GPU -----
+    lgbm_model = lgb.LGBMClassifier(
+        random_state=42,
+        verbosity=-1,
+        n_estimators=25000,
+        learning_rate=0.05,
+        min_child_samples=9,
+        subsample=0.8,
+        colsample_bytree=0.5,
+        num_leaves=100,
+        max_depth=10,
+        max_bin=3600,
+        reg_alpha=0.79,
+        reg_lambda=3,
+    )
+    lgbm_model.fit(
+        X_train, y_train,
+        eval_set=[(X_val, y_val)],
+        eval_metric='auc',
+        callbacks=[
+            lgb.early_stopping(stopping_rounds=50),
+            lgb.log_evaluation(period=100)
+        ]
+    )
+    val_pred_lgbm = lgbm_model.predict_proba(X_val)[:, 1]
+    auc_lgbm = roc_auc_score(y_val, val_pred_lgbm)
+    lgbm_auc_scores.append(auc_lgbm)
+    lgbm_oof_preds[val_idx] = val_pred_lgbm
+    lgbm_feature_importances.append(lgbm_model.feature_importances_)
+    print(f"LightGBM Fold {fold} AUC: {auc_lgbm:.4f}")
+
+# Convert lists to arrays
+catboost_feature_importances = np.array(catboost_feature_importances)
+xgb_feature_importances      = np.array(xgb_feature_importances)
+lgbm_feature_importances     = np.array(lgbm_feature_importances)
+
+# Average feature importances across folds
+avg_catboost_importance = np.mean(catboost_feature_importances, axis=0)
+avg_xgb_importance      = np.mean(xgb_feature_importances, axis=0)
+avg_lgbm_importance     = np.mean(lgbm_feature_importances, axis=0)
+
+# Create DataFrames for easier interpretation
+catboost_importance_df = pd.DataFrame({
+    'Feature': feature_names,
+    'Importance': avg_catboost_importance
+}).sort_values(by='Importance', ascending=False)
+
+xgb_importance_df = pd.DataFrame({
+    'Feature': feature_names,
+    'Importance': avg_xgb_importance
+}).sort_values(by='Importance', ascending=False)
+
+lgbm_importance_df = pd.DataFrame({
+    'Feature': feature_names,
+    'Importance': avg_lgbm_importance
+}).sort_values(by='Importance', ascending=False)
+
+print("\n=== CatBoost Feature Importance ===")
+print(catboost_importance_df)
+
+print("\n=== XGBoost Feature Importance ===")
+print(xgb_importance_df)
+
+print("\n=== LightGBM Feature Importance ===")
+print(lgbm_importance_df)
+
+# Summary
+print("\n=== Summary ===")
+print(f"CatBoost Mean AUC:   {np.mean(catboost_auc_scores):.4f} ± {np.std(catboost_auc_scores):.4f}")
+print(f"XGBoost Mean AUC:     {np.mean(xgb_auc_scores):.4f} ± {np.std(xgb_auc_scores):.4f}")
+print(f"LightGBM Mean AUC:    {np.mean(lgbm_auc_scores):.4f} ± {np.std(lgbm_auc_scores):.4f}")
+--- Fold 1 ---
+Default metric period is 5 because AUC is/are not implemented for GPU
+0: test: 0.9209139 best: 0.9209139 (0) total: 425ms remaining: 7m 5s
+100: test: 0.9550200 best: 0.9550200 (100) total: 1.53s remaining: 13.6s
+200: test: 0.9595938 best: 0.9595938 (200) total: 2.49s remaining: 9.91s
+300: test: 0.9615413 best: 0.9615413 (300) total: 3.46s remaining: 8.04s
+400: test: 0.9626464 best: 0.9626464 (400) total: 4.43s remaining: 6.62s
+500: test: 0.9632978 best: 0.9632978 (500) total: 5.4s remaining: 5.38s
+600: test: 0.9637637 best: 0.9637637 (600) total: 6.37s remaining: 4.23s
+700: test: 0.9641205 best: 0.9641205 (700) total: 7.33s remaining: 3.13s
+800: test: 0.9644091 best: 0.9644091 (800) total: 8.31s remaining: 2.06s
+900: test: 0.9646571 best: 0.9646571 (900) total: 9.27s remaining: 1.02s
+999: test: 0.9648599 best: 0.9648599 (999) total: 10.2s remaining: 0us
+bestTest = 0.9648599029
+bestIteration = 999
+CatBoost Fold 1 AUC: 0.9649
+[0] validation_0-logloss:0.37836
+[100] validation_0-logloss:0.24440
+[200] validation_0-logloss:0.19526
+[300] validation_0-logloss:0.17342
+[400] validation_0-logloss:0.16254
+[500] validation_0-logloss:0.15656
+[600] validation_0-logloss:0.15270
+[700] validation_0-logloss:0.15022
+[800] validation_0-logloss:0.14842
+[900] validation_0-logloss:0.14717
+[1000] validation_0-logloss:0.14616
+[1100] validation_0-logloss:0.14536
+[1200] validation_0-logloss:0.14472
+[1300] validation_0-logloss:0.14425
+[1400] validation_0-logloss:0.14387
+[1500] validation_0-logloss:0.14353
+[1600] validation_0-logloss:0.14325
+[1700] validation_0-logloss:0.14303
+[1800] validation_0-logloss:0.14281
+[1900] validation_0-logloss:0.14262
+[2000] validation_0-logloss:0.14245
+[2100] validation_0-logloss:0.14229
+[2200] validation_0-logloss:0.14219
+[2300] validation_0-logloss:0.14210
+[2400] validation_0-logloss:0.14200
+[2500] validation_0-logloss:0.14189
+[2600] validation_0-logloss:0.14180
+[2700] validation_0-logloss:0.14172
+[2800] validation_0-logloss:0.14165
+[2900] validation_0-logloss:0.14158
+[3000] validation_0-logloss:0.14150
+[3100] validation_0-logloss:0.14142
+[3200] validation_0-logloss:0.14135
+[3300] validation_0-logloss:0.14129
+[3400] validation_0-logloss:0.14123
+[3500] validation_0-logloss:0.14117
+[3600] validation_0-logloss:0.14112
+[3700] validation_0-logloss:0.14108
+[3800] validation_0-logloss:0.14104
+[3900] validation_0-logloss:0.14101
+[4000] validation_0-logloss:0.14096
+[4100] validation_0-logloss:0.14093
+[4200] validation_0-logloss:0.14089
+[4300] validation_0-logloss:0.14086
+[4400] validation_0-logloss:0.14082
+[4500] validation_0-logloss:0.14079
+[4600] validation_0-logloss:0.14075
+[4700] validation_0-logloss:0.14073
+[4800] validation_0-logloss:0.14070
+[4900] validation_0-logloss:0.14068
+[5000] validation_0-logloss:0.14066
+[5100] validation_0-logloss:0.14063
+[5200] validation_0-logloss:0.14063
+[5300] validation_0-logloss:0.14061
+[5400] validation_0-logloss:0.14059
+[5500] validation_0-logloss:0.14056
+[5600] validation_0-logloss:0.14054
+[5700] validation_0-logloss:0.14053
+[5800] validation_0-logloss:0.14050
+[5900] validation_0-logloss:0.14048
+[6000] validation_0-logloss:0.14046
+[6100] validation_0-logloss:0.14043
+[6200] validation_0-logloss:0.14043
+[6300] validation_0-logloss:0.14041
+[6400] validation_0-logloss:0.14039
+[6500] validation_0-logloss:0.14037
+[6600] validation_0-logloss:0.14035
+[6700] validation_0-logloss:0.14034
+[6800] validation_0-logloss:0.14034
+[6900] validation_0-logloss:0.14033
+[7000] validation_0-logloss:0.14033
+[7100] validation_0-logloss:0.14032
+[7200] validation_0-logloss:0.14031
+[7300] validation_0-logloss:0.14029
+[7400] validation_0-logloss:0.14028
+[7500] validation_0-logloss:0.14027
+[7600] validation_0-logloss:0.14025
+[7700] validation_0-logloss:0.14024
+[7800] validation_0-logloss:0.14022
+[7900] validation_0-logloss:0.14022
+[7999] validation_0-logloss:0.14021
+XGBoost Fold 1 AUC: 0.9700
+Training until validation scores don't improve for 50 rounds
+[100] valid_0's auc: 0.965744 valid_0's binary_logloss: 0.155967
+[200] valid_0's auc: 0.96887 valid_0's binary_logloss: 0.144245
+[300] valid_0's auc: 0.970316 valid_0's binary_logloss: 0.140421
+[400] valid_0's auc: 0.971286 valid_0's binary_logloss: 0.13814
+[500] valid_0's auc: 0.971915 valid_0's binary_logloss: 0.136642
+[600] valid_0's auc: 0.972437 valid_0's binary_logloss: 0.135378
+[700] valid_0's auc: 0.97285 valid_0's binary_logloss: 0.134327
+[800] valid_0's auc: 0.973095 valid_0's binary_logloss: 0.133723
+[900] valid_0's auc: 0.973286 valid_0's binary_logloss: 0.133231
+[1000] valid_0's auc: 0.973484 valid_0's binary_logloss: 0.132703
+[1100] valid_0's auc: 0.973677 valid_0's binary_logloss: 0.132161
+[1200] valid_0's auc: 0.97381 valid_0's binary_logloss: 0.131806
+[1300] valid_0's auc: 0.973912 valid_0's binary_logloss: 0.131521
+[1400] valid_0's auc: 0.974032 valid_0's binary_logloss: 0.131213
+[1500] valid_0's auc: 0.974082 valid_0's binary_logloss: 0.131046
+[1600] valid_0's auc: 0.974159 valid_0's binary_logloss: 0.130835
+[1700] valid_0's auc: 0.974212 valid_0's binary_logloss: 0.130675
+[1800] valid_0's auc: 0.974267 valid_0's binary_logloss: 0.130526
+[1900] valid_0's auc: 0.974343 valid_0's binary_logloss: 0.130322
+[2000] valid_0's auc: 0.974404 valid_0's binary_logloss: 0.130158
+[2100] valid_0's auc: 0.974433 valid_0's binary_logloss: 0.130076
+[2200] valid_0's auc: 0.974496 valid_0's binary_logloss: 0.129894
+[2300] valid_0's auc: 0.97456 valid_0's binary_logloss: 0.129719
+[2400] valid_0's auc: 0.974597 valid_0's binary_logloss: 0.129612
+[2500] valid_0's auc: 0.974621 valid_0's binary_logloss: 0.129539
+[2600] valid_0's auc: 0.974661 valid_0's binary_logloss: 0.129434
+[2700] valid_0's auc: 0.974697 valid_0's binary_logloss: 0.129324
+[2800] valid_0's auc: 0.974723 valid_0's binary_logloss: 0.129262
+[2900] valid_0's auc: 0.97474 valid_0's binary_logloss: 0.129217
+[3000] valid_0's auc: 0.97476 valid_0's binary_logloss: 0.129167
+[3100] valid_0's auc: 0.974781 valid_0's binary_logloss: 0.12911
+Early stopping, best iteration is:
+[3086] valid_0's auc: 0.974783 valid_0's binary_logloss: 0.12911
+LightGBM Fold 1 AUC: 0.9748
+
+--- Fold 2 ---
+Default metric period is 5 because AUC is/are not implemented for GPU
+0: test: 0.9199280 best: 0.9199280 (0) total: 16.6ms remaining: 16.5s
+100: test: 0.9534271 best: 0.9534271 (100) total: 1.11s remaining: 9.85s
+200: test: 0.9580870 best: 0.9580870 (200) total: 2.12s remaining: 8.41s
+300: test: 0.9599334 best: 0.9599334 (300) total: 3.11s remaining: 7.22s
+400: test: 0.9609495 best: 0.9609495 (400) total: 4.09s remaining: 6.11s
+500: test: 0.9615770 best: 0.9615770 (500) total: 5.08s remaining: 5.06s
+600: test: 0.9620733 best: 0.9620733 (600) total: 6.06s remaining: 4.02s
+700: test: 0.9624047 best: 0.9624047 (700) total: 7.04s remaining: 3s
+800: test: 0.9627035 best: 0.9627035 (800) total: 8.02s remaining: 1.99s
+900: test: 0.9629774 best: 0.9629774 (900) total: 9.02s remaining: 991ms
+999: test: 0.9631448 best: 0.9631448 (999) total: 10s remaining: 0us
+bestTest = 0.9631448388
+bestIteration = 999
+CatBoost Fold 2 AUC: 0.9631
+[0] validation_0-logloss:0.37833
+[100] validation_0-logloss:0.24545
+[200] validation_0-logloss:0.19672
+[300] validation_0-logloss:0.17617
+[400] validation_0-logloss:0.16558
+[500] validation_0-logloss:0.15914
+[600] validation_0-logloss:0.15535
+[700] validation_0-logloss:0.15289
+[800] validation_0-logloss:0.15115
+[900] validation_0-logloss:0.14991
+[1000] validation_0-logloss:0.14898
+[1100] validation_0-logloss:0.14828
+[1200] validation_0-logloss:0.14773
+[1300] validation_0-logloss:0.14731
+[1400] validation_0-logloss:0.14698
+[1500] validation_0-logloss:0.14670
+[1600] validation_0-logloss:0.14648
+[1700] validation_0-logloss:0.14629
+[1800] validation_0-logloss:0.14610
+[1900] validation_0-logloss:0.14594
+[2000] validation_0-logloss:0.14581
+[2100] validation_0-logloss:0.14568
+[2200] validation_0-logloss:0.14555
+[2300] validation_0-logloss:0.14544
+[2400] validation_0-logloss:0.14534
+[2500] validation_0-logloss:0.14528
+[2600] validation_0-logloss:0.14519
+[2700] validation_0-logloss:0.14512
+[2800] validation_0-logloss:0.14506
+[2900] validation_0-logloss:0.14500
+[3000] validation_0-logloss:0.14494
+[3100] validation_0-logloss:0.14489
+[3200] validation_0-logloss:0.14486
+[3300] validation_0-logloss:0.14482
+[3400] validation_0-logloss:0.14477
+[3500] validation_0-logloss:0.14473
+[3600] validation_0-logloss:0.14468
+[3700] validation_0-logloss:0.14465
+[3800] validation_0-logloss:0.14461
+[3900] validation_0-logloss:0.14458
+[4000] validation_0-logloss:0.14454
+[4100] validation_0-logloss:0.14453
+[4200] validation_0-logloss:0.14451
+[4300] validation_0-logloss:0.14449
+[4400] validation_0-logloss:0.14446
+[4500] validation_0-logloss:0.14443
+[4600] validation_0-logloss:0.14441
+[4700] validation_0-logloss:0.14439
+[4800] validation_0-logloss:0.14438
+[4900] validation_0-logloss:0.14438
+[5000] validation_0-logloss:0.14437
+[5100] validation_0-logloss:0.14435
+[5200] validation_0-logloss:0.14434
+[5300] validation_0-logloss:0.14433
+[5400] validation_0-logloss:0.14432
+[5500] validation_0-logloss:0.14432
+[5600] validation_0-logloss:0.14429
+[5700] validation_0-logloss:0.14428
+[5800] validation_0-logloss:0.14426
+[5900] validation_0-logloss:0.14424
+[6000] validation_0-logloss:0.14422
+[6100] validation_0-logloss:0.14421
+[6200] validation_0-logloss:0.14419
+[6300] validation_0-logloss:0.14418
+[6400] validation_0-logloss:0.14415
+[6500] validation_0-logloss:0.14415
+[6600] validation_0-logloss:0.14415
+[6700] validation_0-logloss:0.14414
+[6800] validation_0-logloss:0.14412
+[6900] validation_0-logloss:0.14411
+[7000] validation_0-logloss:0.14408
+[7100] validation_0-logloss:0.14408
+[7200] validation_0-logloss:0.14408
+[7300] validation_0-logloss:0.14406
+[7400] validation_0-logloss:0.14406
+[7500] validation_0-logloss:0.14404
+[7600] validation_0-logloss:0.14403
+[7700] validation_0-logloss:0.14403
+[7800] validation_0-logloss:0.14402
+[7900] validation_0-logloss:0.14401
+[7999] validation_0-logloss:0.14400
+XGBoost Fold 2 AUC: 0.9681
+Training until validation scores don't improve for 50 rounds
+[100] valid_0's auc: 0.963805 valid_0's binary_logloss: 0.158511
+[200] valid_0's auc: 0.967005 valid_0's binary_logloss: 0.147249
+[300] valid_0's auc: 0.968524 valid_0's binary_logloss: 0.143555
+[400] valid_0's auc: 0.969454 valid_0's binary_logloss: 0.141465
+[500] valid_0's auc: 0.970039 valid_0's binary_logloss: 0.140119
+[600] valid_0's auc: 0.970391 valid_0's binary_logloss: 0.139284
+[700] valid_0's auc: 0.970748 valid_0's binary_logloss: 0.138439
+[800] valid_0's auc: 0.970994 valid_0's binary_logloss: 0.137838
+[900] valid_0's auc: 0.971188 valid_0's binary_logloss: 0.137364
+[1000] valid_0's auc: 0.971398 valid_0's binary_logloss: 0.136869
+[1100] valid_0's auc: 0.97165 valid_0's binary_logloss: 0.136274
+[1200] valid_0's auc: 0.971783 valid_0's binary_logloss: 0.135951
+[1300] valid_0's auc: 0.971949 valid_0's binary_logloss: 0.135549
+[1400] valid_0's auc: 0.972074 valid_0's binary_logloss: 0.13525
+[1500] valid_0's auc: 0.972156 valid_0's binary_logloss: 0.135046
+[1600] valid_0's auc: 0.972205 valid_0's binary_logloss: 0.134915
+[1700] valid_0's auc: 0.972303 valid_0's binary_logloss: 0.134676
+[1800] valid_0's auc: 0.972344 valid_0's binary_logloss: 0.134582
+[1900] valid_0's auc: 0.972421 valid_0's binary_logloss: 0.134388
+[2000] valid_0's auc: 0.972472 valid_0's binary_logloss: 0.134261
+[2100] valid_0's auc: 0.972497 valid_0's binary_logloss: 0.134203
+[2200] valid_0's auc: 0.972519 valid_0's binary_logloss: 0.134138
+[2300] valid_0's auc: 0.972561 valid_0's binary_logloss: 0.13403
+[2400] valid_0's auc: 0.972634 valid_0's binary_logloss: 0.133866
+[2500] valid_0's auc: 0.972686 valid_0's binary_logloss: 0.133744
+[2600] valid_0's auc: 0.972714 valid_0's binary_logloss: 0.133678
+Early stopping, best iteration is:
+[2623] valid_0's auc: 0.972723 valid_0's binary_logloss: 0.13366
+LightGBM Fold 2 AUC: 0.9727
+
+--- Fold 3 ---
+Default metric period is 5 because AUC is/are not implemented for GPU
+0: test: 0.9225699 best: 0.9225699 (0) total: 16.6ms remaining: 16.6s
+100: test: 0.9545580 best: 0.9545580 (100) total: 1.12s remaining: 9.94s
+200: test: 0.9589928 best: 0.9589928 (200) total: 2.12s remaining: 8.43s
+300: test: 0.9607447 best: 0.9607447 (300) total: 3.12s remaining: 7.25s
+400: test: 0.9616976 best: 0.9616976 (400) total: 4.12s remaining: 6.15s
+500: test: 0.9623668 best: 0.9623668 (500) total: 5.1s remaining: 5.08s
+600: test: 0.9628075 best: 0.9628075 (600) total: 6.09s remaining: 4.04s
+700: test: 0.9631535 best: 0.9631535 (700) total: 7.08s remaining: 3.02s
+800: test: 0.9634139 best: 0.9634139 (800) total: 8.06s remaining: 2s
+900: test: 0.9636387 best: 0.9636387 (900) total: 9.04s remaining: 993ms
+999: test: 0.9638104 best: 0.9638104 (999) total: 10s remaining: 0us
+bestTest = 0.9638103843
+bestIteration = 999
+CatBoost Fold 3 AUC: 0.9638
+[0] validation_0-logloss:0.37833
+[100] validation_0-logloss:0.24720
+[200] validation_0-logloss:0.19762
+[300] validation_0-logloss:0.17524
+[400] validation_0-logloss:0.16432
+[500] validation_0-logloss:0.15838
+[600] validation_0-logloss:0.15471
+[700] validation_0-logloss:0.15226
+[800] validation_0-logloss:0.15052
+[900] validation_0-logloss:0.14931
+[1000] validation_0-logloss:0.14844
+[1100] validation_0-logloss:0.14772
+[1200] validation_0-logloss:0.14718
+[1300] validation_0-logloss:0.14674
+[1400] validation_0-logloss:0.14640
+[1500] validation_0-logloss:0.14609
+[1600] validation_0-logloss:0.14585
+[1700] validation_0-logloss:0.14566
+[1800] validation_0-logloss:0.14547
+[1900] validation_0-logloss:0.14532
+[2000] validation_0-logloss:0.14519
+[2100] validation_0-logloss:0.14509
+[2200] validation_0-logloss:0.14499
+[2300] validation_0-logloss:0.14490
+[2400] validation_0-logloss:0.14481
+[2500] validation_0-logloss:0.14473
+[2600] validation_0-logloss:0.14466
+[2700] validation_0-logloss:0.14457
+[2800] validation_0-logloss:0.14450
+[2900] validation_0-logloss:0.14444
+[3000] validation_0-logloss:0.14438
+[3100] validation_0-logloss:0.14433
+[3200] validation_0-logloss:0.14429
+[3300] validation_0-logloss:0.14424
+[3400] validation_0-logloss:0.14419
+[3500] validation_0-logloss:0.14415
+[3600] validation_0-logloss:0.14412
+[3700] validation_0-logloss:0.14409
+[3800] validation_0-logloss:0.14406
+[3900] validation_0-logloss:0.14403
+[4000] validation_0-logloss:0.14401
+[4100] validation_0-logloss:0.14399
+[4200] validation_0-logloss:0.14396
+[4300] validation_0-logloss:0.14394
+[4400] validation_0-logloss:0.14391
+[4500] validation_0-logloss:0.14388
+[4600] validation_0-logloss:0.14386
+[4700] validation_0-logloss:0.14384
+[4800] validation_0-logloss:0.14381
+[4900] validation_0-logloss:0.14379
+[5000] validation_0-logloss:0.14379
+[5100] validation_0-logloss:0.14377
+[5200] validation_0-logloss:0.14376
+[5300] validation_0-logloss:0.14374
+[5400] validation_0-logloss:0.14373
+[5500] validation_0-logloss:0.14372
+[5600] validation_0-logloss:0.14371
+[5700] validation_0-logloss:0.14370
+[5800] validation_0-logloss:0.14368
+[5900] validation_0-logloss:0.14367
+[6000] validation_0-logloss:0.14365
+[6100] validation_0-logloss:0.14364
+[6200] validation_0-logloss:0.14363
+[6300] validation_0-logloss:0.14360
+[6400] validation_0-logloss:0.14360
+[6500] validation_0-logloss:0.14359
+[6600] validation_0-logloss:0.14359
+[6700] validation_0-logloss:0.14358
+[6800] validation_0-logloss:0.14356
+[6900] validation_0-logloss:0.14355
+[7000] validation_0-logloss:0.14353
+[7100] validation_0-logloss:0.14353
+[7200] validation_0-logloss:0.14353
+[7300] validation_0-logloss:0.14352
+[7400] validation_0-logloss:0.14352
+[7500] validation_0-logloss:0.14351
+[7600] validation_0-logloss:0.14351
+[7700] validation_0-logloss:0.14351
+[7800] validation_0-logloss:0.14350
+[7900] validation_0-logloss:0.14349
+[7999] validation_0-logloss:0.14349
+XGBoost Fold 3 AUC: 0.9684
+Training until validation scores don't improve for 50 rounds
+[100] valid_0's auc: 0.964487 valid_0's binary_logloss: 0.15784
+[200] valid_0's auc: 0.967679 valid_0's binary_logloss: 0.146297
+[300] valid_0's auc: 0.969211 valid_0's binary_logloss: 0.142464
+[400] valid_0's auc: 0.970151 valid_0's binary_logloss: 0.140287
+[500] valid_0's auc: 0.970827 valid_0's binary_logloss: 0.138739
+[600] valid_0's auc: 0.971287 valid_0's binary_logloss: 0.13767
+[700] valid_0's auc: 0.97168 valid_0's binary_logloss: 0.136718
+[800] valid_0's auc: 0.971937 valid_0's binary_logloss: 0.136098
+[900] valid_0's auc: 0.972155 valid_0's binary_logloss: 0.135536
+[1000] valid_0's auc: 0.972304 valid_0's binary_logloss: 0.135132
+[1100] valid_0's auc: 0.972453 valid_0's binary_logloss: 0.134741
+[1200] valid_0's auc: 0.972565 valid_0's binary_logloss: 0.134439
+[1300] valid_0's auc: 0.97265 valid_0's binary_logloss: 0.134207
+[1400] valid_0's auc: 0.972719 valid_0's binary_logloss: 0.134014
+[1500] valid_0's auc: 0.972814 valid_0's binary_logloss: 0.133761
+[1600] valid_0's auc: 0.972888 valid_0's binary_logloss: 0.133542
+[1700] valid_0's auc: 0.972968 valid_0's binary_logloss: 0.13334
+[1800] valid_0's auc: 0.973012 valid_0's binary_logloss: 0.133224
+[1900] valid_0's auc: 0.973032 valid_0's binary_logloss: 0.133163
+[2000] valid_0's auc: 0.973085 valid_0's binary_logloss: 0.133028
+[2100] valid_0's auc: 0.973129 valid_0's binary_logloss: 0.132918
+[2200] valid_0's auc: 0.973179 valid_0's binary_logloss: 0.132797
+[2300] valid_0's auc: 0.973265 valid_0's binary_logloss: 0.132584
+[2400] valid_0's auc: 0.973289 valid_0's binary_logloss: 0.132524
+[2500] valid_0's auc: 0.973308 valid_0's binary_logloss: 0.132475
+Early stopping, best iteration is:
+[2483] valid_0's auc: 0.973311 valid_0's binary_logloss: 0.132466
+LightGBM Fold 3 AUC: 0.9733
+
+--- Fold 4 ---
+Default metric period is 5 because AUC is/are not implemented for GPU
+0: test: 0.9223356 best: 0.9223356 (0) total: 17.5ms remaining: 17.5s
+100: test: 0.9534246 best: 0.9534246 (100) total: 1.09s remaining: 9.71s
+200: test: 0.9584142 best: 0.9584142 (200) total: 2.08s remaining: 8.27s
+300: test: 0.9602819 best: 0.9602819 (300) total: 3.06s remaining: 7.1s
+400: test: 0.9613604 best: 0.9613604 (400) total: 4.04s remaining: 6.03s
+500: test: 0.9620557 best: 0.9620557 (500) total: 5.02s remaining: 5s
+600: test: 0.9625261 best: 0.9625261 (600) total: 6s remaining: 3.99s
+700: test: 0.9629119 best: 0.9629119 (700) total: 6.99s remaining: 2.98s
+800: test: 0.9632225 best: 0.9632225 (800) total: 7.99s remaining: 1.98s
+900: test: 0.9634299 best: 0.9634299 (900) total: 8.97s remaining: 985ms
+999: test: 0.9636110 best: 0.9636110 (999) total: 9.94s remaining: 0us
+bestTest = 0.9636110067
+bestIteration = 999
+CatBoost Fold 4 AUC: 0.9636
+[0] validation_0-logloss:0.37837
+[100] validation_0-logloss:0.24413
+[200] validation_0-logloss:0.19735
+[300] validation_0-logloss:0.17426
+[400] validation_0-logloss:0.16313
+[500] validation_0-logloss:0.15736
+[600] validation_0-logloss:0.15388
+[700] validation_0-logloss:0.15139
+[800] validation_0-logloss:0.14970
+[900] validation_0-logloss:0.14852
+[1000] validation_0-logloss:0.14758
+[1100] validation_0-logloss:0.14688
+[1200] validation_0-logloss:0.14634
+[1300] validation_0-logloss:0.14589
+[1400] validation_0-logloss:0.14555
+[1500] validation_0-logloss:0.14525
+[1600] validation_0-logloss:0.14500
+[1700] validation_0-logloss:0.14478
+[1800] validation_0-logloss:0.14460
+[1900] validation_0-logloss:0.14443
+[2000] validation_0-logloss:0.14428
+[2100] validation_0-logloss:0.14415
+[2200] validation_0-logloss:0.14402
+[2300] validation_0-logloss:0.14390
+[2400] validation_0-logloss:0.14382
+[2500] validation_0-logloss:0.14372
+[2600] validation_0-logloss:0.14364
+[2700] validation_0-logloss:0.14357
+[2800] validation_0-logloss:0.14350
+[2900] validation_0-logloss:0.14343
+[3000] validation_0-logloss:0.14337
+[3100] validation_0-logloss:0.14331
+[3200] validation_0-logloss:0.14326
+[3300] validation_0-logloss:0.14322
+[3400] validation_0-logloss:0.14317
+[3500] validation_0-logloss:0.14312
+[3600] validation_0-logloss:0.14306
+[3700] validation_0-logloss:0.14301
+[3800] validation_0-logloss:0.14298
+[3900] validation_0-logloss:0.14293
+[4000] validation_0-logloss:0.14289
+[4100] validation_0-logloss:0.14284
+[4200] validation_0-logloss:0.14280
+[4300] validation_0-logloss:0.14277
+[4400] validation_0-logloss:0.14274
+[4500] validation_0-logloss:0.14271
+[4600] validation_0-logloss:0.14268
+[4700] validation_0-logloss:0.14265
+[4800] validation_0-logloss:0.14264
+[4900] validation_0-logloss:0.14262
+[5000] validation_0-logloss:0.14260
+[5100] validation_0-logloss:0.14258
+[5200] validation_0-logloss:0.14256
+[5300] validation_0-logloss:0.14254
+[5400] validation_0-logloss:0.14253
+[5500] validation_0-logloss:0.14251
+[5600] validation_0-logloss:0.14249
+[5700] validation_0-logloss:0.14249
+[5800] validation_0-logloss:0.14248
+[5900] validation_0-logloss:0.14247
+[6000] validation_0-logloss:0.14247
+[6100] validation_0-logloss:0.14246
+[6200] validation_0-logloss:0.14245
+[6300] validation_0-logloss:0.14243
+[6400] validation_0-logloss:0.14241
+[6500] validation_0-logloss:0.14241
+[6600] validation_0-logloss:0.14241
+[6700] validation_0-logloss:0.14240
+[6800] validation_0-logloss:0.14239
+[6900] validation_0-logloss:0.14237
+[7000] validation_0-logloss:0.14236
+[7100] validation_0-logloss:0.14236
+[7200] validation_0-logloss:0.14235
+[7300] validation_0-logloss:0.14234
+[7400] validation_0-logloss:0.14234
+[7500] validation_0-logloss:0.14233
+[7600] validation_0-logloss:0.14233
+[7700] validation_0-logloss:0.14233
+[7800] validation_0-logloss:0.14232
+[7900] validation_0-logloss:0.14232
+[7999] validation_0-logloss:0.14231
+XGBoost Fold 4 AUC: 0.9690
+Training until validation scores don't improve for 50 rounds
+[100] valid_0's auc: 0.964431 valid_0's binary_logloss: 0.157608
+[200] valid_0's auc: 0.967455 valid_0's binary_logloss: 0.146582
+[300] valid_0's auc: 0.969192 valid_0's binary_logloss: 0.142424
+[400] valid_0's auc: 0.970181 valid_0's binary_logloss: 0.140206
+[500] valid_0's auc: 0.970844 valid_0's binary_logloss: 0.138712
+[600] valid_0's auc: 0.971233 valid_0's binary_logloss: 0.13777
+[700] valid_0's auc: 0.971688 valid_0's binary_logloss: 0.136717
+[800] valid_0's auc: 0.97194 valid_0's binary_logloss: 0.136072
+[900] valid_0's auc: 0.972214 valid_0's binary_logloss: 0.135398
+[1000] valid_0's auc: 0.972424 valid_0's binary_logloss: 0.134872
+[1100] valid_0's auc: 0.972594 valid_0's binary_logloss: 0.134455
+[1200] valid_0's auc: 0.97269 valid_0's binary_logloss: 0.134199
+[1300] valid_0's auc: 0.972786 valid_0's binary_logloss: 0.133953
+[1400] valid_0's auc: 0.972902 valid_0's binary_logloss: 0.133651
+[1500] valid_0's auc: 0.972973 valid_0's binary_logloss: 0.133466
+[1600] valid_0's auc: 0.973053 valid_0's binary_logloss: 0.133261
+[1700] valid_0's auc: 0.973113 valid_0's binary_logloss: 0.133089
+[1800] valid_0's auc: 0.973197 valid_0's binary_logloss: 0.132875
+[1900] valid_0's auc: 0.973221 valid_0's binary_logloss: 0.132808
+[2000] valid_0's auc: 0.973279 valid_0's binary_logloss: 0.132663
+[2100] valid_0's auc: 0.973324 valid_0's binary_logloss: 0.132547
+[2200] valid_0's auc: 0.973372 valid_0's binary_logloss: 0.132429
+[2300] valid_0's auc: 0.973407 valid_0's binary_logloss: 0.132344
+[2400] valid_0's auc: 0.973428 valid_0's binary_logloss: 0.132284
+[2500] valid_0's auc: 0.973472 valid_0's binary_logloss: 0.132183
+[2600] valid_0's auc: 0.973524 valid_0's binary_logloss: 0.132058
+[2700] valid_0's auc: 0.97354 valid_0's binary_logloss: 0.132021
+[2800] valid_0's auc: 0.973551 valid_0's binary_logloss: 0.131996
+Early stopping, best iteration is:
+[2827] valid_0's auc: 0.973558 valid_0's binary_logloss: 0.131979
+LightGBM Fold 4 AUC: 0.9736
+
+--- Fold 5 ---
+Default metric period is 5 because AUC is/are not implemented for GPU
+0: test: 0.9209011 best: 0.9209011 (0) total: 17.7ms remaining: 17.6s
+100: test: 0.9550470 best: 0.9550470 (100) total: 1.1s remaining: 9.77s
+200: test: 0.9595104 best: 0.9595104 (200) total: 2.09s remaining: 8.3s
+300: test: 0.9612018 best: 0.9612018 (300) total: 3.08s remaining: 7.15s
+400: test: 0.9622331 best: 0.9622331 (400) total: 4.07s remaining: 6.08s
+500: test: 0.9629703 best: 0.9629703 (500) total: 5.05s remaining: 5.04s
+600: test: 0.9634325 best: 0.9634325 (600) total: 6.04s remaining: 4.01s
+700: test: 0.9638046 best: 0.9638046 (700) total: 7.03s remaining: 3s
+800: test: 0.9640793 best: 0.9640793 (800) total: 8.02s remaining: 1.99s
+900: test: 0.9643484 best: 0.9643484 (900) total: 9s remaining: 989ms
+999: test: 0.9645669 best: 0.9645669 (999) total: 9.98s remaining: 0us
+bestTest = 0.9645668864
+bestIteration = 999
+CatBoost Fold 5 AUC: 0.9646
+[0] validation_0-logloss:0.37833
+[100] validation_0-logloss:0.24471
+[200] validation_0-logloss:0.19670
+[300] validation_0-logloss:0.17312
+[400] validation_0-logloss:0.16222
+[500] validation_0-logloss:0.15618
+[600] validation_0-logloss:0.15265
+[700] validation_0-logloss:0.15031
+[800] validation_0-logloss:0.14864
+[900] validation_0-logloss:0.14742
+[1000] validation_0-logloss:0.14649
+[1100] validation_0-logloss:0.14578
+[1200] validation_0-logloss:0.14523
+[1300] validation_0-logloss:0.14481
+[1400] validation_0-logloss:0.14446
+[1500] validation_0-logloss:0.14417
+[1600] validation_0-logloss:0.14391
+[1700] validation_0-logloss:0.14369
+[1800] validation_0-logloss:0.14352
+[1900] validation_0-logloss:0.14336
+[2000] validation_0-logloss:0.14324
+[2100] validation_0-logloss:0.14312
+[2200] validation_0-logloss:0.14302
+[2300] validation_0-logloss:0.14292
+[2400] validation_0-logloss:0.14284
+[2500] validation_0-logloss:0.14274
+[2600] validation_0-logloss:0.14268
+[2700] validation_0-logloss:0.14260
+[2800] validation_0-logloss:0.14253
+[2900] validation_0-logloss:0.14247
+[3000] validation_0-logloss:0.14242
+[3100] validation_0-logloss:0.14236
+[3200] validation_0-logloss:0.14231
+[3300] validation_0-logloss:0.14226
+[3400] validation_0-logloss:0.14221
+[3500] validation_0-logloss:0.14217
+[3600] validation_0-logloss:0.14213
+[3700] validation_0-logloss:0.14209
+[3800] validation_0-logloss:0.14206
+[3900] validation_0-logloss:0.14202
+[4000] validation_0-logloss:0.14199
+[4100] validation_0-logloss:0.14195
+[4200] validation_0-logloss:0.14192
+[4300] validation_0-logloss:0.14189
+[4400] validation_0-logloss:0.14187
+[4500] validation_0-logloss:0.14185
+[4600] validation_0-logloss:0.14183
+[4700] validation_0-logloss:0.14179
+[4800] validation_0-logloss:0.14177
+[4900] validation_0-logloss:0.14174
+[5000] validation_0-logloss:0.14172
+[5100] validation_0-logloss:0.14170
+[5200] validation_0-logloss:0.14167
+[5300] validation_0-logloss:0.14165
+[5400] validation_0-logloss:0.14162
+[5500] validation_0-logloss:0.14161
+[5600] validation_0-logloss:0.14159
+[5700] validation_0-logloss:0.14156
+[5800] validation_0-logloss:0.14154
+[5900] validation_0-logloss:0.14151
+[6000] validation_0-logloss:0.14150
+[6100] validation_0-logloss:0.14149
+[6200] validation_0-logloss:0.14146
+[6300] validation_0-logloss:0.14144
+[6400] validation_0-logloss:0.14143
+[6500] validation_0-logloss:0.14142
+[6600] validation_0-logloss:0.14141
+[6700] validation_0-logloss:0.14140
+[6800] validation_0-logloss:0.14140
+[6900] validation_0-logloss:0.14138
+[7000] validation_0-logloss:0.14136
+[7100] validation_0-logloss:0.14133
+[7200] validation_0-logloss:0.14132
+[7300] validation_0-logloss:0.14131
+[7400] validation_0-logloss:0.14130
+[7500] validation_0-logloss:0.14128
+[7600] validation_0-logloss:0.14127
+[7700] validation_0-logloss:0.14127
+[7800] validation_0-logloss:0.14126
+[7900] validation_0-logloss:0.14125
+[7999] validation_0-logloss:0.14125
+XGBoost Fold 5 AUC: 0.9695
+Training until validation scores don't improve for 50 rounds
+[100] valid_0's auc: 0.965406 valid_0's binary_logloss: 0.156208
+[200] valid_0's auc: 0.968484 valid_0's binary_logloss: 0.144822
+[300] valid_0's auc: 0.970067 valid_0's binary_logloss: 0.140837
+[400] valid_0's auc: 0.970908 valid_0's binary_logloss: 0.138896
+[500] valid_0's auc: 0.971523 valid_0's binary_logloss: 0.137497
+[600] valid_0's auc: 0.972006 valid_0's binary_logloss: 0.136328
+[700] valid_0's auc: 0.972357 valid_0's binary_logloss: 0.135494
+[800] valid_0's auc: 0.97263 valid_0's binary_logloss: 0.134842
+[900] valid_0's auc: 0.972796 valid_0's binary_logloss: 0.134438
+[1000] valid_0's auc: 0.972993 valid_0's binary_logloss: 0.133942
+[1100] valid_0's auc: 0.973131 valid_0's binary_logloss: 0.133578
+[1200] valid_0's auc: 0.973308 valid_0's binary_logloss: 0.133122
+[1300] valid_0's auc: 0.973434 valid_0's binary_logloss: 0.132794
+[1400] valid_0's auc: 0.973562 valid_0's binary_logloss: 0.13246
+[1500] valid_0's auc: 0.973645 valid_0's binary_logloss: 0.132232
+[1600] valid_0's auc: 0.973721 valid_0's binary_logloss: 0.132025
+[1700] valid_0's auc: 0.973801 valid_0's binary_logloss: 0.131806
+[1800] valid_0's auc: 0.973893 valid_0's binary_logloss: 0.131579
+[1900] valid_0's auc: 0.973942 valid_0's binary_logloss: 0.131438
+[2000] valid_0's auc: 0.973978 valid_0's binary_logloss: 0.13134
+[2100] valid_0's auc: 0.974025 valid_0's binary_logloss: 0.131225
+[2200] valid_0's auc: 0.97407 valid_0's binary_logloss: 0.131102
+[2300] valid_0's auc: 0.97411 valid_0's binary_logloss: 0.130996
+[2400] valid_0's auc: 0.974131 valid_0's binary_logloss: 0.130936
+[2500] valid_0's auc: 0.974149 valid_0's binary_logloss: 0.130891
+[2600] valid_0's auc: 0.974164 valid_0's binary_logloss: 0.130839
+[2700] valid_0's auc: 0.97418 valid_0's binary_logloss: 0.130796
+[2800] valid_0's auc: 0.974196 valid_0's binary_logloss: 0.130755
+[2900] valid_0's auc: 0.974226 valid_0's binary_logloss: 0.130677
+[3000] valid_0's auc: 0.974245 valid_0's binary_logloss: 0.130638
+[3100] valid_0's auc: 0.974271 valid_0's binary_logloss: 0.130575
+Early stopping, best iteration is:
+[3138] valid_0's auc: 0.974277 valid_0's binary_logloss: 0.130559
+LightGBM Fold 5 AUC: 0.9743
+
+--- Fold 6 ---
+Default metric period is 5 because AUC is/are not implemented for GPU
+0: test: 0.9242579 best: 0.9242579 (0) total: 16.7ms remaining: 16.7s
+100: test: 0.9546186 best: 0.9546186 (100) total: 1.1s remaining: 9.81s
+200: test: 0.9590726 best: 0.9590726 (200) total: 2.09s remaining: 8.31s
+300: test: 0.9607986 best: 0.9607986 (300) total: 3.07s remaining: 7.13s
+400: test: 0.9617519 best: 0.9617519 (400) total: 4.05s remaining: 6.05s
+500: test: 0.9623709 best: 0.9623709 (500) total: 5.03s remaining: 5.01s
+600: test: 0.9628107 best: 0.9628107 (600) total: 6.03s remaining: 4s
+700: test: 0.9630902 best: 0.9630902 (699) total: 7.01s remaining: 2.99s
+800: test: 0.9633754 best: 0.9633754 (800) total: 8s remaining: 1.99s
+900: test: 0.9635830 best: 0.9635830 (900) total: 8.98s remaining: 987ms
+999: test: 0.9637995 best: 0.9637995 (999) total: 9.95s remaining: 0us
+bestTest = 0.9637994766
+bestIteration = 999
+CatBoost Fold 6 AUC: 0.9638
+[0] validation_0-logloss:0.37832
+[100] validation_0-logloss:0.24782
+[200] validation_0-logloss:0.19742
+[300] validation_0-logloss:0.17491
+[400] validation_0-logloss:0.16433
+[500] validation_0-logloss:0.15782
+[600] validation_0-logloss:0.15413
+[700] validation_0-logloss:0.15171
+[800] validation_0-logloss:0.15003
+[900] validation_0-logloss:0.14889
+[1000] validation_0-logloss:0.14801
+[1100] validation_0-logloss:0.14736
+[1200] validation_0-logloss:0.14682
+[1300] validation_0-logloss:0.14642
+[1400] validation_0-logloss:0.14608
+[1500] validation_0-logloss:0.14581
+[1600] validation_0-logloss:0.14560
+[1700] validation_0-logloss:0.14539
+[1800] validation_0-logloss:0.14519
+[1900] validation_0-logloss:0.14505
+[2000] validation_0-logloss:0.14493
+[2100] validation_0-logloss:0.14479
+[2200] validation_0-logloss:0.14469
+[2300] validation_0-logloss:0.14461
+[2400] validation_0-logloss:0.14452
+[2500] validation_0-logloss:0.14444
+[2600] validation_0-logloss:0.14437
+[2700] validation_0-logloss:0.14431
+[2800] validation_0-logloss:0.14424
+[2900] validation_0-logloss:0.14418
+[3000] validation_0-logloss:0.14413
+[3100] validation_0-logloss:0.14409
+[3200] validation_0-logloss:0.14404
+[3300] validation_0-logloss:0.14401
+[3400] validation_0-logloss:0.14397
+[3500] validation_0-logloss:0.14393
+[3600] validation_0-logloss:0.14389
+[3700] validation_0-logloss:0.14386
+[3800] validation_0-logloss:0.14383
+[3900] validation_0-logloss:0.14379
+[4000] validation_0-logloss:0.14376
+[4100] validation_0-logloss:0.14374
+[4200] validation_0-logloss:0.14370
+[4300] validation_0-logloss:0.14368
+[4400] validation_0-logloss:0.14366
+[4500] validation_0-logloss:0.14364
+[4600] validation_0-logloss:0.14361
+[4700] validation_0-logloss:0.14359
+[4800] validation_0-logloss:0.14356
+[4900] validation_0-logloss:0.14354
+[5000] validation_0-logloss:0.14352
+[5100] validation_0-logloss:0.14349
+[5200] validation_0-logloss:0.14348
+[5300] validation_0-logloss:0.14346
+[5400] validation_0-logloss:0.14345
+[5500] validation_0-logloss:0.14343
+[5600] validation_0-logloss:0.14341
+[5700] validation_0-logloss:0.14340
+[5800] validation_0-logloss:0.14337
+[5900] validation_0-logloss:0.14335
+[6000] validation_0-logloss:0.14334
+[6100] validation_0-logloss:0.14332
+[6200] validation_0-logloss:0.14330
+[6300] validation_0-logloss:0.14327
+[6400] validation_0-logloss:0.14325
+[6500] validation_0-logloss:0.14323
+[6600] validation_0-logloss:0.14322
+[6700] validation_0-logloss:0.14320
+[6800] validation_0-logloss:0.14319
+[6900] validation_0-logloss:0.14318
+[7000] validation_0-logloss:0.14317
+[7100] validation_0-logloss:0.14316
+[7200] validation_0-logloss:0.14315
+[7300] validation_0-logloss:0.14313
+[7400] validation_0-logloss:0.14313
+[7500] validation_0-logloss:0.14312
+[7600] validation_0-logloss:0.14311
+[7700] validation_0-logloss:0.14311
+[7800] validation_0-logloss:0.14311
+[7900] validation_0-logloss:0.14310
+[7999] validation_0-logloss:0.14310
+XGBoost Fold 6 AUC: 0.9685
+Training until validation scores don't improve for 50 rounds
+[100] valid_0's auc: 0.964613 valid_0's binary_logloss: 0.157463
+[200] valid_0's auc: 0.967468 valid_0's binary_logloss: 0.146612
+[300] valid_0's auc: 0.968863 valid_0's binary_logloss: 0.142986
+[400] valid_0's auc: 0.969737 valid_0's binary_logloss: 0.140942
+[500] valid_0's auc: 0.970294 valid_0's binary_logloss: 0.139666
+[600] valid_0's auc: 0.970699 valid_0's binary_logloss: 0.138743
+[700] valid_0's auc: 0.971095 valid_0's binary_logloss: 0.137805
+[800] valid_0's auc: 0.971332 valid_0's binary_logloss: 0.137244
+[900] valid_0's auc: 0.971551 valid_0's binary_logloss: 0.136731
+[1000] valid_0's auc: 0.971725 valid_0's binary_logloss: 0.136301
+[1100] valid_0's auc: 0.971909 valid_0's binary_logloss: 0.135847
+[1200] valid_0's auc: 0.972038 valid_0's binary_logloss: 0.135521
+[1300] valid_0's auc: 0.972145 valid_0's binary_logloss: 0.135252
+[1400] valid_0's auc: 0.972261 valid_0's binary_logloss: 0.134965
+[1500] valid_0's auc: 0.972369 valid_0's binary_logloss: 0.134701
+[1600] valid_0's auc: 0.972442 valid_0's binary_logloss: 0.134521
+[1700] valid_0's auc: 0.972519 valid_0's binary_logloss: 0.134335
+[1800] valid_0's auc: 0.97256 valid_0's binary_logloss: 0.134226
+[1900] valid_0's auc: 0.972655 valid_0's binary_logloss: 0.133997
+[2000] valid_0's auc: 0.972689 valid_0's binary_logloss: 0.133908
+[2100] valid_0's auc: 0.972741 valid_0's binary_logloss: 0.133781
+[2200] valid_0's auc: 0.972783 valid_0's binary_logloss: 0.133676
+[2300] valid_0's auc: 0.972818 valid_0's binary_logloss: 0.133577
+[2400] valid_0's auc: 0.972848 valid_0's binary_logloss: 0.133496
+[2500] valid_0's auc: 0.972871 valid_0's binary_logloss: 0.133436
+[2600] valid_0's auc: 0.972894 valid_0's binary_logloss: 0.133388
+Early stopping, best iteration is:
+[2606] valid_0's auc: 0.972899 valid_0's binary_logloss: 0.133376
+LightGBM Fold 6 AUC: 0.9729
+
+--- Fold 7 ---
+Default metric period is 5 because AUC is/are not implemented for GPU
+0: test: 0.9220544 best: 0.9220544 (0) total: 16.5ms remaining: 16.5s
+100: test: 0.9541755 best: 0.9541755 (100) total: 1.11s remaining: 9.87s
+200: test: 0.9589552 best: 0.9589552 (200) total: 2.1s remaining: 8.34s
+300: test: 0.9606748 best: 0.9606748 (300) total: 3.08s remaining: 7.15s
+400: test: 0.9617209 best: 0.9617209 (400) total: 4.07s remaining: 6.07s
+500: test: 0.9623923 best: 0.9623923 (500) total: 5.05s remaining: 5.03s
+600: test: 0.9628669 best: 0.9628669 (600) total: 6.04s remaining: 4.01s
+700: test: 0.9632250 best: 0.9632250 (700) total: 7.02s remaining: 3s
+800: test: 0.9634963 best: 0.9634963 (800) total: 8.03s remaining: 1.99s
+900: test: 0.9637304 best: 0.9637304 (900) total: 9.01s remaining: 990ms
+999: test: 0.9639494 best: 0.9639494 (999) total: 9.99s remaining: 0us
+bestTest = 0.9639493823
+bestIteration = 999
+CatBoost Fold 7 AUC: 0.9639
+[0] validation_0-logloss:0.37830
+[100] validation_0-logloss:0.24449
+[200] validation_0-logloss:0.19605
+[300] validation_0-logloss:0.17462
+[400] validation_0-logloss:0.16370
+[500] validation_0-logloss:0.15787
+[600] validation_0-logloss:0.15429
+[700] validation_0-logloss:0.15180
+[800] validation_0-logloss:0.15008
+[900] validation_0-logloss:0.14888
+[1000] validation_0-logloss:0.14803
+[1100] validation_0-logloss:0.14732
+[1200] validation_0-logloss:0.14678
+[1300] validation_0-logloss:0.14634
+[1400] validation_0-logloss:0.14599
+[1500] validation_0-logloss:0.14570
+[1600] validation_0-logloss:0.14546
+[1700] validation_0-logloss:0.14526
+[1800] validation_0-logloss:0.14510
+[1900] validation_0-logloss:0.14493
+[2000] validation_0-logloss:0.14480
+[2100] validation_0-logloss:0.14467
+[2200] validation_0-logloss:0.14456
+[2300] validation_0-logloss:0.14448
+[2400] validation_0-logloss:0.14440
+[2500] validation_0-logloss:0.14431
+[2600] validation_0-logloss:0.14425
+[2700] validation_0-logloss:0.14417
+[2800] validation_0-logloss:0.14407
+[2900] validation_0-logloss:0.14400
+[3000] validation_0-logloss:0.14393
+[3100] validation_0-logloss:0.14385
+[3200] validation_0-logloss:0.14378
+[3300] validation_0-logloss:0.14374
+[3400] validation_0-logloss:0.14366
+[3500] validation_0-logloss:0.14361
+[3600] validation_0-logloss:0.14356
+[3700] validation_0-logloss:0.14352
+[3800] validation_0-logloss:0.14347
+[3900] validation_0-logloss:0.14343
+[4000] validation_0-logloss:0.14339
+[4100] validation_0-logloss:0.14335
+[4200] validation_0-logloss:0.14330
+[4300] validation_0-logloss:0.14327
+[4400] validation_0-logloss:0.14323
+[4500] validation_0-logloss:0.14320
+[4600] validation_0-logloss:0.14318
+[4700] validation_0-logloss:0.14315
+[4800] validation_0-logloss:0.14311
+[4900] validation_0-logloss:0.14308
+[5000] validation_0-logloss:0.14306
+[5100] validation_0-logloss:0.14304
+[5200] validation_0-logloss:0.14301
+[5300] validation_0-logloss:0.14300
+[5400] validation_0-logloss:0.14298
+[5500] validation_0-logloss:0.14296
+[5600] validation_0-logloss:0.14296
+[5700] validation_0-logloss:0.14294
+[5800] validation_0-logloss:0.14291
+[5900] validation_0-logloss:0.14289
+[6000] validation_0-logloss:0.14288
+[6100] validation_0-logloss:0.14286
+[6200] validation_0-logloss:0.14285
+[6300] validation_0-logloss:0.14283
+[6400] validation_0-logloss:0.14281
+[6500] validation_0-logloss:0.14280
+[6600] validation_0-logloss:0.14280
+[6700] validation_0-logloss:0.14278
+[6800] validation_0-logloss:0.14277
+[6900] validation_0-logloss:0.14277
+[7000] validation_0-logloss:0.14276
+[7100] validation_0-logloss:0.14275
+[7200] validation_0-logloss:0.14274
+[7300] validation_0-logloss:0.14274
+[7400] validation_0-logloss:0.14273
+[7500] validation_0-logloss:0.14272
+[7600] validation_0-logloss:0.14271
+[7700] validation_0-logloss:0.14270
+[7800] validation_0-logloss:0.14268
+[7900] validation_0-logloss:0.14267
+[7999] validation_0-logloss:0.14266
+XGBoost Fold 7 AUC: 0.9687
+Training until validation scores don't improve for 50 rounds
+[100] valid_0's auc: 0.964674 valid_0's binary_logloss: 0.157547
+[200] valid_0's auc: 0.96767 valid_0's binary_logloss: 0.1462
+[300] valid_0's auc: 0.969212 valid_0's binary_logloss: 0.142306
+[400] valid_0's auc: 0.97008 valid_0's binary_logloss: 0.140292
+[500] valid_0's auc: 0.970724 valid_0's binary_logloss: 0.138832
+[600] valid_0's auc: 0.971292 valid_0's binary_logloss: 0.137492
+[700] valid_0's auc: 0.971673 valid_0's binary_logloss: 0.136565
+[800] valid_0's auc: 0.971933 valid_0's binary_logloss: 0.135919
+[900] valid_0's auc: 0.972108 valid_0's binary_logloss: 0.135457
+[1000] valid_0's auc: 0.972302 valid_0's binary_logloss: 0.134953
+[1100] valid_0's auc: 0.972487 valid_0's binary_logloss: 0.134466
+[1200] valid_0's auc: 0.972576 valid_0's binary_logloss: 0.134219
+[1300] valid_0's auc: 0.972734 valid_0's binary_logloss: 0.133818
+[1400] valid_0's auc: 0.972865 valid_0's binary_logloss: 0.133454
+[1500] valid_0's auc: 0.972966 valid_0's binary_logloss: 0.133193
+[1600] valid_0's auc: 0.973033 valid_0's binary_logloss: 0.133014
+[1700] valid_0's auc: 0.973098 valid_0's binary_logloss: 0.132841
+[1800] valid_0's auc: 0.973156 valid_0's binary_logloss: 0.132674
+[1900] valid_0's auc: 0.973206 valid_0's binary_logloss: 0.132539
+[2000] valid_0's auc: 0.973247 valid_0's binary_logloss: 0.132412
+[2100] valid_0's auc: 0.973285 valid_0's binary_logloss: 0.132296
+[2200] valid_0's auc: 0.97334 valid_0's binary_logloss: 0.132149
+[2300] valid_0's auc: 0.973371 valid_0's binary_logloss: 0.132053
+[2400] valid_0's auc: 0.973395 valid_0's binary_logloss: 0.13197
+[2500] valid_0's auc: 0.973431 valid_0's binary_logloss: 0.131878
+[2600] valid_0's auc: 0.973452 valid_0's binary_logloss: 0.131816
+[2700] valid_0's auc: 0.97347 valid_0's binary_logloss: 0.131766
+Early stopping, best iteration is:
+[2726] valid_0's auc: 0.973486 valid_0's binary_logloss: 0.131722
+LightGBM Fold 7 AUC: 0.9735
+
+=== CatBoost Feature Importance ===
+                Feature  Importance
+9          log_duration   46.671787
+27      contact_unknown   11.351980
+8           log_balance    5.403937
+2               housing    5.151334
+4                   day    3.374159
+28            month_aug    3.256036
+32            month_jul    3.168506
+35            month_may    2.571836
+5              campaign    2.182962
+40     poutcome_success    2.136502
+36            month_nov    1.985519
+0                   age    1.718310
+6                 pdays    1.434580
+3                  loan    1.347676
+31            month_jan    1.019196
+33            month_jun    0.903410
+10      job_blue-collar    0.853884
+34            month_mar    0.812973
+22       marital_single    0.737920
+24   education_tertiary    0.651515
+37            month_oct    0.572749
+30            month_feb    0.556862
+7              previous    0.357464
+38            month_sep    0.309165
+41     poutcome_unknown    0.305881
+17          job_student    0.155176
+23  education_secondary    0.138751
+13       job_management    0.128530
+26    contact_telephone    0.090413
+16         job_services    0.088400
+12        job_housemaid    0.075970
+21      marital_married    0.068815
+19       job_unemployed    0.053045
+15    job_self-employed    0.048559
+39       poutcome_other    0.048367
+29            month_dec    0.048004
+11     job_entrepreneur    0.046178
+18       job_technician    0.041694
+25    education_unknown    0.039916
+14          job_retired    0.039659
+1               default    0.035864
+20          job_unknown    0.016517
+
+=== XGBoost Feature Importance ===
+                Feature  Importance
+40     poutcome_success    0.230911
+27      contact_unknown    0.105610
+9          log_duration    0.101982
+34            month_mar    0.060207
+2               housing    0.058236
+31            month_jan    0.029431
+41     poutcome_unknown    0.029193
+37            month_oct    0.027584
+3                  loan    0.022543
+33            month_jun    0.022343
+10      job_blue-collar    0.021560
+38            month_sep    0.020372
+32            month_jul    0.018888
+36            month_nov    0.017968
+28            month_aug    0.017451
+35            month_may    0.017388
+30            month_feb    0.014715
+6                 pdays    0.014641
+8           log_balance    0.012805
+17          job_student    0.011612
+22       marital_single    0.011040
+24   education_tertiary    0.010199
+29            month_dec    0.009774
+5              campaign    0.009405
+7              previous    0.009163
+4                   day    0.009124
+12        job_housemaid    0.008330
+0                   age    0.007369
+21      marital_married    0.006189
+14          job_retired    0.006182
+13       job_management    0.005852
+25    education_unknown    0.005765
+26    contact_telephone    0.005392
+19       job_unemployed    0.005225
+1               default    0.005091
+11     job_entrepreneur    0.004848
+15    job_self-employed    0.004829
+20          job_unknown    0.004604
+39       poutcome_other    0.004354
+16         job_services    0.004054
+18       job_technician    0.003968
+23  education_secondary    0.003802
+
+=== LightGBM Feature Importance ===
+                Feature    Importance
+8           log_balance  51854.142857
+9          log_duration  50515.142857
+0                   age  35867.285714
+4                   day  33050.571429
+6                 pdays  22374.857143
+5              campaign  16239.428571
+7              previous  10328.285714
+2               housing   2907.000000
+21      marital_married   2484.857143
+23  education_secondary   2293.714286
+22       marital_single   2269.000000
+28            month_aug   2253.000000
+27      contact_unknown   2232.142857
+35            month_may   2224.000000
+3                  loan   2219.714286
+32            month_jul   2140.000000
+24   education_tertiary   2102.142857
+33            month_jun   1992.285714
+10      job_blue-collar   1861.000000
+30            month_feb   1828.285714
+36            month_nov   1667.285714
+26    contact_telephone   1572.857143
+40     poutcome_success   1534.000000
+37            month_oct   1522.285714
+13       job_management   1509.000000
+18       job_technician   1495.142857
+25    education_unknown   1235.000000
+34            month_mar   1224.428571
+16         job_services   1182.714286
+38            month_sep   1159.285714
+14          job_retired   1124.142857
+31            month_jan    988.000000
+41     poutcome_unknown    981.428571
+17          job_student    947.571429
+19       job_unemployed    871.857143
+39       poutcome_other    841.428571
+15    job_self-employed    727.571429
+11     job_entrepreneur    608.571429
+12        job_housemaid    600.714286
+29            month_dec    476.571429
+1               default    468.857143
+20          job_unknown    258.857143
+
+=== Summary ===
+CatBoost Mean AUC:   0.9640 ± 0.0005
+XGBoost Mean AUC:     0.9689 ± 0.0006
+LightGBM Mean AUC:    0.9736 ± 0.0007
+In [30]:
+# ---- Plot Top 20 Features ----
+
+# CatBoost
+plt.figure(figsize=(10, 8))
+catboost_importance_df.head(20).plot.barh(
+    x='Feature', y='Importance',
+    title='CatBoost Feature Importance (Top 20)',
+    legend=False, ax=plt.gca()
+)
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.show()
+
+# XGBoost
+plt.figure(figsize=(10, 8))
+xgb_importance_df.head(20).plot.barh(
+    x='Feature', y='Importance',
+    title='XGBoost Feature Importance (Top 20)',
+    legend=False, ax=plt.gca()
+)
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.show()
+
+# LightGBM
+plt.figure(figsize=(10, 8))
+lgbm_importance_df.head(20).plot.barh(
+    x='Feature', y='Importance',
+    title='LightGBM Feature Importance (Top 20)',
+    legend=False, ax=plt.gca()
+)
+plt.gca().invert_yaxis()
+plt.tight_layout()
+plt.show()
+Submission
+In [31]:
+# Prepare test features by dropping the 'id' column if it exists
+test_features = test_df.drop(columns=['id'], errors='ignore')
+
+# # Apply TE on test set using last fold's encoder (or average across folds if more precise)
+# for col in categorical_cols:
+#     te = TargetEncoder(n_folds=25, smooth=20, split_method='random', stat='mean')
+#     te.fit(X[col], y)  # fit on full training data
+#     test_features[f'TE_{col}'] = te.transform(test_features[col])
+#     test_features = test_features.drop(columns=col)
+
+# # Predict probabilities on test set
+# # test_pred_prob = cat_model.predict_proba(test_features)[:, 1]
+# # test_pred_prob = xgb_model.predict_proba(test_features)[:, 1]
+# test_pred_prob = lgbm_model.predict_proba(test_features)[:, 1]
+
+
+# --- Assumes you have already trained your models: cat_model, xgb_model, lgbm_model ---
+# --- And you have your test_features ready ---
+
+# 1. Get predicted probabilities from each model
+cat_pred_prob = cat_model.predict_proba(test_features)[:, 1]
+xgb_pred_prob = xgb_model.predict_proba(test_features)[:, 1]
+lgbm_pred_prob = lgbm_model.predict_proba(test_features)[:, 1]
+
+# 2. Ensemble the predictions by averaging them
+ensemble_pred_prob = (cat_pred_prob + xgb_pred_prob + lgbm_pred_prob) / 3
+
+test_pred_prob = ensemble_pred_prob
+
+# Now 'ensemble_pred_prob' holds your final ensembled predictions.
+# You can use it to calculate metrics or make final classifications.
+# For example, to convert to class labels with a 0.5 threshold:
+# ensemble_pred_class = (ensemble_pred_prob >= 0.5).astype(int)
+
+
+# Assuming you have an ID column saved before dropping
+submission = pd.DataFrame({
+    'id': test_df['id'],
+    'y': test_pred_prob
+})
+
+submission.to_csv('submission.csv', index=False)
+print("Submission saved!")
+Submission saved!
+In [32]:
+submission
+Out[32]:
+id y
+750000 750000 0.003684
+750001 750001 0.177824
+750002 750002 0.000241
+750003 750003 0.000048
+750004 750004 0.022843
+... ... ...
+999995 999995 0.000116
+999996 999996 0.102536
+999997 999997 0.721093
+999998 999998 0.001202
+999999 999999 0.054208
+250000 rows × 2 columns
+THANKS
+It will be updated
+Please Upvote if you like it

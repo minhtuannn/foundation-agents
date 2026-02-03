@@ -1,0 +1,1174 @@
+In [1]:
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.pipeline import make_pipeline, Pipeline
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, LabelEncoder, label_binarize, OrdinalEncoder
+from category_encoders import CatBoostEncoder, MEstimateEncoder
+
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier, HistGradientBoostingClassifier, GradientBoostingClassifier, HistGradientBoostingRegressor
+from sklearn.linear_model import RidgeClassifier, LogisticRegression, LinearRegression
+
+from sklearn import set_config
+import os
+
+import optuna
+from sklearn.metrics import accuracy_score, roc_auc_score, roc_curve, mean_squared_error, precision_recall_curve, make_scorer, confusion_matrix, ConfusionMatrixDisplay, RocCurveDisplay, matthews_corrcoef
+from scipy.stats import norm, skew
+
+from colorama import Fore, Style, init
+from copy import deepcopy
+from sklearn.base import BaseEstimator, TransformerMixin
+from pprint import pprint
+from sklearn.model_selection import train_test_split, RepeatedStratifiedKFold, StratifiedKFold, KFold, RepeatedKFold, cross_val_score, StratifiedGroupKFold
+from xgboost import DMatrix, XGBClassifier, XGBRegressor
+from lightgbm import log_evaluation, early_stopping, LGBMClassifier, LGBMRegressor, Dataset
+from catboost import CatBoostClassifier, CatBoostRegressor, Pool
+from tqdm.notebook import tqdm
+from optuna.samplers import TPESampler, CmaEsSampler
+from optuna.pruners import HyperbandPruner
+from functools import partial
+from IPython.display import display_html, clear_output
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.impute import SimpleImputer, KNNImputer
+from sklearn.compose import ColumnTransformer
+import gc
+import re
+
+import keras
+from keras.models import Sequential
+from keras import layers
+import tensorflow as tf
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras import regularizers
+
+import warnings
+warnings.filterwarnings("ignore")
+Dataset Description
+id: Unique identifier for each record.
+Age: Age of the individual (in years)
+Gender: Gender of the individual (e.g., Male, Female).
+Annual Income: Annual income of the individual (in the dataset’s monetary unit).
+Marital Status: Marital status of the individual (e.g., Married, Divorced, Single).
+Number of Dependents: Number of dependents associated with the individual.
+Education Level: Highest level of education attained (e.g., High School, Bachelor’s, Master’s).
+Occupation: Job type or employment status (e.g., Self-Employed).
+Health Score: A numerical score representing the health status of the individual.
+Location: Living area of the individual (e.g., Urban, Rural, Suburban).
+Previous Claims: Number of previous claims made by the individual.
+Vehicle Age: Age of the vehicle owned by the individual (in years).
+Credit Score: Creditworthiness score of the individual.
+Insurance Duration: Duration of the insurance policy (in years).
+Policy Start Date: The start date of the individual’s insurance policy.
+Customer Feedback: Overall feedback provided by the customer (e.g., Poor, Average, Good).
+Smoking Status: Smoking habits of the individual (e.g., Yes, No).
+Exercise Frequency: Frequency of exercise (e.g., Weekly, Monthly, Daily).
+Property Type: Type of property insured (e.g., House, Apartment).
+Premium Amount: Premium amount paid by the individual for the insurance.
+Configuration
+In [2]:
+class Config:
+    
+    state = 42
+    n_splits = 10
+    early_stop = 200
+        
+    target = 'Premium Amount'
+    train = pd.read_csv('/kaggle/input/playground-series-s4e12/train.csv', index_col='id')
+    test = pd.read_csv('/kaggle/input/playground-series-s4e12/test.csv', index_col='id')
+    submission = pd.read_csv('/kaggle/input/playground-series-s4e12/sample_submission.csv')
+
+    original_data = 'N'
+    outliers = 'N'
+    log_trf = 'Y'
+    scaler_trf = 'N'
+    feature_eng = 'Y'
+    missing = 'Y'
+EDA
+In [3]:
+class EDA(Config):
+    
+    def __init__(self):
+        super().__init__()
+
+        self.cat_features = self.train.drop(self.target, axis=1).select_dtypes(include=['object']).columns.tolist()
+        self.num_features = self.train.drop(self.target, axis=1).select_dtypes(exclude=['object']).columns.tolist()
+        self.data_info()
+        self.heatmap()
+        self.dist_plots()
+        self.cat_feature_plots()
+        self.target_plot()
+                
+    def data_info(self):
+        
+        for data, label in zip([self.train, self.test], ['Train', 'Test']):
+            table_style = [{'selector': 'th:not(.index_name)',
+                            'props': [('background-color', '#3cb371'),
+                                      ('color', '#FFFFFF'),
+                                      ('font-weight', 'bold'),
+                                      ('border', '1px solid #DCDCDC'),
+                                      ('text-align', 'center')]
+                            }, 
+                            {'selector': 'tbody td',
+                             'props': [('border', '1px solid #DCDCDC'),
+                                       ('font-weight', 'normal')]
+                            }]
+            print(Style.BRIGHT+Fore.GREEN+f'\n{label} head\n')
+            display(data.head().style.set_table_styles(table_style))
+                           
+            print(Style.BRIGHT+Fore.GREEN+f'\n{label} info\n'+Style.RESET_ALL)               
+            display(data.info())
+                           
+            print(Style.BRIGHT+Fore.GREEN+f'\n{label} describe\n')
+            display(data.describe().drop(index='count', columns=self.target, errors = 'ignore').T
+                    .style.set_table_styles(table_style).format('{:.3f}'))
+            
+            print(Style.BRIGHT+Fore.GREEN+f'\n{label} missing values\n'+Style.RESET_ALL)               
+            display(data.isna().sum())
+        return self
+    
+    def heatmap(self):
+        print(Style.BRIGHT+Fore.GREEN+f'\nCorrelation Heatmap\n')
+        plt.figure(figsize=(7,7))
+        corr = self.train.select_dtypes(exclude='object').corr(method='pearson')
+        sns.heatmap(corr, fmt = '0.4f', cmap = 'Greens', annot=True, cbar=False)
+        plt.show()
+        
+    def dist_plots(self):
+        print(Style.BRIGHT+Fore.GREEN+f"\nDistribution analysis\n")
+        df = pd.concat([self.train[self.num_features].assign(Source = 'Train'), 
+                        self.test[self.num_features].assign(Source = 'Test'),], 
+                        axis=0, ignore_index = True)
+
+        fig, axes = plt.subplots(len(self.num_features), 2 ,figsize = (18, len(self.num_features) * 6), 
+                                 gridspec_kw = {'hspace': 0.3, 
+                                                'wspace': 0.2, 
+                                                'width_ratios': [0.70, 0.30]
+                                               }
+                                )
+        for i,col in enumerate(self.num_features):
+            ax = axes[i,0]
+            sns.kdeplot(data = df[[col, 'Source']], x = col, hue = 'Source', 
+                        palette = ['#3cb371', 'r'], ax = ax, linewidth = 2
+                       )
+            ax.set(xlabel = '', ylabel = '')
+            ax.set_title(f"\n{col}")
+            ax.grid()
+
+            ax = axes[i,1]
+            sns.boxplot(data = df, y = col, x=df.Source, width = 0.5,
+                        linewidth = 1, fliersize= 1,
+                        ax = ax, palette=['#3cb371', 'r']
+                       )
+            ax.set_title(f"\n{col}")
+            ax.set(xlabel = '', ylabel = '')
+            ax.tick_params(axis='both', which='major')
+            ax.set_xticklabels(['Train', 'Test'])
+
+        plt.tight_layout()
+        plt.show()
+               
+    def cat_feature_plots(self):
+        fig, axes = plt.subplots(len(self.cat_features), 2 ,figsize = (18, len(self.cat_features) * 6), 
+                                 gridspec_kw = {'hspace': 0.5, 
+                                                'wspace': 0.2,
+                                               }
+                                )
+
+        for i, col in enumerate(self.cat_features):
+            
+            ax = axes[i,0]
+            sns.barplot(data=self.train[col].value_counts().nlargest(10).reset_index(), x=col, y='count', ax=ax, color='#3cb371')
+            ax.set(xlabel = '', ylabel = '')
+            ax.set_title(f"\n{col} Train")
+            
+            ax = axes[i,1]
+            sns.barplot(data=self.train[col].value_counts().nlargest(10).reset_index(), x=col, y='count', ax=ax, color='r')
+            ax.set(xlabel = '', ylabel = '')
+            ax.set_title(f"\n{col} Test")
+
+        plt.tight_layout()
+        plt.show()
+        
+    def target_plot(self):
+        print(Style.BRIGHT+Fore.GREEN+f"\nTarget feature distribution\n")
+        
+        fig, axes = plt.subplots(1, 2 ,figsize = (14, 6), 
+                                 gridspec_kw = {'hspace': 0.3, 
+                                                'wspace': 0.2, 
+                                                'width_ratios': [0.70, 0.30]
+                                               }
+                                )
+        ax = axes[0]
+        sns.kdeplot(data = self.train[self.target], 
+                    color = '#3cb371', ax = ax, linewidth = 2
+                   )
+        ax.set(xlabel = '', ylabel = '')
+        ax.set_title(f"\n{self.target}")
+        ax.grid()
+
+        ax = axes[1]
+        sns.boxplot(data = self.train, y = self.target, width = 0.5,
+                    linewidth = 1, fliersize= 1,
+                    ax = ax, color = '#3cb371'
+                   )
+        ax.set_title(f"\n{self.target}")
+        ax.set(xlabel = '', ylabel = '')
+        ax.tick_params(axis='both', which='major')
+
+        plt.tight_layout()
+        plt.show()         
+In [4]:
+eda = EDA()
+Train head
+  Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type Premium Amount
+id                                        
+0 19.000000 Female 10049.000000 Married 1.000000 Bachelor's Self-Employed 22.598761 Urban Premium 2.000000 17.000000 372.000000 5.000000 2023-12-23 15:21:39.134960 Poor No Weekly House 2869.000000
+1 39.000000 Female 31678.000000 Divorced 3.000000 Master's nan 15.569731 Rural Comprehensive 1.000000 12.000000 694.000000 2.000000 2023-06-12 15:21:39.111551 Average Yes Monthly House 1483.000000
+2 23.000000 Male 25602.000000 Divorced 3.000000 High School Self-Employed 47.177549 Suburban Premium 1.000000 14.000000 nan 3.000000 2023-09-30 15:21:39.221386 Good Yes Weekly House 567.000000
+3 21.000000 Male 141855.000000 Married 2.000000 Bachelor's nan 10.938144 Rural Basic 1.000000 0.000000 367.000000 1.000000 2024-06-12 15:21:39.226954 Poor Yes Daily Apartment 765.000000
+4 21.000000 Male 39651.000000 Single 1.000000 Bachelor's Self-Employed 20.376094 Rural Premium 0.000000 8.000000 598.000000 4.000000 2021-12-01 15:21:39.252145 Poor Yes Weekly House 2022.000000
+Train info
+
+<class 'pandas.core.frame.DataFrame'>
+Index: 1200000 entries, 0 to 1199999
+Data columns (total 20 columns):
+ #   Column                Non-Null Count    Dtype  
+---  ------                --------------    -----  
+ 0   Age                   1181295 non-null  float64
+ 1   Gender                1200000 non-null  object 
+ 2   Annual Income         1155051 non-null  float64
+ 3   Marital Status        1181471 non-null  object 
+ 4   Number of Dependents  1090328 non-null  float64
+ 5   Education Level       1200000 non-null  object 
+ 6   Occupation            841925 non-null   object 
+ 7   Health Score          1125924 non-null  float64
+ 8   Location              1200000 non-null  object 
+ 9   Policy Type           1200000 non-null  object 
+ 10  Previous Claims       835971 non-null   float64
+ 11  Vehicle Age           1199994 non-null  float64
+ 12  Credit Score          1062118 non-null  float64
+ 13  Insurance Duration    1199999 non-null  float64
+ 14  Policy Start Date     1200000 non-null  object 
+ 15  Customer Feedback     1122176 non-null  object 
+ 16  Smoking Status        1200000 non-null  object 
+ 17  Exercise Frequency    1200000 non-null  object 
+ 18  Property Type         1200000 non-null  object 
+ 19  Premium Amount        1200000 non-null  float64
+dtypes: float64(9), object(11)
+memory usage: 192.3+ MB
+None
+Train describe
+  mean std min 25% 50% 75% max
+Age 41.146 13.540 18.000 30.000 41.000 53.000 64.000
+Annual Income 32745.218 32179.506 1.000 8001.000 23911.000 44634.000 149997.000
+Number of Dependents 2.010 1.417 0.000 1.000 2.000 3.000 4.000
+Health Score 25.614 12.203 2.012 15.919 24.579 34.527 58.976
+Previous Claims 1.003 0.983 0.000 0.000 1.000 2.000 9.000
+Vehicle Age 9.570 5.776 0.000 5.000 10.000 15.000 19.000
+Credit Score 592.924 149.982 300.000 468.000 595.000 721.000 849.000
+Insurance Duration 5.018 2.594 1.000 3.000 5.000 7.000 9.000
+Train missing values
+Age                      18705
+Gender                       0
+Annual Income            44949
+Marital Status           18529
+Number of Dependents    109672
+Education Level              0
+Occupation              358075
+Health Score             74076
+Location                     0
+Policy Type                  0
+Previous Claims         364029
+Vehicle Age                  6
+Credit Score            137882
+Insurance Duration           1
+Policy Start Date            0
+Customer Feedback        77824
+Smoking Status               0
+Exercise Frequency           0
+Property Type                0
+Premium Amount               0
+dtype: int64
+Test head
+  Age Gender Annual Income Marital Status Number of Dependents Education Level Occupation Health Score Location Policy Type Previous Claims Vehicle Age Credit Score Insurance Duration Policy Start Date Customer Feedback Smoking Status Exercise Frequency Property Type
+id                                      
+1200000 28.000000 Female 2310.000000 nan 4.000000 Bachelor's Self-Employed 7.657981 Rural Basic nan 19.000000 nan 1.000000 2023-06-04 15:21:39.245086 Poor Yes Weekly House
+1200001 31.000000 Female 126031.000000 Married 2.000000 Master's Self-Employed 13.381379 Suburban Premium nan 14.000000 372.000000 8.000000 2024-04-22 15:21:39.224915 Good Yes Rarely Apartment
+1200002 47.000000 Female 17092.000000 Divorced 0.000000 PhD Unemployed 24.354527 Urban Comprehensive nan 16.000000 819.000000 9.000000 2023-04-05 15:21:39.134960 Average Yes Monthly Condo
+1200003 28.000000 Female 30424.000000 Divorced 3.000000 PhD Self-Employed 5.136225 Suburban Comprehensive 1.000000 3.000000 770.000000 5.000000 2023-10-25 15:21:39.134960 Poor Yes Daily House
+1200004 24.000000 Male 10863.000000 Divorced 2.000000 High School Unemployed 11.844155 Suburban Premium nan 14.000000 755.000000 7.000000 2021-11-26 15:21:39.259788 Average No Weekly House
+Test info
+
+<class 'pandas.core.frame.DataFrame'>
+Index: 800000 entries, 1200000 to 1999999
+Data columns (total 19 columns):
+ #   Column                Non-Null Count   Dtype  
+---  ------                --------------   -----  
+ 0   Age                   787511 non-null  float64
+ 1   Gender                800000 non-null  object 
+ 2   Annual Income         770140 non-null  float64
+ 3   Marital Status        787664 non-null  object 
+ 4   Number of Dependents  726870 non-null  float64
+ 5   Education Level       800000 non-null  object 
+ 6   Occupation            560875 non-null  object 
+ 7   Health Score          750551 non-null  float64
+ 8   Location              800000 non-null  object 
+ 9   Policy Type           800000 non-null  object 
+ 10  Previous Claims       557198 non-null  float64
+ 11  Vehicle Age           799997 non-null  float64
+ 12  Credit Score          708549 non-null  float64
+ 13  Insurance Duration    799998 non-null  float64
+ 14  Policy Start Date     800000 non-null  object 
+ 15  Customer Feedback     747724 non-null  object 
+ 16  Smoking Status        800000 non-null  object 
+ 17  Exercise Frequency    800000 non-null  object 
+ 18  Property Type         800000 non-null  object 
+dtypes: float64(8), object(11)
+memory usage: 122.1+ MB
+None
+Test describe
+  mean std min 25% 50% 75% max
+Age 41.136 13.538 18.000 30.000 41.000 53.000 64.000
+Annual Income 32803.871 32201.064 2.000 8048.000 23981.000 44660.000 149997.000
+Number of Dependents 2.009 1.415 0.000 1.000 2.000 3.000 4.000
+Health Score 25.613 12.207 1.647 15.917 24.580 34.518 57.957
+Previous Claims 1.005 0.983 0.000 0.000 1.000 2.000 9.000
+Vehicle Age 9.572 5.772 0.000 5.000 10.000 15.000 19.000
+Credit Score 592.905 150.116 300.000 468.000 595.000 721.000 849.000
+Insurance Duration 5.019 2.594 1.000 3.000 5.000 7.000 9.000
+Test missing values
+Age                      12489
+Gender                       0
+Annual Income            29860
+Marital Status           12336
+Number of Dependents     73130
+Education Level              0
+Occupation              239125
+Health Score             49449
+Location                     0
+Policy Type                  0
+Previous Claims         242802
+Vehicle Age                  3
+Credit Score             91451
+Insurance Duration           2
+Policy Start Date            0
+Customer Feedback        52276
+Smoking Status               0
+Exercise Frequency           0
+Property Type                0
+dtype: int64
+Correlation Heatmap
+Distribution analysis
+Target feature distribution
+Data Transformation
+In [5]:
+class Transform(Config):
+    
+    def __init__(self):
+        super().__init__()
+        if Config.original_data == 'Y':
+            self.train = pd.concat([self.train, self.train_org], ignore_index=True).drop_duplicates()
+            self.train.reset_index(drop=True, inplace=True)
+
+        self.num_features = self.train.drop(self.target, axis=1).select_dtypes(exclude=['object', 'bool']).columns.tolist()
+        self.cat_features = self.train.drop(self.target, axis=1).select_dtypes(include=['object', 'bool']).columns.tolist()
+        
+        if self.missing == 'Y':
+            self.missing_values()
+            
+        self.train_raw = self.train.copy()
+        
+        if self.feature_eng == 'Y':
+            self.train = self.new_features(self.train)
+            self.test = self.new_features(self.test)
+            self.train_raw = self.new_features(self.train_raw)
+            
+        self.num_features = self.train.drop(self.target, axis=1).select_dtypes(exclude=['object', 'bool']).columns.tolist()
+        self.cat_features = self.train.drop(self.target, axis=1).select_dtypes(include=['object', 'bool']).columns.tolist()
+            
+        if self.outliers == 'Y':    
+            self.remove_outliers()
+            
+        if self.log_trf == 'Y':
+            self.log_transformation()
+            
+        if self.scaler_trf == 'Y':
+            self.scaler()
+            
+        self.train_enc = self.train.copy()
+        self.test_enc = self.test.copy()
+        self.encode()
+        
+        if self.outliers == 'Y' or self.log_trf == 'Y' or self.scaler_trf =='Y':
+            self.distribution()
+        
+    def __call__(self):
+
+        self.train[self.cat_features] = self.train[self.cat_features].astype('category')
+        self.test[self.cat_features] = self.test[self.cat_features].astype('category')
+
+        self.cat_features_card = []
+        for f in self.cat_features:
+            self.cat_features_card.append(self.train[f].nunique())
+
+        self.train = self.reduce_mem(self.train)
+        self.test = self.reduce_mem(self.test)
+        
+        self.y = self.train[self.target]
+        self.train = self.train.drop(self.target, axis=1)
+        self.train_enc = self.train_enc.drop(self.target, axis=1)
+        
+        return self.train, self.train_enc, self.y, self.test, self.test_enc, self.cat_features
+    
+    def encode(self):
+        data = pd.concat([self.test, self.train])
+        oe = OrdinalEncoder()
+        data[self.cat_features] = oe.fit_transform(data[self.cat_features]).astype('int')
+        
+        scaler = StandardScaler()
+        data[self.num_features + [self.target]] = scaler.fit_transform(data[self.num_features + [self.target]])
+        
+        self.train_enc = data[~data[self.target].isna()]
+        self.test_enc = data[data[self.target].isna()].drop(self.target, axis=1)
+            
+    def new_features(self, data): 
+        data['Policy Start Date'] = pd.to_datetime(data['Policy Start Date'])
+        data['Year'] = data['Policy Start Date'].dt.year
+        data.drop('Policy Start Date', axis=1, inplace=True)
+        return data
+
+    def log_transformation(self):
+        self.train[self.target] = np.log1p(self.train[self.target]) 
+        
+        return self
+    
+    def distribution(self):
+        num_features = self.num_features + [self.target]
+        print(Style.BRIGHT+Fore.GREEN+f'\nHistograms of distribution\n')
+        fig, axes = plt.subplots(nrows=len(num_features), ncols=2, figsize=(15, len(num_features)*5))
+
+        for (ax_r, ax_n), col in zip(axes, num_features):
+
+            ax_r.set_title(f'{col} ($\mu=$ {self.train_raw[col].mean():.2f} and $\sigma=$ {self.train_raw[col].std():.2f} )')
+            ax_r.hist(self.train_raw[col], bins=30, color='#3cb371')
+            ax_r.axvline(self.train_raw[col].mean(), color='r', label='Mean')
+            ax_r.axvline(self.train_raw[col].median(), color='y', linestyle='--', label='Median')
+            ax_r.legend()
+
+            ax_n.set_title(f'{col} Normalized ($\mu=$ {self.train_enc[col].mean():.2f} and $\sigma=$ {self.train_enc[col].std():.2f} )')
+            ax_n.hist(self.train_enc[col], bins=30, color='#3cb371')
+            ax_n.axvline(self.train_enc[col].mean(), color='r', label='Mean')
+            ax_n.axvline(self.train_enc[col].median(), color='y', linestyle='--', label='Median')
+            ax_n.legend()
+        
+    def remove_outliers(self):
+        Q1 = self.train[self.targets].quantile(0.25)
+        Q3 = self.train[self.targets].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_limit = Q1 - 1.5*IQR
+        upper_limit = Q3 + 1.5*IQR
+        self.train = self.train[(self.train[self.targets] >= lower_limit) & (self.train[self.targets] <= upper_limit)]
+        self.train.reset_index(drop=True, inplace=True) 
+        
+    def scaler(self):
+        scaler = StandardScaler()
+        self.train[self.num_features] = scaler.fit_transform(self.train[self.num_features])
+        self.test[self.num_features] = scaler.transform(self.test[self.num_features])
+        return self
+    
+    def missing_values(self):
+
+        self.train[self.cat_features] = self.train[self.cat_features].fillna('None')
+        self.test[self.cat_features] = self.test[self.cat_features].fillna('None')
+        return self
+
+    def reduce_mem(self, df):
+
+        numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64', "uint16", "uint32", "uint64"]
+        
+        for col in df.columns:
+            col_type = df[col].dtypes
+            
+            if col_type in numerics:
+                c_min = df[col].min()
+                c_max = df[col].max()
+
+                if "int" in str(col_type):
+                    if c_min >= np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
+                        df[col] = df[col].astype(np.int8)
+                    elif c_min >= np.iinfo(np.int16).min and c_max < np.iinfo(np.int16).max:
+                        df[col] = df[col].astype(np.int16)
+                    elif c_min >= np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+                        df[col] = df[col].astype(np.int32)
+                    elif c_min >= np.iinfo(np.int64).min and c_max < np.iinfo(np.int64).max:
+                        df[col] = df[col].astype(np.int64)  
+                else:
+                    if c_min >= np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
+                        df[col] = df[col].astype(np.float16)
+                    if c_min >= np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+                        df[col] = df[col].astype(np.float32)
+                    else:
+                        df[col] = df[col].astype(np.float64)  
+
+        return df
+In [6]:
+t = Transform()
+X, X_enc, y, test, test_enc, cat_features = t()
+Histograms of distribution
+Model Training
+In [7]:
+from sklearn.base import BaseEstimator, RegressorMixin
+import contextlib, io
+import ydf; ydf.verbose(2)
+from ydf import GradientBoostedTreesLearner
+
+def YDFRegressor(learner_class):
+
+    class YDFXRegressor(BaseEstimator, RegressorMixin):
+
+        def __init__(self, params={}):
+            self.params = params
+
+        def fit(self, X, y):
+            assert isinstance(X, pd.DataFrame)
+            assert isinstance(y, pd.Series)
+            target = y.name
+            params = self.params.copy()
+            params['label'] = target
+            params['task'] = ydf.Task.REGRESSION
+            X = pd.concat([X, y], axis=1)
+            with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                self.model = learner_class(**params).train(X)
+            return self
+
+        def predict(self, X):
+            assert isinstance(X, pd.DataFrame)
+            with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                return self.model.predict(X)
+
+    return YDFXRegressor
+In [8]:
+models = {
+    'YDF': [YDFRegressor(GradientBoostedTreesLearner)({'num_trees': 1000,
+                                                       'max_depth': 13,
+                                                       }),
+            False],
+    'CAT': [CatBoostRegressor(**{'verbose': 0,
+                                  'random_state': Config.state,
+                                  'cat_features': cat_features,
+                                  'early_stopping_rounds': Config.early_stop,
+                                  'eval_metric': "RMSE",
+                                  'n_estimators' : 2000,
+                              }),
+            False],
+    'CAT2': [CatBoostRegressor(**{'verbose': 0,
+                                  'random_state': Config.state,
+                                  'cat_features': cat_features,
+                                  'early_stopping_rounds': Config.early_stop,
+                                  'eval_metric': "RMSE",
+                                  'n_estimators' : 3000,
+                                 'objective': 'RMSE', 
+                                 'depth': 11,
+                                 'min_data_in_leaf': 78,
+                                 'l2_leaf_reg': 6.628202811121375,
+                                 'max_bin': 8000,
+                                 'learning_rate': 0.01,
+                              }),
+            False],
+    'CAT3': [CatBoostRegressor(**{'verbose': 0,
+                                  'random_state': Config.state,
+                                  'cat_features': cat_features,
+                                  'early_stopping_rounds': 200,
+                                  'eval_metric': "RMSE",
+                                  'objective': 'RMSE', 
+                                  'depth': 11,
+                                  'min_data_in_leaf': 72, 
+                                  'l2_leaf_reg': 2.005119577280367,
+                                  "iterations" : 3000,
+                                  'learning_rate': 0.01,
+                                  'max_bin': 8000,
+                             }),
+        False],
+    'CAT4': [CatBoostRegressor(**{'verbose': 0,
+                                  'random_state': Config.state,
+                                  'cat_features': cat_features,
+                                  'early_stopping_rounds': 200,
+                                  'eval_metric': "RMSE",
+                                  'objective': 'RMSE', 
+                                  'depth': 13, 
+                                  'subsample': 0.9998449533801151,
+                                  'min_data_in_leaf': 63,
+                                  'l2_leaf_reg': 0.3242106539167982,
+                                  "iterations" : 3000,
+                                  'learning_rate': 0.01,
+                                  'max_bin': 8000,
+                                  'bootstrap_type': 'Poisson'
+                         }),
+            False],
+    'CAT5': [CatBoostRegressor(**{'objective': 'RMSE',
+                                   'depth': 11,
+                                   'subsample': 0.9581878706329088,
+                                   'min_data_in_leaf': 43,
+                                   'l2_leaf_reg': 0.08249502036269224,
+                                   'verbose': 0,
+                                   'random_state': Config.state,
+                                   'cat_features': cat_features,
+                                   'early_stopping_rounds': 200,
+                                   'eval_metric': "RMSE",
+                                   'task_type': "GPU",
+                                    "iterations" : 5000,
+                                   'learning_rate': 0.005,
+                                   'max_bin': 8000,
+                                   'bootstrap_type': 'Bernoulli'
+                                  }),
+              False],
+     'CAT6': [CatBoostRegressor(**{'objective': 'RMSE',
+                                   'logging_level': 'Silent',
+                                   'depth': 11,
+                                   'min_data_in_leaf': 62,
+                                   'l2_leaf_reg': 7.887761285633826,
+                                   'random_state': Config.state,
+                                   'cat_features': cat_features,
+                                   'early_stopping_rounds': 300,
+                                   'eval_metric': "RMSE",
+                                   'task_type': "GPU",
+                                    "iterations" : 5000,
+                                   'learning_rate': 0.01,
+                                   'max_bin': 8000,
+                                   'bootstrap_type': 'Poisson'
+                                  }),
+              False],
+     'CAT8': [CatBoostRegressor(**{'objective': 'RMSE',
+                                   'depth': 11, 
+                                   'min_data_in_leaf': 51, 
+                                   'l2_leaf_reg': 7.51216069323258,
+                                   'random_state': Config.state,
+                                   'cat_features': cat_features,
+                                   'early_stopping_rounds': 200,
+                                   'eval_metric': "RMSE",
+                                   'task_type': "GPU",
+                                    "iterations" : 5000,
+                                   'learning_rate': 0.01,
+                                   'max_bin': 8000,
+                                   'bootstrap_type': 'Bernoulli'
+                                  }),
+              False],
+     'CAT9': [CatBoostRegressor(**{'objective': 'RMSE',
+                                   'depth': 10, 
+                                   'min_data_in_leaf': 18,
+                                   'l2_leaf_reg': 9.044302614615026,
+                                   'random_state': Config.state,
+                                   'cat_features': cat_features,
+                                   'early_stopping_rounds': 200,
+                                   'eval_metric': "RMSE",
+                                   'task_type': "GPU",
+                                    "iterations" : 5000,
+                                   'learning_rate': 0.01,
+                                   'max_bin': 8000,
+                                   'bootstrap_type': 'Bernoulli'
+                                  }),
+          False],
+    'XGB': [XGBRegressor(**{'tree_method': 'hist',
+                             'n_estimators': 2000,
+                             'objective': 'reg:squarederror',
+                             'random_state': Config.state,
+                             'enable_categorical': True,
+                             'verbosity': 0,
+                             'early_stopping_rounds': Config.early_stop,
+                             'eval_metric': 'rmse',
+                           }),
+            False],
+    'XGB2': [XGBRegressor(**{'tree_method': 'hist',
+                             'n_estimators': 2000,
+                             'objective': 'reg:squarederror',
+                             'random_state': Config.state,
+                             'enable_categorical': True,
+                             'verbosity': 0,
+                             'early_stopping_rounds': Config.early_stop,
+                             'eval_metric': 'rmse',
+                            'booster': 'gbtree',
+                            'max_depth': 9,
+                            'learning_rate': 0.0031740845858378402, 
+                            'min_child_weight': 16,
+                            'subsample': 0.8666770334099294,
+                            'reg_alpha': 0.191908421033219,
+                            'reg_lambda': 0.7995814007464592,
+                            'colsample_bytree': 0.9669446980405391,
+                            'random_state': 42,
+                            'objective': 'reg:squarederror',
+                            'n_jobs': -1,
+                           }),
+            False],
+    'XGB3': [XGBRegressor(**{'booster': 'gbtree', 
+                             'max_depth': 9,
+                             'min_child_weight': 13,
+                             'subsample': 0.8626964099130539,
+                             'reg_alpha': 0.058057084885141746,
+                             'reg_lambda': 0.6326297976784753,
+                             'colsample_bytree': 0.8940282896063437,
+                             'n_jobs': -1,
+                             'learning_rate': 0.01,
+                             'max_bin': 8000,
+                             'tree_method': 'hist',
+                             'n_estimators': 2000,
+                             'objective': 'reg:squarederror',
+                             'random_state': Config.state,
+                             'enable_categorical': True,
+                             'verbosity': 0,
+                             'early_stopping_rounds': Config.early_stop,
+                             'eval_metric': 'rmse',
+                            }),
+             False],
+    'XGB4': [XGBRegressor(**{'booster': 'gbtree',
+                             'max_depth': 8,
+                             'min_child_weight': 17,
+                             'subsample': 0.8926967587245219,
+                             'reg_alpha': 0.2968941900087133,
+                             'reg_lambda': 0.8270727714379025,
+                             'colsample_bytree': 0.9318890724874014,
+                             'n_jobs': -1,
+                             'learning_rate': 0.01,
+                             'max_bin': 8000,
+                             'tree_method': 'hist',
+                             'n_estimators': 3000,
+                             'objective': 'reg:squarederror',
+                             'random_state': Config.state,
+                             'enable_categorical': True,
+                             'verbosity': 0,
+                             'early_stopping_rounds': Config.early_stop,
+                             'eval_metric': 'rmse',
+                            }),
+             False],
+    'XGB5': [XGBRegressor(**{'booster': 'gbtree', 
+                             'max_depth': 9,
+                             'min_child_weight': 13,
+                             'subsample': 0.8950190330733485, 
+                             'reg_alpha': 0.3530275785494063,
+                             'reg_lambda': 0.9564526039891854, 
+                             'colsample_bytree': 0.8488129245455193,
+                             'random_state': 42,
+                             'objective': 'reg:squarederror',
+                             'n_jobs': -1,
+                             'learning_rate': 0.01,
+                             'max_bin': 8000,
+                             'tree_method': 'hist',
+                             'n_estimators': 3000,
+                             'objective': 'reg:squarederror',
+                             'random_state': Config.state,
+                             'enable_categorical': True,
+                             'verbosity': 0,
+                             'early_stopping_rounds': Config.early_stop,
+                             'eval_metric': 'rmse',
+                            }),
+             False],
+    'XGB6': [XGBRegressor(**{'booster': 'gbtree',
+                              'max_depth': 10, 
+                              'min_child_weight': 19,
+                              'subsample': 0.8882395046974123,
+                              'reg_alpha': 0.12361226000167053,
+                              'reg_lambda': 0.7568174249367466,
+                              'colsample_bytree': 0.83845902004046,
+                              'objective': 'reg:squarederror',
+                              'n_jobs': -1,
+                              'learning_rate': 0.01,
+                              'max_bin': 8000,
+                              'tree_method': 'hist',
+                              'n_estimators': 5000,
+                              'random_state': Config.state,
+                              'enable_categorical': True,
+                              'verbosity': 0,
+                              'early_stopping_rounds': Config.early_stop,
+                              'eval_metric': 'rmse',
+                             'device': "cuda",
+                             }),
+              False],
+    'XGB8': [XGBRegressor(**{'booster': 'gbtree',
+                             'max_depth': 10,
+                             'min_child_weight': 11,
+                             'subsample': 0.8709310286076404, 
+                             'reg_alpha': 0.2429313136646974,
+                             'reg_lambda': 0.9443233420006127,
+                             'colsample_bytree': 0.8004450303825076,
+                             'random_state': 42, 
+                             'objective': 'reg:squarederror', 
+                             'n_jobs': -1,
+                             'learning_rate': 0.01,
+                              'max_bin': 8000,
+                              'tree_method': 'hist',
+                              'n_estimators': 5000,
+                              'random_state': Config.state,
+                              'enable_categorical': True,
+                              'verbosity': 0,
+                              'early_stopping_rounds': Config.early_stop,
+                              'eval_metric': 'rmse',
+                             'device': "cuda",
+                            }),
+             False],
+    'LGBM': [LGBMRegressor(**{'random_state': Config.state,
+                               'early_stopping_round': Config.early_stop,
+                               'categorical_feature': cat_features,
+                               'verbose': -1,
+                               'boosting_type': 'gbdt',
+                               'n_estimators': 3000,
+                               'eval_metric': 'rmse',
+                              'objective': 'regression_l2',
+                              }),
+             False],
+    'LGBM2': [LGBMRegressor(**{'random_state': Config.state,
+                               'early_stopping_round': Config.early_stop,
+                               'categorical_feature': cat_features,
+                               'verbose': -1,
+                               'boosting_type': 'gbdt',
+                               'n_estimators': 3000,
+                               'eval_metric': 'rmse',
+                              'objective': 'regression_l2',
+                              'max_depth': 9,
+                              'num_leaves': 722,
+                              'min_child_samples': 27,
+                              'min_child_weight': 14,
+                              'colsample_bytree': 0.49498912736255835,
+                              'reg_alpha': 0.3428923649002299, 
+                              'reg_lambda': 0.6429288241470125,
+                               'learning_rate': 0.01,
+                              }),
+             False],
+    'LGBM3': [LGBMRegressor(**{'random_state': Config.state,
+                               'early_stopping_round': Config.early_stop,
+                               'categorical_feature': cat_features,
+                               'verbose': -1,
+                               'boosting_type': 'gbdt',
+                               'n_estimators': 3000,
+                               'eval_metric': 'rmse',
+                              'objective': 'regression_l2',
+                              'learning_rate': 0.01,
+                               'max_bin': 8000,
+                               'max_depth': 8, 
+                               'num_leaves': 796,
+                               'min_child_samples': 21,
+                               'min_child_weight': 11,
+                               'colsample_bytree': 0.48551477424501904, 
+                               'reg_alpha': 0.44307695050069845, 
+                               'reg_lambda': 0.9310703189038081, 
+                              }),
+             False],
+    'LGBM4': [LGBMRegressor(**{'objective': 'regression_l2',
+                               'metric': 'rmse',
+                               'max_depth': 10, 
+                               'num_leaves': 133,
+                               'min_child_samples': 18, 
+                               'min_child_weight': 14, 
+                               'colsample_bytree': 0.4997666632394159, 
+                               'reg_alpha': 0.2813104886322961, 
+                               'reg_lambda': 0.8049716583639613,
+                               'random_state': Config.state,
+                               'early_stopping_round': Config.early_stop,
+                               'categorical_feature': cat_features,
+                               'verbose': -1,
+                               'boosting_type': 'goss',
+                               'n_estimators': 3000,
+                              'learning_rate': 0.01,
+                              }),
+              False],
+    'LGBM5': [LGBMRegressor(**{'objective': 'regression_l2',
+                                'metric': 'rmse',
+                                'max_depth': 12, 
+                                'num_leaves': 675, 
+                                'min_child_samples': 10,
+                                'min_child_weight': 19,
+                                'colsample_bytree': 0.49534353968335604,
+                                'reg_alpha': 0.3747939308000606,
+                                'reg_lambda': 0.5472625114112711, 
+                                'random_state': Config.state,
+                               'early_stopping_round': Config.early_stop,
+                                'categorical_feature': cat_features,
+                                'verbose': -1,
+                                'n_estimators': 5000,
+                               'learning_rate': 0.01,
+                                'max_bin': 8000,
+                             }),
+              False],
+     'LGBM6': [LGBMRegressor(**{'objective': 'regression_l2',
+                                'metric': 'rmse',
+                                'max_depth': 12,
+                                'num_leaves': 246,
+                                'min_child_samples': 10,
+                                'min_child_weight': 24,
+                                'colsample_bytree': 0.49704729723832064,
+                                'reg_alpha': 0.2791624804454722,
+                                'reg_lambda': 0.7306747260034717,
+                                'random_state': Config.state,
+                                'early_stopping_round': Config.early_stop,
+                                'categorical_feature': cat_features,
+                                'verbose': -1,
+                                'n_estimators': 5000,
+                               'learning_rate': 0.01,
+                                'max_bin': 8000
+                              }),
+               False],
+    'LGBM8': [LGBMRegressor(**{'objective': 'regression_l2',
+                               'metric': 'rmse', 
+                               'max_depth': 7,
+                               'num_leaves': 108,
+                               'min_child_samples': 13,
+                               'min_child_weight': 22,
+                               'colsample_bytree': 0.4781013294503911,
+                               'reg_alpha': 0.35450860719581045, 
+                               'reg_lambda': 0.6395930802901353, 
+                               'random_state': Config.state,
+                               'early_stopping_round': Config.early_stop,
+                               'categorical_feature': cat_features,
+                               'verbose': -1,
+                               'boosting_type': 'goss',
+                               'n_estimators': 5000,
+                               'learning_rate': 0.01,
+                               'max_bin': 8000,
+                              }),
+              False],
+    'LGBM9': [LGBMRegressor(**{'objective': 'regression_l2',
+                                'metric': 'rmse',
+                                'max_depth': 11,
+                                'num_leaves': 169, 
+                                'min_child_samples': 27,
+                                'min_child_weight': 13,
+                                'colsample_bytree': 0.4844468439076937,
+                                'reg_alpha': 0.08086875774692211, 
+                                'reg_lambda': 0.9676995833820066,
+                                'random_state': Config.state,
+                               'early_stopping_round': Config.early_stop,
+                               'categorical_feature': cat_features,
+                               'verbose': -1,
+                               'n_estimators': 5000,
+                               'learning_rate': 0.01,
+                               'max_bin': 8000,
+                           }),
+               False],
+    'HGB3': [HistGradientBoostingRegressor(**{'max_depth': 14,
+                                              'learning_rate': 0.012284533985518386,
+                                              'loss': 'squared_error',
+                                              'l2_regularization': 4.037780478249763,
+                                              'min_samples_leaf': 40,
+                                              'max_leaf_nodes': 40,
+                                              'max_iter': 5000,
+                                              'random_state': Config.state,
+                                              'early_stopping': Config.early_stop
+                                             }),
+             False],
+     'HGB4': [HistGradientBoostingRegressor(**{'max_depth': 12,
+                                               'loss': 'squared_error',
+                                               'l2_regularization': 5.24776999351151e-09,
+                                               'min_samples_leaf': 26,
+                                               'max_leaf_nodes': 39,
+                                               'learning_rate': 0.005,
+                                               'max_iter': 5000,
+                                               'random_state': Config.state,
+                                               'early_stopping': Config.early_stop
+                                              }),
+              False],
+}
+In [9]:
+class Model(Config):
+    
+    def __init__(self, X, X_enc, y, test, test_enc, models):
+        self.y = y
+        self.models = models
+        self.scores = pd.DataFrame(columns=['Score'])
+        self.OOF_preds = pd.DataFrame()
+        self.TEST_preds = pd.DataFrame()
+    def train(self):
+        
+        folds = KFold(n_splits=self.n_splits, shuffle=True, random_state=self.state)
+ 
+        for model_name, [model, training] in tqdm(self.models.items()):
+            
+            if training:
+                print('='*20)
+                print(model_name)
+                if any(model in model_name for model in ['LGBM', 'CAT', 'XGB', 'YDF']):
+                    self.X = X
+                    self.test = test
+ 
+                else:
+                    self.X = X_enc
+                    self.test = test_enc
+                    
+                if 'NN' in model_name:
+                    for n_fold, (train_id, valid_id) in enumerate(folds.split(self.X, self.y)):
+
+                        X_train_cats = self.X.loc[train_id, cat_features]
+                        X_train_nums = self.X.loc[train_id, t.num_features]
+                        y_train = self.y.loc[train_id].values
+
+                        X_val_cats = self.X.loc[valid_id, cat_features]
+                        X_val_nums = self.X.loc[valid_id, t.num_features]
+                        y_val = self.y.loc[valid_id]
+
+                        X_test_cats = self.test[cat_features]
+                        X_test_nums = self.test[t.num_features]
+        
+                        oof_preds = pd.DataFrame(columns=[model_name], index=X_val_cats.index)
+                        test_preds = pd.DataFrame(columns=[model_name], index=test.index)
+                        print(f'Fold {n_fold+1}')
+                        
+                        model = build_model()                        
+                        keras.utils.set_random_seed(self.state)
+                        optimizer = keras.optimizers.Adam(learning_rate=1e-3)
+                        model.compile(optimizer=optimizer, loss='mean_squared_error')
+                        model.fit([X_train_cats,X_train_nums], y_train, 
+                                  validation_data=([X_val_cats, X_val_nums], y_val),
+                                  epochs=20,
+                                  batch_size=1000,
+                                  callbacks=[keras.callbacks.ReduceLROnPlateau(patience=1),
+                                             keras.callbacks.EarlyStopping(patience=3)
+                                            ])
+                        
+                        y_pred_val = model.predict([X_val_cats, X_val_nums])
+                        test_pred = model.predict([X_test_cats, X_test_nums])
+                        
+                        score = mean_squared_error(y_val, y_pred_val, squared=False)
+                        print(score)
+                        self.scores.loc[f'{model_name}', f'Fold {n_fold+1}'] = score
+                        
+                        oof_preds[model_name] = y_pred_val
+                        test_preds[model_name] = test_pred
+
+                        self.OOF_preds = pd.concat([self.OOF_preds, oof_preds], axis = 0, ignore_index = False)
+                        TEST_preds = pd.concat([self.TEST_preds, test_preds], axis = 0, ignore_index = False)
+                        
+                else:
+                    for n_fold, (train_id, valid_id) in enumerate(folds.split(self.X, self.y)):
+                        X_train, y_train = self.X.iloc[train_id], self.y.iloc[train_id]
+                        X_val, y_val = self.X.iloc[valid_id], self.y.iloc[valid_id]
+
+                        oof_preds = pd.DataFrame(columns=[model_name], index=X_val.index)
+                        test_preds = pd.DataFrame(columns=[model_name], index=test.index)
+                        print(f'Fold {n_fold+1}')
+
+                        if "XGB" in model_name:
+                            model.fit(X_train, y_train, 
+                                      eval_set = [(X_val, y_val)], 
+                                      verbose = False
+                                     )
+
+                        elif "CAT" in model_name:
+                            model.fit(X_train, y_train, 
+                                      eval_set = [(X_val, y_val)],
+                                      verbose=False
+                                      ) 
+
+                        elif "LGBM" in model_name:
+                             model.fit(X_train, y_train, 
+                                       eval_set = [(X_val, y_val)], 
+                                       callbacks = [log_evaluation(0),
+                                                    early_stopping(self.early_stop, verbose = False)
+                                                   ])  
+
+                        else:
+                            model.fit(X_train, y_train)
+
+                        y_pred_val = model.predict(X_val)
+                        test_pred = model.predict(self.test)
+                       
+                        score = mean_squared_error(y_val, y_pred_val, squared=False)
+                        print(score)
+                        self.scores.loc[f'{model_name}', f'Fold {n_fold+1}'] = score
+
+                        oof_preds[model_name] = y_pred_val
+                        test_preds[model_name] = test_pred
+                        self.OOF_preds = pd.concat([self.OOF_preds, oof_preds], axis = 0, ignore_index = False)
+                        self.TEST_preds = pd.concat([self.TEST_preds, test_preds], axis = 0, ignore_index = False)
+
+                self.OOF_preds = self.OOF_preds.groupby(level=0).mean()
+                self.TEST_preds = self.TEST_preds.groupby(level=0).mean()
+
+                self.OOF_preds[f'{model_name}'].to_csv(f'{model_name}_oof.csv', index=False)
+                self.TEST_preds[f'{model_name}'].to_csv(f'{model_name}_test.csv', index=False)
+            
+            else:
+                self.OOF_preds[f'{model_name}'] = pd.read_csv(f'/kaggle/input/scale-models/{model_name}_oof.csv')
+                self.TEST_preds[f'{model_name}'] = pd.read_csv(f'/kaggle/input/scale-models/{model_name}_test.csv')
+                
+                for n_fold, (train_id, valid_id) in enumerate(folds.split(self.OOF_preds[f'{model_name}'], self.y)):
+                    y_pred_val, y_val = self.OOF_preds[f'{model_name}'].iloc[valid_id], self.y.iloc[valid_id]
+                    self.scores.loc[f'{model_name}', f'Fold {n_fold+1}'] = mean_squared_error(y_val, y_pred_val, squared=False)
+                    
+            self.scores.loc[f'{model_name}', 'Score'] = self.scores.loc[f'{model_name}'][1:].mean()
+        self.scores.loc['Ensemble'], self.OOF_preds["Ensemble"], self.TEST_preds["Ensemble"] = self.ensemble(self.OOF_preds, self.y, self.TEST_preds)
+        self.scores = self.scores.sort_values('Score')
+
+        self.result()
+
+        return self.TEST_preds
+    
+    def ensemble(self, X, y, test):
+        scores = []
+        oof_pred = np.zeros(X.shape[0])
+        test_pred = np.zeros(test.shape[0])
+        model = LinearRegression()
+        skf = KFold(n_splits=self.n_splits, random_state=self.state, shuffle=True)
+
+        for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+            y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
+
+            model.fit(X_train, y_train)
+
+            y_pred_probs = model.predict(X_val)
+            oof_pred[val_idx] = y_pred_probs
+            test_pred += model.predict(test) / self.n_splits
+            
+            score = mean_squared_error(y_val, y_pred_probs, squared=False)
+            scores.append(score)
+                   
+        return np.mean(scores), oof_pred, test_pred
+    
+    def result(self):
+               
+        plt.figure(figsize=(18, 6))
+        hbars = plt.bar(self.scores.index, self.scores.Score, color='#3cb371', width=0.7)
+        plt.bar_label(hbars, fmt='%.4f')
+        plt.ylim(1.03,1.034)
+        plt.xlabel('Models')
+        plt.ylabel('Score')              
+        plt.show()
+
+        y = np.expm1(self.y).sort_index()
+        self.OOF_preds['Ensemble'] = np.expm1(self.OOF_preds['Ensemble']).sort_index()
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        axes[0].scatter(y, self.OOF_preds['Ensemble'], alpha=0.5, s=15, edgecolors='#3cb371')
+        axes[0].plot([y.min(), y.max()], [y.min(), y.max()], 'k--', lw=2)
+        axes[0].set_xlabel('Actual')
+        axes[0].set_ylabel('Predicted')
+        axes[0].set_title('Actual vs. Predicted')
+
+        axes[1].scatter(self.OOF_preds['Ensemble'], y - self.OOF_preds['Ensemble'], alpha=0.5, s=15, edgecolors='#3cb371')
+        axes[1].axhline(y=0, color='black', linestyle='--', lw=2)
+        axes[1].set_xlabel('Predicted Values')
+        axes[1].set_ylabel('Residuals')
+        axes[1].set_title('Residual Plot')
+
+        plt.tight_layout()
+        plt.show()
+In [10]:
+model = Model(X, X_enc, y, test, test_enc, models)
+TEST_preds = model.train()
+100%
+26/26 [00:24<00:00,  1.01s/it]
+Submission
+In [11]:
+submission = Config.submission
+submission[Config.target] = np.expm1(TEST_preds['Ensemble'].values)
+submission.to_csv("submission.csv", index=False)
+
+display(submission.head())
+id Premium Amount
+0 1200000 908.711052
+1 1200001 920.264386
+2 1200002 814.485660
+3 1200003 824.739059
+4 1200004 805.272669
+In [12]:
+plt.figure(figsize=(14, 6))
+submission[Config.target].hist(color='#3cb371', bins=50)
+plt.show()

@@ -1,0 +1,1547 @@
+In [1]:
+import numpy as np 
+import pandas as pd 
+import matplotlib.pyplot as plt 
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from catboost import CatBoostClassifier
+from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import uniform
+from sklearn.metrics import accuracy_score
+Data Reading
+In [2]:
+train_df = pd.read_csv("/kaggle/input/playground-series-s4e11/train.csv")
+train_df.head()
+Out[2]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure CGPA Study Satisfaction Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression
+0 0 Aaradhya Female 49.0 Ludhiana Working Professional Chef NaN 5.0 NaN NaN 2.0 More than 8 hours Healthy BHM No 1.0 2.0 No 0
+1 1 Vivan Male 26.0 Varanasi Working Professional Teacher NaN 4.0 NaN NaN 3.0 Less than 5 hours Unhealthy LLB Yes 7.0 3.0 No 1
+2 2 Yuvraj Male 33.0 Visakhapatnam Student NaN 5.0 NaN 8.97 2.0 NaN 5-6 hours Healthy B.Pharm Yes 3.0 1.0 No 1
+3 3 Yuvraj Male 22.0 Mumbai Working Professional Teacher NaN 5.0 NaN NaN 1.0 Less than 5 hours Moderate BBA Yes 10.0 1.0 Yes 1
+4 4 Rhea Female 30.0 Kanpur Working Professional Business Analyst NaN 1.0 NaN NaN 1.0 5-6 hours Unhealthy BBA Yes 9.0 4.0 Yes 0
+In [3]:
+train_df.info()
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 140700 entries, 0 to 140699
+Data columns (total 20 columns):
+ #   Column                                 Non-Null Count   Dtype  
+---  ------                                 --------------   -----  
+ 0   id                                     140700 non-null  int64  
+ 1   Name                                   140700 non-null  object 
+ 2   Gender                                 140700 non-null  object 
+ 3   Age                                    140700 non-null  float64
+ 4   City                                   140700 non-null  object 
+ 5   Working Professional or Student        140700 non-null  object 
+ 6   Profession                             104070 non-null  object 
+ 7   Academic Pressure                      27897 non-null   float64
+ 8   Work Pressure                          112782 non-null  float64
+ 9   CGPA                                   27898 non-null   float64
+ 10  Study Satisfaction                     27897 non-null   float64
+ 11  Job Satisfaction                       112790 non-null  float64
+ 12  Sleep Duration                         140700 non-null  object 
+ 13  Dietary Habits                         140696 non-null  object 
+ 14  Degree                                 140698 non-null  object 
+ 15  Have you ever had suicidal thoughts ?  140700 non-null  object 
+ 16  Work/Study Hours                       140700 non-null  float64
+ 17  Financial Stress                       140696 non-null  float64
+ 18  Family History of Mental Illness       140700 non-null  object 
+ 19  Depression                             140700 non-null  int64  
+dtypes: float64(8), int64(2), object(10)
+memory usage: 21.5+ MB
+Data Cleaning
+Cleaning Train Data
+In [4]:
+train_df.isnull().sum()
+Out[4]:
+id                                            0
+Name                                          0
+Gender                                        0
+Age                                           0
+City                                          0
+Working Professional or Student               0
+Profession                                36630
+Academic Pressure                        112803
+Work Pressure                             27918
+CGPA                                     112802
+Study Satisfaction                       112803
+Job Satisfaction                          27910
+Sleep Duration                                0
+Dietary Habits                                4
+Degree                                        2
+Have you ever had suicidal thoughts ?         0
+Work/Study Hours                              0
+Financial Stress                              4
+Family History of Mental Illness              0
+Depression                                    0
+dtype: int64
+In [5]:
+train_df.duplicated().sum()
+Out[5]:
+0
+In [6]:
+train_df.Profession.value_counts()
+Out[6]:
+Profession
+Teacher           24906
+Content Writer     7814
+Architect          4370
+Consultant         4229
+HR Manager         4022
+                  ...  
+BBA                   1
+City Manager          1
+FamilyVirar           1
+B.Com                 1
+Yuvraj                1
+Name: count, Length: 64, dtype: int64
+In [7]:
+train_df[train_df['Profession'] == 'Student']
+Out[7]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure CGPA Study Satisfaction Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression
+11509 11509 Prisha Female 22.0 Thane Working Professional Student NaN 3.0 NaN NaN 2.0 7-8 hours Moderate B.Com Yes 5.0 2.0 No 0
+20049 20049 Himani Female 24.0 Kolkata Student Student 1.0 NaN 7.32 4.0 NaN More than 8 hours Moderate MA Yes 8.0 3.0 Yes 0
+20296 20296 Ayaan Male 32.0 Agra Student Student 2.0 NaN 8.13 5.0 NaN More than 8 hours Unhealthy B.Ed No 11.0 1.0 No 0
+25447 25447 Gaurav Male 60.0 Pune Working Professional Student NaN 3.0 NaN NaN 2.0 5-6 hours Unhealthy M.Pharm No 8.0 1.0 Yes 0
+73447 73447 Harsha Male 35.0 Ahmedabad Working Professional Student NaN 4.0 NaN NaN 2.0 Less than 5 hours Moderate BSc No 1.0 3.0 Yes 0
+88617 88617 Ayush Male 29.0 Srinagar Working Professional Student NaN 4.0 NaN NaN 2.0 5-6 hours Moderate BE No 10.0 1.0 Yes 0
+126162 126162 Kashish Female 30.0 Nagpur Student Student 5.0 NaN 7.24 1.0 NaN Less than 5 hours Unhealthy MD Yes 3.0 3.0 Yes 0
+In [8]:
+train_df.groupby(['Academic Pressure'])['Working Professional or Student'].value_counts()
+Out[8]:
+Academic Pressure  Working Professional or Student
+1.0                Student                            4801
+2.0                Student                            4178
+                   Working Professional                  1
+3.0                Student                            7462
+                   Working Professional                  1
+4.0                Student                            5155
+                   Working Professional                  3
+5.0                Student                            6296
+Name: count, dtype: int64
+In [9]:
+train_df.loc[train_df['Working Professional or Student'] == 'Working Professional', 'Academic Pressure'] = 0
+train_df.loc[train_df['Working Professional or Student'] == 'Student', 'Work Pressure'] = 0
+train_df.loc[train_df['Working Professional or Student'] == 'Student', 'Profession'] = 'Student'
+In [10]:
+train_df.groupby(['Academic Pressure'])['Working Professional or Student'].value_counts()
+Out[10]:
+Academic Pressure  Working Professional or Student
+0.0                Working Professional               112799
+1.0                Student                              4801
+2.0                Student                              4178
+3.0                Student                              7462
+4.0                Student                              5155
+5.0                Student                              6296
+Name: count, dtype: int64
+In [11]:
+train_df[train_df['Profession'].isnull()].head(20)
+Out[11]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure CGPA Study Satisfaction Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression
+29 29 Kashish Female 19.0 Agra Working Professional NaN 0.0 1.0 NaN NaN 5.0 More than 8 hours Healthy Class 12 No 5.0 2.0 No 0
+36 36 Anvi Female 50.0 Kalyan Working Professional NaN 0.0 4.0 NaN NaN 4.0 7-8 hours Unhealthy Class 12 No 0.0 2.0 No 0
+43 43 Vidya Female 18.0 Vadodara Working Professional NaN 0.0 5.0 NaN NaN 4.0 Less than 5 hours Moderate Class 12 Yes 10.0 5.0 No 1
+48 48 Anand Male 38.0 Ghaziabad Working Professional NaN 0.0 2.0 NaN NaN 5.0 5-6 hours Moderate Class 12 No 1.0 1.0 Yes 0
+50 50 Raunak Male 21.0 Pune Working Professional NaN 0.0 4.0 NaN NaN 5.0 5-6 hours Healthy Class 12 Yes 8.0 5.0 Yes 0
+70 70 Abhishek Male 18.0 Vasai-Virar Working Professional NaN 0.0 5.0 NaN NaN 2.0 Less than 5 hours Moderate Class 12 Yes 6.0 4.0 No 1
+80 80 Samar Male 21.0 Thane Working Professional NaN 0.0 4.0 NaN NaN 4.0 5-6 hours Unhealthy Class 12 No 1.0 2.0 No 0
+81 81 Reyansh Male 19.0 Nagpur Working Professional NaN 0.0 5.0 NaN NaN 4.0 Less than 5 hours Moderate Class 12 Yes 11.0 2.0 No 1
+82 82 Saanvi Female 49.0 Hyderabad Working Professional NaN 0.0 1.0 NaN NaN 5.0 5-6 hours Moderate Class 12 No 0.0 3.0 No 0
+93 93 Shiv Male 18.0 Thane Working Professional NaN 0.0 4.0 NaN NaN 2.0 7-8 hours Unhealthy Class 12 No 2.0 1.0 No 0
+101 101 Mira Female 48.0 Ludhiana Working Professional NaN 0.0 3.0 NaN NaN 2.0 5-6 hours Healthy Class 12 Yes 8.0 4.0 Yes 1
+107 107 Vani Female 19.0 Srinagar Working Professional NaN 0.0 5.0 NaN NaN 5.0 7-8 hours Healthy Class 12 Yes 11.0 4.0 Yes 1
+121 121 Garima Female 18.0 Hyderabad Working Professional NaN 0.0 5.0 NaN NaN 4.0 7-8 hours Unhealthy Class 12 Yes 7.0 2.0 Yes 1
+122 122 Rashi Female 19.0 Ludhiana Working Professional NaN 0.0 2.0 NaN NaN 1.0 5-6 hours Healthy Class 12 Yes 3.0 1.0 Yes 0
+127 127 Anand Male 59.0 Mumbai Working Professional NaN 0.0 1.0 NaN NaN 5.0 Less than 5 hours Healthy Class 12 Yes 5.0 1.0 No 0
+129 129 Kian Male 45.0 Kanpur Working Professional NaN 0.0 4.0 NaN NaN 3.0 5-6 hours Healthy Class 12 Yes 2.0 4.0 No 0
+136 136 Navya Female 52.0 Kolkata Working Professional NaN 0.0 3.0 NaN NaN 4.0 5-6 hours Moderate Class 12 Yes 4.0 4.0 No 0
+174 174 Gaurav Male 18.0 Chennai Working Professional NaN 0.0 5.0 NaN NaN 3.0 Less than 5 hours Unhealthy Class 12 No 3.0 5.0 No 1
+205 205 Satyam Male 19.0 Bangalore Working Professional NaN 0.0 4.0 NaN NaN 1.0 5-6 hours Healthy Class 12 Yes 8.0 3.0 Yes 1
+213 213 Anand Male 18.0 Hyderabad Working Professional NaN 0.0 3.0 NaN NaN 4.0 5-6 hours Moderate Class 12 No 9.0 3.0 No 0
+In [12]:
+professions = ['Content Writer', 'Architect', 'Consultant', 'HR Manager']
+null_rows = train_df[train_df['Profession'].isnull()]
+num_nulls = len(null_rows)
+random_professions = np.random.choice(professions, size=num_nulls)
+train_df.loc[train_df['Profession'].isnull(), 'Profession'] = random_professions
+In [13]:
+train_df.groupby(['Academic Pressure'])['Working Professional or Student'].value_counts()
+Out[13]:
+Academic Pressure  Working Professional or Student
+0.0                Working Professional               112799
+1.0                Student                              4801
+2.0                Student                              4178
+3.0                Student                              7462
+4.0                Student                              5155
+5.0                Student                              6296
+Name: count, dtype: int64
+In [14]:
+train_df['CGPA'].describe()
+Out[14]:
+count    27898.000000
+mean         7.658636
+std          1.464466
+min          5.030000
+25%          6.290000
+50%          7.770000
+75%          8.920000
+max         10.000000
+Name: CGPA, dtype: float64
+In [15]:
+train_df = train_df.drop(columns=['CGPA','Study Satisfaction'])
+In [16]:
+train_df.groupby(['Academic Pressure'])['Working Professional or Student'].value_counts()
+Out[16]:
+Academic Pressure  Working Professional or Student
+0.0                Working Professional               112799
+1.0                Student                              4801
+2.0                Student                              4178
+3.0                Student                              7462
+4.0                Student                              5155
+5.0                Student                              6296
+Name: count, dtype: int64
+In [17]:
+train_df['Job Satisfaction'].describe()
+Out[17]:
+count    112790.000000
+mean          2.974404
+std           1.416078
+min           1.000000
+25%           2.000000
+50%           3.000000
+75%           4.000000
+max           5.000000
+Name: Job Satisfaction, dtype: float64
+In [18]:
+train_df[(train_df['Job Satisfaction'].isnull()) & (train_df['Profession'] == 'Student')]
+Out[18]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression
+2 2 Yuvraj Male 33.0 Visakhapatnam Student Student 5.0 0.0 NaN 5-6 hours Healthy B.Pharm Yes 3.0 1.0 No 1
+8 8 Aishwarya Female 24.0 Bangalore Student Student 2.0 0.0 NaN 5-6 hours Moderate BSc No 3.0 2.0 Yes 0
+26 26 Aditya Male 31.0 Srinagar Student Student 3.0 0.0 NaN Less than 5 hours Healthy BA No 9.0 1.0 Yes 0
+30 30 Prisha Female 28.0 Varanasi Student Student 3.0 0.0 NaN 7-8 hours Moderate BCA Yes 4.0 5.0 Yes 1
+32 32 Chhavi Female 25.0 Jaipur Student Student 4.0 0.0 NaN 5-6 hours Moderate M.Tech Yes 1.0 1.0 No 0
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+140685 140685 Aaradhya Female 27.0 Surat Student Student 5.0 0.0 NaN 5-6 hours Unhealthy Class 12 Yes 7.0 1.0 Yes 0
+140686 140686 Rohan Male 27.0 Ludhiana Student Student 2.0 0.0 NaN Less than 5 hours Healthy MSc No 0.0 3.0 Yes 0
+140689 140689 Ayaan Male 31.0 Faridabad Student Student 3.0 0.0 NaN 5-6 hours Unhealthy MD No 12.0 2.0 No 0
+140690 140690 Rashi Female 18.0 Ludhiana Student Student 5.0 0.0 NaN Less than 5 hours Healthy Class 12 Yes 10.0 5.0 No 1
+140699 140699 Sai Male 27.0 Patna Student Student 4.0 0.0 NaN Less than 5 hours Healthy BCA Yes 2.0 3.0 Yes 1
+27893 rows × 18 columns
+27893 rows
+In [19]:
+train_df.groupby(['Academic Pressure'])['Working Professional or Student'].value_counts()
+Out[19]:
+Academic Pressure  Working Professional or Student
+0.0                Working Professional               112799
+1.0                Student                              4801
+2.0                Student                              4178
+3.0                Student                              7462
+4.0                Student                              5155
+5.0                Student                              6296
+Name: count, dtype: int64
+In [20]:
+train_df.loc[(train_df['Profession'] == 'Student') & (train_df['Job Satisfaction'].isnull()), 'Job Satisfaction'] = 0
+In [21]:
+train_df.groupby(['Academic Pressure'])['Working Professional or Student'].value_counts()
+Out[21]:
+Academic Pressure  Working Professional or Student
+0.0                Working Professional               112799
+1.0                Student                              4801
+2.0                Student                              4178
+3.0                Student                              7462
+4.0                Student                              5155
+5.0                Student                              6296
+Name: count, dtype: int64
+In [22]:
+train_df[train_df['Job Satisfaction'].isnull()]
+Out[22]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression
+18752 18752 Aarti Female 18.0 Kalyan Working Professional Architect 0.0 NaN NaN Less than 5 hours Healthy Class 12 Yes 7.0 1.0 Yes 1
+25647 25647 Ishwar Male 57.0 Kalyan Working Professional Architect 0.0 1.0 NaN Less than 5 hours Unhealthy Class 12 No 4.0 1.0 No 0
+34694 34694 Kriti Female 46.0 Meerut Working Professional Content Writer 0.0 NaN NaN 5-6 hours Moderate Class 12 Yes 12.0 3.0 No 0
+35612 35612 Siddhesh Male 27.0 Vadodara Working Professional Consultant 0.0 NaN NaN Less than 5 hours Unhealthy B.Pharm No 11.0 3.0 No 1
+41915 41915 Advait Male 18.0 Kolkata Working Professional HR Manager 0.0 NaN NaN 5-6 hours Healthy Class 12 Yes 1.0 5.0 Yes 1
+52199 52199 Manan Male 50.0 Agra Working Professional Architect 0.0 4.0 NaN 5-6 hours Unhealthy Class 12 No 1.0 3.0 Yes 0
+55222 55222 Trisha Female 21.0 Varanasi Working Professional Consultant 0.0 5.0 NaN 7-8 hours Moderate B.Arch No 11.0 2.0 Yes 0
+55827 55827 Prachi Female 19.0 Kalyan Working Professional Consultant 0.0 NaN NaN 5-6 hours Unhealthy Class 12 Yes 4.0 4.0 No 1
+57196 57196 Manvi Female 20.0 Visakhapatnam Working Professional Architect 0.0 NaN NaN Less than 5 hours Moderate Class 12 No 0.0 4.0 Yes 1
+60348 60348 Nishant Male 29.0 Agra Working Professional Architect 0.0 NaN NaN 5-6 hours Moderate B.Ed No 7.0 2.0 Yes 0
+65346 65346 Monika Female 18.0 Faridabad Working Professional Architect 0.0 5.0 NaN 5-6 hours Moderate Class 12 Yes 9.0 5.0 No 1
+86020 86020 Jiya Female 19.0 Patna Working Professional Content Writer 0.0 1.0 NaN Less than 5 hours Moderate Class 12 Yes 8.0 4.0 Yes 1
+98446 98446 Ritika Female 54.0 Surat Working Professional Content Writer 0.0 NaN NaN More than 8 hours Moderate Class 12 Yes 0.0 4.0 No 0
+99062 99062 Tanisha Female 24.0 Surat Working Professional Content Writer 0.0 NaN NaN Less than 5 hours Moderate B.Ed Yes 1.0 5.0 No 1
+100868 100868 Harsha Male 29.0 Nashik Working Professional HR Manager 0.0 NaN NaN More than 8 hours Healthy BHM Yes 10.0 3.0 No 0
+101189 101189 Keshav Male 34.0 Rajkot Working Professional Consultant 0.0 NaN NaN More than 8 hours Moderate MD No 11.0 1.0 No 0
+122793 122793 Amit Male 20.0 Pune Working Professional Content Writer 0.0 NaN NaN 5-6 hours Healthy Class 12 No 0.0 5.0 No 0
+In [23]:
+train_df.groupby(['Academic Pressure'])['Working Professional or Student'].value_counts()
+Out[23]:
+Academic Pressure  Working Professional or Student
+0.0                Working Professional               112799
+1.0                Student                              4801
+2.0                Student                              4178
+3.0                Student                              7462
+4.0                Student                              5155
+5.0                Student                              6296
+Name: count, dtype: int64
+In [24]:
+train_df = train_df[train_df['id'] != 99062]
+In [25]:
+train_df[train_df['Academic Pressure'].isnull()]
+Out[25]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression
+17549 17549 Tanya Female 20.0 Patna Student Student NaN 0.0 0.0 5-6 hours Moderate Class 12 No 0.0 3.0 Yes 0
+21880 21880 Aarush Male 38.0 Chennai Student Student NaN 0.0 4.0 5-6 hours Healthy Class 12 No 2.0 3.0 No 0
+70453 70453 Veda Female 20.0 Ahmedabad Student Student NaN 0.0 2.0 Less than 5 hours Moderate Class 12 Yes 12.0 3.0 Yes 1
+75007 75007 Aarav Male 21.0 Lucknow Student Student NaN 0.0 1.0 7-8 hours Moderate Class 12 Yes 3.0 3.0 Yes 0
+105773 105773 Anand Male 18.0 Ahmedabad Student Student NaN 0.0 1.0 Less than 5 hours Moderate Class 12 Yes 9.0 5.0 No 1
+122983 122983 Saanvi Female 30.0 Ghaziabad Student Student NaN 0.0 0.0 Less than 5 hours Unhealthy B.Com Yes 5.0 1.0 No 0
+129756 129756 Kian Male 18.0 Rajkot Student Student NaN 0.0 4.0 7-8 hours Moderate Class 12 Yes 9.0 4.0 No 1
+134830 134830 Aaradhya Female 24.0 Meerut Student Student NaN 0.0 2.0 More than 8 hours Unhealthy Class 12 No 0.0 5.0 No 0
+137013 137013 Vikram Male 36.0 Varanasi Student Student NaN 0.0 0.0 More than 8 hours Moderate Class 12 Yes 8.0 5.0 Yes 1
+In [26]:
+train_df.groupby(['Academic Pressure'])['Working Professional or Student'].value_counts()
+Out[26]:
+Academic Pressure  Working Professional or Student
+0.0                Working Professional               112798
+1.0                Student                              4801
+2.0                Student                              4178
+3.0                Student                              7462
+4.0                Student                              5155
+5.0                Student                              6296
+Name: count, dtype: int64
+In [27]:
+train_df.loc[train_df['Academic Pressure'].isnull(), 'Academic Pressure'] = 3.0
+In [28]:
+train_df.groupby(['Work Pressure'])['Working Professional or Student'].value_counts()
+Out[28]:
+Work Pressure  Working Professional or Student
+0.0            Student                            27901
+1.0            Working Professional               21562
+2.0            Working Professional               24372
+3.0            Working Professional               21899
+4.0            Working Professional               22512
+5.0            Working Professional               22434
+Name: count, dtype: int64
+In [29]:
+train_df['Academic Pressure'].describe()
+Out[29]:
+count    140699.000000
+mean          0.623103
+std           1.395516
+min           0.000000
+25%           0.000000
+50%           0.000000
+75%           0.000000
+max           5.000000
+Name: Academic Pressure, dtype: float64
+In [30]:
+train_df[train_df['Work Pressure'].isnull()]
+Out[30]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression
+15846 15846 Shrey Male 53.0 Vasai-Virar Working Professional Content Writer 0.0 NaN 5.0 More than 8 hours Unhealthy Class 12 No 12.0 1.0 No 0
+18752 18752 Aarti Female 18.0 Kalyan Working Professional Architect 0.0 NaN NaN Less than 5 hours Healthy Class 12 Yes 7.0 1.0 Yes 1
+34694 34694 Kriti Female 46.0 Meerut Working Professional Content Writer 0.0 NaN NaN 5-6 hours Moderate Class 12 Yes 12.0 3.0 No 0
+35612 35612 Siddhesh Male 27.0 Vadodara Working Professional Consultant 0.0 NaN NaN Less than 5 hours Unhealthy B.Pharm No 11.0 3.0 No 1
+41915 41915 Advait Male 18.0 Kolkata Working Professional HR Manager 0.0 NaN NaN 5-6 hours Healthy Class 12 Yes 1.0 5.0 Yes 1
+55827 55827 Prachi Female 19.0 Kalyan Working Professional Consultant 0.0 NaN NaN 5-6 hours Unhealthy Class 12 Yes 4.0 4.0 No 1
+57196 57196 Manvi Female 20.0 Visakhapatnam Working Professional Architect 0.0 NaN NaN Less than 5 hours Moderate Class 12 No 0.0 4.0 Yes 1
+60348 60348 Nishant Male 29.0 Agra Working Professional Architect 0.0 NaN NaN 5-6 hours Moderate B.Ed No 7.0 2.0 Yes 0
+76104 76104 Vanya Female 20.0 Nashik Working Professional Architect 0.0 NaN 1.0 7-8 hours Moderate Class 12 No 11.0 1.0 No 1
+85126 85126 Monika Female 27.0 Kanpur Working Professional Mechanical Engineer 0.0 NaN 5.0 5-6 hours Healthy BE Yes 10.0 5.0 No 1
+86606 86606 Tushar Male 18.0 Thane Working Professional Consultant 0.0 NaN 1.0 7-8 hours Moderate Class 12 Yes 10.0 3.0 No 1
+92609 92609 Shruti Female 51.0 Indore Working Professional Content Writer 0.0 NaN 2.0 7-8 hours Healthy Class 12 Yes 4.0 5.0 Yes 0
+93213 93213 Anika Female 23.0 Kanpur Working Professional Content Writer 0.0 NaN 4.0 More than 8 hours Moderate MSc No 2.0 1.0 Yes 0
+98446 98446 Ritika Female 54.0 Surat Working Professional Content Writer 0.0 NaN NaN More than 8 hours Moderate Class 12 Yes 0.0 4.0 No 0
+100868 100868 Harsha Male 29.0 Nashik Working Professional HR Manager 0.0 NaN NaN More than 8 hours Healthy BHM Yes 10.0 3.0 No 0
+101189 101189 Keshav Male 34.0 Rajkot Working Professional Consultant 0.0 NaN NaN More than 8 hours Moderate MD No 11.0 1.0 No 0
+122793 122793 Amit Male 20.0 Pune Working Professional Content Writer 0.0 NaN NaN 5-6 hours Healthy Class 12 No 0.0 5.0 No 0
+125384 125384 Harini Female 18.0 Vadodara Working Professional Consultant 0.0 NaN 4.0 7-8 hours Healthy Class 12 Yes 9.0 4.0 No 1
+134154 134154 Siddharth Male 34.0 Pune Working Professional HR Manager 0.0 NaN 4.0 5-6 hours Moderate Class 12 No 4.0 5.0 No 0
+In [31]:
+train_df.groupby(['Work Pressure'])['Working Professional or Student'].value_counts()
+Out[31]:
+Work Pressure  Working Professional or Student
+0.0            Student                            27901
+1.0            Working Professional               21562
+2.0            Working Professional               24372
+3.0            Working Professional               21899
+4.0            Working Professional               22512
+5.0            Working Professional               22434
+Name: count, dtype: int64
+In [32]:
+train_df.loc[train_df['Work Pressure'].isnull(), 'Work Pressure'] = 3.0
+In [33]:
+train_df.loc[train_df['Job Satisfaction'].isnull(), 'Job Satisfaction'] = 3.0
+In [34]:
+train_df['Dietary Habits'].value_counts()
+Out[34]:
+Dietary Habits
+Moderate             49704
+Unhealthy            46227
+Healthy              44741
+Yes                      2
+No                       2
+More Healthy             2
+No Healthy               1
+Class 12                 1
+Indoor                   1
+Male                     1
+Vegas                    1
+M.Tech                   1
+Less Healthy             1
+1.0                      1
+Electrician              1
+Hormonal                 1
+Mihir                    1
+Less than Healthy        1
+3                        1
+Gender                   1
+BSc                      1
+Pratham                  1
+2                        1
+Name: count, dtype: int64
+In [35]:
+def map_dietary_habits(value):
+    if value in ['Healthy', 'More Healthy', 'Yes', 'Class 12', 'Indoor', 'Male', 'BSc', 'Pratham']:
+        return 'Healthy'
+    elif value in ['Unhealthy', 'No Healthy', 'Less Healthy', 'Hormonal', 'Vegas', 'Electrician']:
+        return 'Unhealthy'
+    elif value in ['Moderate', '3']:
+        return 'Moderate'
+    else:
+        return 'Moderate'  
+
+train_df['Dietary Habits'] = train_df['Dietary Habits'].apply(map_dietary_habits)
+In [36]:
+train_df['Degree'].value_counts()
+Out[36]:
+Degree
+Class 12    14729
+B.Ed        11690
+B.Arch       8742
+B.Com        8113
+B.Pharm      5856
+            ...  
+Vivaan          1
+MTech           1
+29              1
+LLCom           1
+Advait          1
+Name: count, Length: 115, dtype: int64
+In [37]:
+train_df.loc[train_df['Degree'].isnull(), 'Degree'] = 'Class 12'
+In [38]:
+train_df['Financial Stress'].describe()
+Out[38]:
+count    140695.000000
+mean          2.988969
+std           1.413628
+min           1.000000
+25%           2.000000
+50%           3.000000
+75%           4.000000
+max           5.000000
+Name: Financial Stress, dtype: float64
+In [39]:
+train_df.loc[train_df['Financial Stress'].isnull(), 'Financial Stress'] = 3.0
+In [40]:
+train_df.isnull().sum()
+Out[40]:
+id                                       0
+Name                                     0
+Gender                                   0
+Age                                      0
+City                                     0
+Working Professional or Student          0
+Profession                               0
+Academic Pressure                        0
+Work Pressure                            0
+Job Satisfaction                         0
+Sleep Duration                           0
+Dietary Habits                           0
+Degree                                   0
+Have you ever had suicidal thoughts ?    0
+Work/Study Hours                         0
+Financial Stress                         0
+Family History of Mental Illness         0
+Depression                               0
+dtype: int64
+Cleaning Test Data
+In [41]:
+test_df = pd.read_csv('/kaggle/input/playground-series-s4e11/test.csv')
+test_df
+Out[41]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure CGPA Study Satisfaction Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness
+0 140700 Shivam Male 53.0 Visakhapatnam Working Professional Judge NaN 2.0 NaN NaN 5.0 Less than 5 hours Moderate LLB No 9.0 3.0 Yes
+1 140701 Sanya Female 58.0 Kolkata Working Professional Educational Consultant NaN 2.0 NaN NaN 4.0 Less than 5 hours Moderate B.Ed No 6.0 4.0 No
+2 140702 Yash Male 53.0 Jaipur Working Professional Teacher NaN 4.0 NaN NaN 1.0 7-8 hours Moderate B.Arch Yes 12.0 4.0 No
+3 140703 Nalini Female 23.0 Rajkot Student NaN 5.0 NaN 6.84 1.0 NaN More than 8 hours Moderate BSc Yes 10.0 4.0 No
+4 140704 Shaurya Male 47.0 Kalyan Working Professional Teacher NaN 5.0 NaN NaN 5.0 7-8 hours Moderate BCA Yes 3.0 4.0 No
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+93795 234495 Zoya Female 49.0 Jaipur Working Professional Pilot NaN 3.0 NaN NaN 5.0 Less than 5 hours Moderate BSc Yes 2.0 2.0 Yes
+93796 234496 Shlok Male 29.0 Ahmedabad Working Professional Pilot NaN 5.0 NaN NaN 1.0 7-8 hours Moderate BE Yes 11.0 3.0 Yes
+93797 234497 Rishi Male 24.0 Visakhapatnam Student NaN 1.0 NaN 7.51 4.0 NaN 7-8 hours Moderate B.Tech No 7.0 1.0 No
+93798 234498 Eshita Female 23.0 Kalyan Working Professional Marketing Manager NaN 4.0 NaN NaN 2.0 5-6 hours Healthy BA Yes 7.0 5.0 Yes
+93799 234499 Gauri Female 43.0 Varanasi Working Professional Educational Consultant NaN 5.0 NaN NaN 2.0 More than 8 hours Healthy B.Ed No 11.0 2.0 No
+93800 rows × 19 columns
+In [42]:
+test_df.isnull().sum()
+Out[42]:
+id                                           0
+Name                                         0
+Gender                                       0
+Age                                          0
+City                                         0
+Working Professional or Student              0
+Profession                               24632
+Academic Pressure                        75033
+Work Pressure                            18778
+CGPA                                     75034
+Study Satisfaction                       75033
+Job Satisfaction                         18774
+Sleep Duration                               0
+Dietary Habits                               5
+Degree                                       2
+Have you ever had suicidal thoughts ?        0
+Work/Study Hours                             0
+Financial Stress                             0
+Family History of Mental Illness             0
+dtype: int64
+In [43]:
+test_df = test_df.drop(columns=['CGPA','Study Satisfaction'])
+In [44]:
+test_df.isnull().sum()
+Out[44]:
+id                                           0
+Name                                         0
+Gender                                       0
+Age                                          0
+City                                         0
+Working Professional or Student              0
+Profession                               24632
+Academic Pressure                        75033
+Work Pressure                            18778
+Job Satisfaction                         18774
+Sleep Duration                               0
+Dietary Habits                               5
+Degree                                       2
+Have you ever had suicidal thoughts ?        0
+Work/Study Hours                             0
+Financial Stress                             0
+Family History of Mental Illness             0
+dtype: int64
+In [45]:
+test_df.loc[test_df['Working Professional or Student'] == 'Working Professional', 'Academic Pressure'] = 0
+test_df.loc[test_df['Working Professional or Student'] == 'Student', 'Work Pressure'] = 0
+test_df.loc[test_df['Working Professional or Student'] == 'Student', 'Profession'] = 'Student'
+In [46]:
+professions = ['Content Writer', 'Architect', 'Consultant', 'HR Manager']
+null_rows = test_df[test_df['Profession'].isnull()]
+num_nulls = len(null_rows)
+random_professions = np.random.choice(professions, size=num_nulls)
+test_df.loc[test_df['Profession'].isnull(), 'Profession'] = random_professions
+In [47]:
+test_df.loc[(test_df['Profession'] == 'Student') & (test_df['Job Satisfaction'].isnull()), 'Job Satisfaction'] = 0
+In [48]:
+test_df.loc[test_df['Academic Pressure'].isnull(), 'Academic Pressure'] = 3.0
+test_df.loc[test_df['Work Pressure'].isnull(), 'Work Pressure'] = 3.0
+test_df.loc[test_df['Job Satisfaction'].isnull(), 'Job Satisfaction'] = 3.0
+test_df.loc[test_df['Degree'].isnull(), 'Degree'] = 'Class 12'
+test_df['Dietary Habits'] = test_df['Dietary Habits'].apply(map_dietary_habits)
+In [49]:
+test_df.isnull().sum()
+Out[49]:
+id                                       0
+Name                                     0
+Gender                                   0
+Age                                      0
+City                                     0
+Working Professional or Student          0
+Profession                               0
+Academic Pressure                        0
+Work Pressure                            0
+Job Satisfaction                         0
+Sleep Duration                           0
+Dietary Habits                           0
+Degree                                   0
+Have you ever had suicidal thoughts ?    0
+Work/Study Hours                         0
+Financial Stress                         0
+Family History of Mental Illness         0
+dtype: int64
+Univariant Analysis
+In [50]:
+train_df.info()
+<class 'pandas.core.frame.DataFrame'>
+Index: 140699 entries, 0 to 140699
+Data columns (total 18 columns):
+ #   Column                                 Non-Null Count   Dtype  
+---  ------                                 --------------   -----  
+ 0   id                                     140699 non-null  int64  
+ 1   Name                                   140699 non-null  object 
+ 2   Gender                                 140699 non-null  object 
+ 3   Age                                    140699 non-null  float64
+ 4   City                                   140699 non-null  object 
+ 5   Working Professional or Student        140699 non-null  object 
+ 6   Profession                             140699 non-null  object 
+ 7   Academic Pressure                      140699 non-null  float64
+ 8   Work Pressure                          140699 non-null  float64
+ 9   Job Satisfaction                       140699 non-null  float64
+ 10  Sleep Duration                         140699 non-null  object 
+ 11  Dietary Habits                         140699 non-null  object 
+ 12  Degree                                 140699 non-null  object 
+ 13  Have you ever had suicidal thoughts ?  140699 non-null  object 
+ 14  Work/Study Hours                       140699 non-null  float64
+ 15  Financial Stress                       140699 non-null  float64
+ 16  Family History of Mental Illness       140699 non-null  object 
+ 17  Depression                             140699 non-null  int64  
+dtypes: float64(6), int64(2), object(10)
+memory usage: 20.4+ MB
+In [51]:
+train_df.head()
+Out[51]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression
+0 0 Aaradhya Female 49.0 Ludhiana Working Professional Chef 0.0 5.0 2.0 More than 8 hours Healthy BHM No 1.0 2.0 No 0
+1 1 Vivan Male 26.0 Varanasi Working Professional Teacher 0.0 4.0 3.0 Less than 5 hours Unhealthy LLB Yes 7.0 3.0 No 1
+2 2 Yuvraj Male 33.0 Visakhapatnam Student Student 5.0 0.0 0.0 5-6 hours Healthy B.Pharm Yes 3.0 1.0 No 1
+3 3 Yuvraj Male 22.0 Mumbai Working Professional Teacher 0.0 5.0 1.0 Less than 5 hours Moderate BBA Yes 10.0 1.0 Yes 1
+4 4 Rhea Female 30.0 Kanpur Working Professional Business Analyst 0.0 1.0 1.0 5-6 hours Unhealthy BBA Yes 9.0 4.0 Yes 0
+In [52]:
+train_df.Gender.value_counts()
+Out[52]:
+Gender
+Male      77464
+Female    63235
+Name: count, dtype: int64
+In [53]:
+plt.figure(figsize=(8, 6))
+sns.barplot(x=train_df['Gender'].value_counts().index, 
+            y=train_df['Gender'].value_counts().values, 
+            palette='viridis') 
+plt.title("Gender")
+plt.xlabel('')
+plt.ylabel('Count')
+plt.show()
+In [54]:
+train_df['Age'].describe()
+Out[54]:
+count    140699.000000
+mean         40.388738
+std          12.384066
+min          18.000000
+25%          29.000000
+50%          42.000000
+75%          51.000000
+max          60.000000
+Name: Age, dtype: float64
+no outliers
+In [55]:
+plt.figure(figsize=(8, 5))
+plt.style.use('fivethirtyeight')
+sns.histplot(train_df['Age'], bins=15, kde=True)
+plt.title('Age')
+plt.xlabel('')
+plt.ylabel('Count')
+plt.show()
+/opt/conda/lib/python3.10/site-packages/seaborn/_oldcore.py:1119: FutureWarning: use_inf_as_na option is deprecated and will be removed in a future version. Convert inf values to NaN before operating instead.
+  with pd.option_context('mode.use_inf_as_na', True):
+In [56]:
+train_df['City'].value_counts().head(10)
+Out[56]:
+City
+Kalyan           6591
+Patna            5924
+Vasai-Virar      5765
+Kolkata          5689
+Ahmedabad        5613
+Meerut           5528
+Ludhiana         5226
+Pune             5210
+Rajkot           5207
+Visakhapatnam    5176
+Name: count, dtype: int64
+In [57]:
+plt.figure(figsize=(12, 8))
+sns.barplot(y=train_df['City'].value_counts().head(10).index, 
+            x=train_df['City'].value_counts().head(10).values, 
+            palette='viridis') 
+plt.title("Top 10 cities")
+plt.xlabel('City')
+plt.ylabel('Count')
+plt.show()
+In [58]:
+counts = train_df['Working Professional or Student'].value_counts()
+percentage = train_df['Working Professional or Student'].value_counts(normalize=True)*100
+freqTable = pd.DataFrame({'Frequency':counts,'Percent':percentage})
+freqTable
+Out[58]:
+Frequency Percent
+Working Professional or Student
+Working Professional 112798 80.169724
+Student 27901 19.830276
+In [ ]:
+ 
+ In [59]:
+plt.figure(figsize=(8, 4))
+sns.barplot(y=train_df['Profession'].value_counts().head().index, 
+            x=train_df['Profession'].value_counts().head().values, 
+            palette='viridis') 
+plt.title("Top 5 Profession")
+plt.xlabel('Profession')
+plt.ylabel('Count')
+plt.show()
+In [60]:
+train_df['Sleep Duration'].value_counts()
+Out[60]:
+Sleep Duration
+Less than 5 hours    38783
+7-8 hours            36969
+More than 8 hours    32726
+5-6 hours            32142
+3-4 hours               12
+6-7 hours                8
+4-5 hours                7
+2-3 hours                5
+4-6 hours                5
+6-8 hours                4
+1-6 hours                4
+No                       4
+9-11 hours               2
+10-11 hours              2
+Sleep_Duration           2
+Unhealthy                2
+45                       2
+8-9 hours                2
+10-6 hours               1
+9-5                      1
+45-48 hours              1
+3-6 hours                1
+Work_Study_Hours         1
+49 hours                 1
+than 5 hours             1
+Pune                     1
+9-6 hours                1
+8 hours                  1
+35-36 hours              1
+Indore                   1
+1-3 hours                1
+55-66 hours              1
+Moderate                 1
+40-45 hours              1
+1-2 hours                1
+9-5 hours                1
+Name: count, dtype: int64
+In [61]:
+train_df['Sleep Duration']
+Out[61]:
+0         More than 8 hours
+1         Less than 5 hours
+2                 5-6 hours
+3         Less than 5 hours
+4                 5-6 hours
+                ...        
+140695            5-6 hours
+140696            7-8 hours
+140697    More than 8 hours
+140698            5-6 hours
+140699    Less than 5 hours
+Name: Sleep Duration, Length: 140699, dtype: object
+Preprocessing
+In [62]:
+def extract_sleep_hours(value):
+    import re
+    match = re.findall(r'\d+', value)
+    if len(match) == 1:  
+        return float(match[0])
+    elif len(match) == 2:  
+        return (float(match[0]) + float(match[1])) / 2
+    else:
+        return None  
+
+
+train_df['Numeric Sleep Duration'] = train_df['Sleep Duration'].apply(extract_sleep_hours)
+test_df['Numeric Sleep Duration'] = test_df['Sleep Duration'].apply(extract_sleep_hours)
+In [63]:
+train_df['Numeric Sleep Duration'].value_counts()
+Out[63]:
+Numeric Sleep Duration
+5.0     38789
+7.5     36970
+8.0     32728
+5.5     32142
+3.5        16
+6.5         8
+4.5         8
+7.0         6
+2.5         5
+45.0        2
+10.0        2
+8.5         2
+10.5        2
+42.5        1
+60.5        1
+2.0         1
+1.5         1
+35.5        1
+49.0        1
+46.5        1
+Name: count, dtype: int64
+In [64]:
+train_df.info()
+<class 'pandas.core.frame.DataFrame'>
+Index: 140699 entries, 0 to 140699
+Data columns (total 19 columns):
+ #   Column                                 Non-Null Count   Dtype  
+---  ------                                 --------------   -----  
+ 0   id                                     140699 non-null  int64  
+ 1   Name                                   140699 non-null  object 
+ 2   Gender                                 140699 non-null  object 
+ 3   Age                                    140699 non-null  float64
+ 4   City                                   140699 non-null  object 
+ 5   Working Professional or Student        140699 non-null  object 
+ 6   Profession                             140699 non-null  object 
+ 7   Academic Pressure                      140699 non-null  float64
+ 8   Work Pressure                          140699 non-null  float64
+ 9   Job Satisfaction                       140699 non-null  float64
+ 10  Sleep Duration                         140699 non-null  object 
+ 11  Dietary Habits                         140699 non-null  object 
+ 12  Degree                                 140699 non-null  object 
+ 13  Have you ever had suicidal thoughts ?  140699 non-null  object 
+ 14  Work/Study Hours                       140699 non-null  float64
+ 15  Financial Stress                       140699 non-null  float64
+ 16  Family History of Mental Illness       140699 non-null  object 
+ 17  Depression                             140699 non-null  int64  
+ 18  Numeric Sleep Duration                 140687 non-null  float64
+dtypes: float64(7), int64(2), object(10)
+memory usage: 21.5+ MB
+In [65]:
+train_df['Dietary Habits'].value_counts()
+Out[65]:
+Dietary Habits
+Moderate     49717
+Unhealthy    46232
+Healthy      44750
+Name: count, dtype: int64
+In [66]:
+plt.figure(figsize=(8, 6))
+sns.barplot(x=train_df['Dietary Habits'].value_counts().index, 
+            y=train_df['Dietary Habits'].value_counts().values, 
+            palette='viridis') 
+plt.title("Dietary Habits")
+plt.xlabel('')
+plt.ylabel('Count')
+plt.show()
+In [67]:
+train_df
+Out[67]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Depression Numeric Sleep Duration
+0 0 Aaradhya Female 49.0 Ludhiana Working Professional Chef 0.0 5.0 2.0 More than 8 hours Healthy BHM No 1.0 2.0 No 0 8.0
+1 1 Vivan Male 26.0 Varanasi Working Professional Teacher 0.0 4.0 3.0 Less than 5 hours Unhealthy LLB Yes 7.0 3.0 No 1 5.0
+2 2 Yuvraj Male 33.0 Visakhapatnam Student Student 5.0 0.0 0.0 5-6 hours Healthy B.Pharm Yes 3.0 1.0 No 1 5.5
+3 3 Yuvraj Male 22.0 Mumbai Working Professional Teacher 0.0 5.0 1.0 Less than 5 hours Moderate BBA Yes 10.0 1.0 Yes 1 5.0
+4 4 Rhea Female 30.0 Kanpur Working Professional Business Analyst 0.0 1.0 1.0 5-6 hours Unhealthy BBA Yes 9.0 4.0 Yes 0 5.5
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+140695 140695 Vidya Female 18.0 Ahmedabad Working Professional Content Writer 0.0 5.0 4.0 5-6 hours Unhealthy Class 12 No 2.0 4.0 Yes 1 5.5
+140696 140696 Lata Female 41.0 Hyderabad Working Professional Content Writer 0.0 5.0 4.0 7-8 hours Moderate B.Tech Yes 6.0 5.0 Yes 0 7.5
+140697 140697 Aanchal Female 24.0 Kolkata Working Professional Marketing Manager 0.0 3.0 1.0 More than 8 hours Moderate B.Com No 4.0 4.0 No 0 8.0
+140698 140698 Prachi Female 49.0 Srinagar Working Professional Plumber 0.0 5.0 2.0 5-6 hours Moderate ME Yes 10.0 1.0 No 0 5.5
+140699 140699 Sai Male 27.0 Patna Student Student 4.0 0.0 0.0 Less than 5 hours Healthy BCA Yes 2.0 3.0 Yes 1 5.0
+140699 rows × 19 columns
+Encoding
+In [68]:
+categorical_cols = train_df.drop(columns=['id','Name','Age','Academic Pressure','Work Pressure','Job Satisfaction','Sleep Duration','Work/Study Hours','Financial Stress','Depression','Numeric Sleep Duration'])
+
+categorical_cols.head()
+Out[68]:
+Gender City Working Professional or Student Profession Dietary Habits Degree Have you ever had suicidal thoughts ? Family History of Mental Illness
+0 Female Ludhiana Working Professional Chef Healthy BHM No No
+1 Male Varanasi Working Professional Teacher Unhealthy LLB Yes No
+2 Male Visakhapatnam Student Student Healthy B.Pharm Yes No
+3 Male Mumbai Working Professional Teacher Moderate BBA Yes Yes
+4 Female Kanpur Working Professional Business Analyst Unhealthy BBA Yes Yes
+In [69]:
+label_encoder = LabelEncoder()
+
+for col in categorical_cols:
+
+    train_df[col] = label_encoder.fit_transform(train_df[col])
+    test_df[col] = label_encoder.fit_transform(test_df[col])
+Data Splitting
+In [70]:
+X = train_df.drop(columns=['id','Name','Sleep Duration','Depression']) 
+y = train_df['Depression']
+In [71]:
+x_train, x_valid, y_train, y_valid = train_test_split(
+    X, y, test_size=0.2, shuffle=True, random_state=42
+)
+In [72]:
+print(f"x_train: {x_train.shape}, y_train: {len(y_train)}")
+print(f"x_valid: {x_valid.shape}, y_valid: {len(y_valid)}")
+x_train: (112559, 15), y_train: 112559
+x_valid: (28140, 15), y_valid: 28140
+Get Best parameters
+In [73]:
+# import optuna
+# def objective(trial):
+#     params = {
+#         'learning_rate': trial.suggest_loguniform('learning_rate', 0.01, 0.1),
+#         'depth': trial.suggest_int('depth', 4, 10),
+#         'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 10),
+#         'iterations': trial.suggest_int('iterations', 100, 500),
+#         'subsample': trial.suggest_float('subsample', 0.8, 1.0),
+#         'colsample_bylevel': trial.suggest_float('colsample_bylevel', 0.8, 1.0),
+#         'random_state': 57,
+#         'silent': True
+#     }
+
+   
+#     model = CatBoostClassifier(**params)
+#     model.fit(x_train, y_train, eval_set=(x_valid, y_valid), early_stopping_rounds=50, verbose=False)
+#     preds = model.predict(x_valid)
+#     return accuracy_score(y_valid, preds)
+
+
+# study = optuna.create_study(direction='maximize')
+# study.optimize(objective, n_trials=50)
+
+
+# print("Best Parameters:", study.best_params)
+# print("Best Score:", study.best_value)
+ML Model
+In [74]:
+model = CatBoostClassifier(iterations= 545,learning_rate= 0.09928248945425253,colsample_bylevel= 0.8829334721878778,subsample= 0.5547932441628254,min_data_in_leaf= 2,depth= 5,l2_leaf_reg= 18.745159259296127,random_strength= 0.6562407394010031)
+model.fit(x_train,y_train)
+0: learn: 0.5416229 total: 73.2ms remaining: 39.8s
+1: learn: 0.4348711 total: 86.5ms remaining: 23.5s
+2: learn: 0.3677204 total: 100ms remaining: 18.1s
+3: learn: 0.3203307 total: 115ms remaining: 15.6s
+4: learn: 0.2887219 total: 129ms remaining: 14s
+5: learn: 0.2667173 total: 144ms remaining: 12.9s
+6: learn: 0.2441929 total: 158ms remaining: 12.2s
+7: learn: 0.2300222 total: 171ms remaining: 11.5s
+8: learn: 0.2181904 total: 185ms remaining: 11s
+9: learn: 0.2105051 total: 198ms remaining: 10.6s
+10: learn: 0.2050116 total: 211ms remaining: 10.3s
+11: learn: 0.1996441 total: 225ms remaining: 9.98s
+12: learn: 0.1936292 total: 238ms remaining: 9.74s
+13: learn: 0.1904076 total: 252ms remaining: 9.55s
+14: learn: 0.1867601 total: 265ms remaining: 9.38s
+15: learn: 0.1840172 total: 280ms remaining: 9.26s
+16: learn: 0.1805812 total: 294ms remaining: 9.12s
+17: learn: 0.1787417 total: 307ms remaining: 8.99s
+18: learn: 0.1771625 total: 322ms remaining: 8.9s
+19: learn: 0.1748278 total: 335ms remaining: 8.79s
+20: learn: 0.1731436 total: 349ms remaining: 8.71s
+21: learn: 0.1719721 total: 362ms remaining: 8.61s
+22: learn: 0.1706889 total: 376ms remaining: 8.53s
+23: learn: 0.1695896 total: 390ms remaining: 8.46s
+24: learn: 0.1687909 total: 402ms remaining: 8.37s
+25: learn: 0.1680540 total: 415ms remaining: 8.29s
+26: learn: 0.1668425 total: 429ms remaining: 8.24s
+27: learn: 0.1660649 total: 443ms remaining: 8.18s
+28: learn: 0.1655096 total: 459ms remaining: 8.17s
+29: learn: 0.1647520 total: 474ms remaining: 8.13s
+30: learn: 0.1638875 total: 490ms remaining: 8.12s
+31: learn: 0.1632977 total: 503ms remaining: 8.07s
+32: learn: 0.1628527 total: 517ms remaining: 8.01s
+33: learn: 0.1621311 total: 530ms remaining: 7.97s
+34: learn: 0.1615783 total: 544ms remaining: 7.92s
+35: learn: 0.1611954 total: 556ms remaining: 7.86s
+36: learn: 0.1608502 total: 570ms remaining: 7.82s
+37: learn: 0.1605570 total: 582ms remaining: 7.76s
+38: learn: 0.1600726 total: 596ms remaining: 7.73s
+39: learn: 0.1597044 total: 608ms remaining: 7.68s
+40: learn: 0.1592301 total: 624ms remaining: 7.67s
+41: learn: 0.1589601 total: 638ms remaining: 7.64s
+42: learn: 0.1586411 total: 653ms remaining: 7.62s
+43: learn: 0.1583745 total: 665ms remaining: 7.58s
+44: learn: 0.1580622 total: 678ms remaining: 7.53s
+45: learn: 0.1578339 total: 693ms remaining: 7.51s
+46: learn: 0.1576244 total: 707ms remaining: 7.49s
+47: learn: 0.1573903 total: 721ms remaining: 7.46s
+48: learn: 0.1571520 total: 735ms remaining: 7.44s
+49: learn: 0.1568993 total: 748ms remaining: 7.41s
+50: learn: 0.1567564 total: 761ms remaining: 7.37s
+51: learn: 0.1565889 total: 776ms remaining: 7.35s
+52: learn: 0.1563607 total: 789ms remaining: 7.32s
+53: learn: 0.1562238 total: 802ms remaining: 7.29s
+54: learn: 0.1559149 total: 815ms remaining: 7.26s
+55: learn: 0.1555973 total: 827ms remaining: 7.22s
+56: learn: 0.1554922 total: 841ms remaining: 7.2s
+57: learn: 0.1553400 total: 854ms remaining: 7.17s
+58: learn: 0.1552420 total: 867ms remaining: 7.14s
+59: learn: 0.1551116 total: 879ms remaining: 7.11s
+60: learn: 0.1549898 total: 892ms remaining: 7.08s
+61: learn: 0.1548636 total: 906ms remaining: 7.05s
+62: learn: 0.1546841 total: 919ms remaining: 7.03s
+63: learn: 0.1545412 total: 932ms remaining: 7s
+64: learn: 0.1544458 total: 945ms remaining: 6.98s
+65: learn: 0.1543409 total: 958ms remaining: 6.95s
+66: learn: 0.1542298 total: 970ms remaining: 6.92s
+67: learn: 0.1541417 total: 983ms remaining: 6.89s
+68: learn: 0.1540598 total: 996ms remaining: 6.87s
+69: learn: 0.1539079 total: 1.01s remaining: 6.84s
+70: learn: 0.1538365 total: 1.02s remaining: 6.82s
+71: learn: 0.1537532 total: 1.03s remaining: 6.8s
+72: learn: 0.1536608 total: 1.05s remaining: 6.78s
+73: learn: 0.1535824 total: 1.06s remaining: 6.76s
+74: learn: 0.1534959 total: 1.07s remaining: 6.73s
+75: learn: 0.1533595 total: 1.09s remaining: 6.71s
+76: learn: 0.1532940 total: 1.1s remaining: 6.7s
+77: learn: 0.1531687 total: 1.11s remaining: 6.68s
+78: learn: 0.1531024 total: 1.13s remaining: 6.66s
+79: learn: 0.1530380 total: 1.14s remaining: 6.64s
+80: learn: 0.1529691 total: 1.16s remaining: 6.62s
+81: learn: 0.1528876 total: 1.17s remaining: 6.6s
+82: learn: 0.1528371 total: 1.18s remaining: 6.58s
+83: learn: 0.1527337 total: 1.2s remaining: 6.56s
+84: learn: 0.1526646 total: 1.21s remaining: 6.54s
+85: learn: 0.1525949 total: 1.22s remaining: 6.53s
+86: learn: 0.1525072 total: 1.24s remaining: 6.51s
+87: learn: 0.1524531 total: 1.25s remaining: 6.5s
+88: learn: 0.1524024 total: 1.26s remaining: 6.48s
+89: learn: 0.1523403 total: 1.28s remaining: 6.46s
+90: learn: 0.1522496 total: 1.29s remaining: 6.44s
+91: learn: 0.1521930 total: 1.31s remaining: 6.45s
+92: learn: 0.1521066 total: 1.32s remaining: 6.43s
+93: learn: 0.1520562 total: 1.33s remaining: 6.41s
+94: learn: 0.1519744 total: 1.35s remaining: 6.39s
+95: learn: 0.1519135 total: 1.36s remaining: 6.37s
+96: learn: 0.1518729 total: 1.38s remaining: 6.35s
+97: learn: 0.1517809 total: 1.39s remaining: 6.34s
+98: learn: 0.1517296 total: 1.41s remaining: 6.34s
+99: learn: 0.1516898 total: 1.42s remaining: 6.33s
+100: learn: 0.1516371 total: 1.44s remaining: 6.34s
+101: learn: 0.1515798 total: 1.47s remaining: 6.37s
+102: learn: 0.1515027 total: 1.49s remaining: 6.38s
+103: learn: 0.1514635 total: 1.51s remaining: 6.4s
+104: learn: 0.1514079 total: 1.53s remaining: 6.42s
+105: learn: 0.1513312 total: 1.55s remaining: 6.43s
+106: learn: 0.1512245 total: 1.57s remaining: 6.44s
+107: learn: 0.1511833 total: 1.59s remaining: 6.44s
+108: learn: 0.1511512 total: 1.61s remaining: 6.44s
+109: learn: 0.1510897 total: 1.63s remaining: 6.44s
+110: learn: 0.1510416 total: 1.65s remaining: 6.44s
+111: learn: 0.1510016 total: 1.67s remaining: 6.44s
+112: learn: 0.1510002 total: 1.68s remaining: 6.44s
+113: learn: 0.1509630 total: 1.7s remaining: 6.44s
+114: learn: 0.1509070 total: 1.72s remaining: 6.43s
+115: learn: 0.1508695 total: 1.75s remaining: 6.46s
+116: learn: 0.1508078 total: 1.77s remaining: 6.46s
+117: learn: 0.1507522 total: 1.79s remaining: 6.46s
+118: learn: 0.1507105 total: 1.8s remaining: 6.46s
+119: learn: 0.1506690 total: 1.82s remaining: 6.46s
+120: learn: 0.1506210 total: 1.84s remaining: 6.46s
+121: learn: 0.1505733 total: 1.86s remaining: 6.45s
+122: learn: 0.1505071 total: 1.88s remaining: 6.45s
+123: learn: 0.1504626 total: 1.9s remaining: 6.44s
+124: learn: 0.1504252 total: 1.91s remaining: 6.43s
+125: learn: 0.1504243 total: 1.93s remaining: 6.43s
+126: learn: 0.1504237 total: 1.95s remaining: 6.43s
+127: learn: 0.1504230 total: 1.97s remaining: 6.42s
+128: learn: 0.1504228 total: 1.99s remaining: 6.41s
+129: learn: 0.1504215 total: 2s remaining: 6.4s
+130: learn: 0.1504156 total: 2.02s remaining: 6.4s
+131: learn: 0.1503796 total: 2.05s remaining: 6.41s
+132: learn: 0.1503295 total: 2.08s remaining: 6.43s
+133: learn: 0.1503288 total: 2.09s remaining: 6.42s
+134: learn: 0.1502601 total: 2.11s remaining: 6.41s
+135: learn: 0.1502327 total: 2.13s remaining: 6.4s
+136: learn: 0.1501991 total: 2.15s remaining: 6.39s
+137: learn: 0.1501454 total: 2.17s remaining: 6.4s
+138: learn: 0.1501403 total: 2.19s remaining: 6.39s
+139: learn: 0.1501324 total: 2.22s remaining: 6.41s
+140: learn: 0.1501314 total: 2.23s remaining: 6.4s
+141: learn: 0.1501306 total: 2.25s remaining: 6.39s
+142: learn: 0.1501297 total: 2.27s remaining: 6.38s
+143: learn: 0.1500851 total: 2.29s remaining: 6.36s
+144: learn: 0.1500850 total: 2.3s remaining: 6.34s
+145: learn: 0.1500525 total: 2.32s remaining: 6.33s
+146: learn: 0.1500037 total: 2.34s remaining: 6.33s
+147: learn: 0.1499507 total: 2.35s remaining: 6.32s
+148: learn: 0.1499032 total: 2.38s remaining: 6.31s
+149: learn: 0.1498757 total: 2.39s remaining: 6.3s
+150: learn: 0.1498339 total: 2.41s remaining: 6.29s
+151: learn: 0.1498183 total: 2.43s remaining: 6.28s
+152: learn: 0.1498048 total: 2.45s remaining: 6.28s
+153: learn: 0.1497560 total: 2.47s remaining: 6.27s
+154: learn: 0.1497128 total: 2.49s remaining: 6.26s
+155: learn: 0.1496634 total: 2.51s remaining: 6.25s
+156: learn: 0.1496071 total: 2.52s remaining: 6.24s
+157: learn: 0.1495611 total: 2.54s remaining: 6.23s
+158: learn: 0.1495204 total: 2.56s remaining: 6.22s
+159: learn: 0.1494800 total: 2.58s remaining: 6.21s
+160: learn: 0.1494625 total: 2.6s remaining: 6.21s
+161: learn: 0.1494313 total: 2.62s remaining: 6.2s
+162: learn: 0.1494313 total: 2.63s remaining: 6.18s
+163: learn: 0.1494311 total: 2.65s remaining: 6.17s
+164: learn: 0.1494308 total: 2.67s remaining: 6.15s
+165: learn: 0.1494305 total: 2.69s remaining: 6.14s
+166: learn: 0.1494304 total: 2.7s remaining: 6.12s
+167: learn: 0.1494301 total: 2.72s remaining: 6.11s
+168: learn: 0.1494300 total: 2.73s remaining: 6.08s
+169: learn: 0.1494238 total: 2.75s remaining: 6.07s
+170: learn: 0.1494234 total: 2.77s remaining: 6.06s
+171: learn: 0.1494233 total: 2.79s remaining: 6.05s
+172: learn: 0.1494223 total: 2.81s remaining: 6.04s
+173: learn: 0.1494217 total: 2.82s remaining: 6.02s
+174: learn: 0.1493901 total: 2.84s remaining: 6.01s
+175: learn: 0.1493569 total: 2.86s remaining: 5.99s
+176: learn: 0.1493141 total: 2.88s remaining: 5.98s
+177: learn: 0.1492812 total: 2.89s remaining: 5.97s
+178: learn: 0.1492434 total: 2.91s remaining: 5.96s
+179: learn: 0.1491875 total: 2.93s remaining: 5.94s
+180: learn: 0.1491869 total: 2.95s remaining: 5.93s
+181: learn: 0.1491399 total: 2.96s remaining: 5.91s
+182: learn: 0.1491162 total: 2.98s remaining: 5.9s
+183: learn: 0.1491158 total: 3s remaining: 5.88s
+184: learn: 0.1491158 total: 3.01s remaining: 5.86s
+185: learn: 0.1491158 total: 3.03s remaining: 5.85s
+186: learn: 0.1491055 total: 3.05s remaining: 5.83s
+187: learn: 0.1491047 total: 3.06s remaining: 5.82s
+188: learn: 0.1491045 total: 3.08s remaining: 5.81s
+189: learn: 0.1491045 total: 3.1s remaining: 5.79s
+190: learn: 0.1490731 total: 3.12s remaining: 5.78s
+191: learn: 0.1490730 total: 3.13s remaining: 5.76s
+192: learn: 0.1490513 total: 3.15s remaining: 5.75s
+193: learn: 0.1489941 total: 3.17s remaining: 5.73s
+194: learn: 0.1489627 total: 3.19s remaining: 5.72s
+195: learn: 0.1489619 total: 3.21s remaining: 5.71s
+196: learn: 0.1489425 total: 3.22s remaining: 5.69s
+197: learn: 0.1489423 total: 3.24s remaining: 5.68s
+198: learn: 0.1489416 total: 3.26s remaining: 5.66s
+199: learn: 0.1489413 total: 3.27s remaining: 5.65s
+200: learn: 0.1489406 total: 3.29s remaining: 5.63s
+201: learn: 0.1488972 total: 3.31s remaining: 5.62s
+202: learn: 0.1488696 total: 3.33s remaining: 5.61s
+203: learn: 0.1488692 total: 3.34s remaining: 5.59s
+204: learn: 0.1488290 total: 3.36s remaining: 5.58s
+205: learn: 0.1487876 total: 3.38s remaining: 5.56s
+206: learn: 0.1487874 total: 3.4s remaining: 5.55s
+207: learn: 0.1487824 total: 3.42s remaining: 5.53s
+208: learn: 0.1487602 total: 3.44s remaining: 5.53s
+209: learn: 0.1487264 total: 3.45s remaining: 5.51s
+210: learn: 0.1487258 total: 3.47s remaining: 5.5s
+211: learn: 0.1486818 total: 3.49s remaining: 5.48s
+212: learn: 0.1486491 total: 3.51s remaining: 5.47s
+213: learn: 0.1486487 total: 3.52s remaining: 5.45s
+214: learn: 0.1486404 total: 3.54s remaining: 5.44s
+215: learn: 0.1486096 total: 3.56s remaining: 5.42s
+216: learn: 0.1486096 total: 3.57s remaining: 5.4s
+217: learn: 0.1485925 total: 3.59s remaining: 5.39s
+218: learn: 0.1485593 total: 3.61s remaining: 5.38s
+219: learn: 0.1485588 total: 3.63s remaining: 5.36s
+220: learn: 0.1485583 total: 3.64s remaining: 5.34s
+221: learn: 0.1485583 total: 3.65s remaining: 5.32s
+222: learn: 0.1485583 total: 3.66s remaining: 5.29s
+223: learn: 0.1485203 total: 3.68s remaining: 5.27s
+224: learn: 0.1485203 total: 3.69s remaining: 5.24s
+225: learn: 0.1485196 total: 3.7s remaining: 5.22s
+226: learn: 0.1485193 total: 3.71s remaining: 5.2s
+227: learn: 0.1484840 total: 3.73s remaining: 5.18s
+228: learn: 0.1484835 total: 3.74s remaining: 5.16s
+229: learn: 0.1484326 total: 3.75s remaining: 5.14s
+230: learn: 0.1484323 total: 3.76s remaining: 5.12s
+231: learn: 0.1483963 total: 3.77s remaining: 5.09s
+232: learn: 0.1483616 total: 3.79s remaining: 5.07s
+233: learn: 0.1483616 total: 3.8s remaining: 5.05s
+234: learn: 0.1483418 total: 3.81s remaining: 5.03s
+235: learn: 0.1483073 total: 3.83s remaining: 5.01s
+236: learn: 0.1483072 total: 3.84s remaining: 4.99s
+237: learn: 0.1482655 total: 3.85s remaining: 4.96s
+238: learn: 0.1482412 total: 3.86s remaining: 4.94s
+239: learn: 0.1482110 total: 3.88s remaining: 4.92s
+240: learn: 0.1481662 total: 3.89s remaining: 4.9s
+241: learn: 0.1481112 total: 3.9s remaining: 4.88s
+242: learn: 0.1480740 total: 3.91s remaining: 4.87s
+243: learn: 0.1480484 total: 3.93s remaining: 4.84s
+244: learn: 0.1480481 total: 3.94s remaining: 4.82s
+245: learn: 0.1480479 total: 3.95s remaining: 4.8s
+246: learn: 0.1480255 total: 3.96s remaining: 4.78s
+247: learn: 0.1480255 total: 3.98s remaining: 4.76s
+248: learn: 0.1480255 total: 3.98s remaining: 4.74s
+249: learn: 0.1480255 total: 4s remaining: 4.71s
+250: learn: 0.1480170 total: 4.01s remaining: 4.7s
+251: learn: 0.1479866 total: 4.02s remaining: 4.68s
+252: learn: 0.1479862 total: 4.03s remaining: 4.66s
+253: learn: 0.1479859 total: 4.05s remaining: 4.63s
+254: learn: 0.1479496 total: 4.06s remaining: 4.62s
+255: learn: 0.1479284 total: 4.08s remaining: 4.6s
+256: learn: 0.1479126 total: 4.09s remaining: 4.58s
+257: learn: 0.1479123 total: 4.1s remaining: 4.56s
+258: learn: 0.1479118 total: 4.11s remaining: 4.54s
+259: learn: 0.1478706 total: 4.13s remaining: 4.52s
+260: learn: 0.1478470 total: 4.14s remaining: 4.5s
+261: learn: 0.1478143 total: 4.15s remaining: 4.49s
+262: learn: 0.1477762 total: 4.17s remaining: 4.47s
+263: learn: 0.1477469 total: 4.18s remaining: 4.45s
+264: learn: 0.1477122 total: 4.19s remaining: 4.43s
+265: learn: 0.1476716 total: 4.21s remaining: 4.41s
+266: learn: 0.1476716 total: 4.22s remaining: 4.39s
+267: learn: 0.1476533 total: 4.23s remaining: 4.37s
+268: learn: 0.1476232 total: 4.25s remaining: 4.36s
+269: learn: 0.1476229 total: 4.26s remaining: 4.34s
+270: learn: 0.1475947 total: 4.27s remaining: 4.32s
+271: learn: 0.1475599 total: 4.29s remaining: 4.3s
+272: learn: 0.1475285 total: 4.3s remaining: 4.28s
+273: learn: 0.1475284 total: 4.31s remaining: 4.26s
+274: learn: 0.1475160 total: 4.32s remaining: 4.24s
+275: learn: 0.1474853 total: 4.34s remaining: 4.23s
+276: learn: 0.1474561 total: 4.35s remaining: 4.21s
+277: learn: 0.1474149 total: 4.36s remaining: 4.19s
+278: learn: 0.1473713 total: 4.38s remaining: 4.17s
+279: learn: 0.1473711 total: 4.39s remaining: 4.16s
+280: learn: 0.1473413 total: 4.4s remaining: 4.14s
+281: learn: 0.1473413 total: 4.41s remaining: 4.12s
+282: learn: 0.1473338 total: 4.43s remaining: 4.1s
+283: learn: 0.1473278 total: 4.44s remaining: 4.08s
+284: learn: 0.1473277 total: 4.45s remaining: 4.06s
+285: learn: 0.1473273 total: 4.47s remaining: 4.04s
+286: learn: 0.1473011 total: 4.48s remaining: 4.03s
+287: learn: 0.1473006 total: 4.49s remaining: 4.01s
+288: learn: 0.1472958 total: 4.51s remaining: 3.99s
+289: learn: 0.1472952 total: 4.52s remaining: 3.97s
+290: learn: 0.1472852 total: 4.53s remaining: 3.96s
+291: learn: 0.1472852 total: 4.54s remaining: 3.94s
+292: learn: 0.1472852 total: 4.55s remaining: 3.92s
+293: learn: 0.1472657 total: 4.57s remaining: 3.9s
+294: learn: 0.1472654 total: 4.58s remaining: 3.88s
+295: learn: 0.1472355 total: 4.59s remaining: 3.86s
+296: learn: 0.1472113 total: 4.61s remaining: 3.85s
+297: learn: 0.1472111 total: 4.62s remaining: 3.83s
+298: learn: 0.1471844 total: 4.63s remaining: 3.81s
+299: learn: 0.1471603 total: 4.65s remaining: 3.79s
+300: learn: 0.1471600 total: 4.66s remaining: 3.78s
+301: learn: 0.1471308 total: 4.67s remaining: 3.76s
+302: learn: 0.1470924 total: 4.69s remaining: 3.74s
+303: learn: 0.1470923 total: 4.7s remaining: 3.72s
+304: learn: 0.1470921 total: 4.71s remaining: 3.71s
+305: learn: 0.1470622 total: 4.72s remaining: 3.69s
+306: learn: 0.1470308 total: 4.74s remaining: 3.67s
+307: learn: 0.1470302 total: 4.75s remaining: 3.66s
+308: learn: 0.1469997 total: 4.77s remaining: 3.64s
+309: learn: 0.1469765 total: 4.78s remaining: 3.62s
+310: learn: 0.1469429 total: 4.79s remaining: 3.61s
+311: learn: 0.1469300 total: 4.8s remaining: 3.59s
+312: learn: 0.1469195 total: 4.82s remaining: 3.57s
+313: learn: 0.1469193 total: 4.83s remaining: 3.55s
+314: learn: 0.1469022 total: 4.84s remaining: 3.54s
+315: learn: 0.1469017 total: 4.86s remaining: 3.52s
+316: learn: 0.1469013 total: 4.87s remaining: 3.5s
+317: learn: 0.1468781 total: 4.88s remaining: 3.49s
+318: learn: 0.1468742 total: 4.9s remaining: 3.47s
+319: learn: 0.1468741 total: 4.91s remaining: 3.45s
+320: learn: 0.1468207 total: 4.92s remaining: 3.44s
+321: learn: 0.1467961 total: 4.94s remaining: 3.42s
+322: learn: 0.1467582 total: 4.95s remaining: 3.4s
+323: learn: 0.1467359 total: 4.96s remaining: 3.38s
+324: learn: 0.1467161 total: 4.97s remaining: 3.37s
+325: learn: 0.1467161 total: 4.99s remaining: 3.35s
+326: learn: 0.1466907 total: 5s remaining: 3.33s
+327: learn: 0.1466541 total: 5.01s remaining: 3.32s
+328: learn: 0.1466541 total: 5.02s remaining: 3.3s
+329: learn: 0.1466352 total: 5.04s remaining: 3.28s
+330: learn: 0.1466148 total: 5.05s remaining: 3.26s
+331: learn: 0.1465862 total: 5.06s remaining: 3.25s
+332: learn: 0.1465856 total: 5.08s remaining: 3.23s
+333: learn: 0.1465688 total: 5.09s remaining: 3.21s
+334: learn: 0.1465581 total: 5.1s remaining: 3.2s
+335: learn: 0.1465577 total: 5.11s remaining: 3.18s
+336: learn: 0.1465272 total: 5.13s remaining: 3.16s
+337: learn: 0.1465272 total: 5.13s remaining: 3.15s
+338: learn: 0.1465083 total: 5.15s remaining: 3.13s
+339: learn: 0.1465082 total: 5.16s remaining: 3.11s
+340: learn: 0.1464795 total: 5.18s remaining: 3.1s
+341: learn: 0.1464791 total: 5.19s remaining: 3.08s
+342: learn: 0.1464540 total: 5.2s remaining: 3.06s
+343: learn: 0.1464205 total: 5.22s remaining: 3.05s
+344: learn: 0.1464205 total: 5.23s remaining: 3.03s
+345: learn: 0.1463867 total: 5.24s remaining: 3.01s
+346: learn: 0.1463546 total: 5.25s remaining: 3s
+347: learn: 0.1463544 total: 5.27s remaining: 2.98s
+348: learn: 0.1463344 total: 5.28s remaining: 2.97s
+349: learn: 0.1463324 total: 5.29s remaining: 2.95s
+350: learn: 0.1463072 total: 5.31s remaining: 2.93s
+351: learn: 0.1463071 total: 5.32s remaining: 2.92s
+352: learn: 0.1463069 total: 5.33s remaining: 2.9s
+353: learn: 0.1462832 total: 5.34s remaining: 2.88s
+354: learn: 0.1462748 total: 5.36s remaining: 2.87s
+355: learn: 0.1462386 total: 5.37s remaining: 2.85s
+356: learn: 0.1462219 total: 5.38s remaining: 2.83s
+357: learn: 0.1461913 total: 5.4s remaining: 2.82s
+358: learn: 0.1461447 total: 5.41s remaining: 2.8s
+359: learn: 0.1461444 total: 5.43s remaining: 2.79s
+360: learn: 0.1461369 total: 5.44s remaining: 2.77s
+361: learn: 0.1461135 total: 5.45s remaining: 2.76s
+362: learn: 0.1461135 total: 5.46s remaining: 2.74s
+363: learn: 0.1460919 total: 5.48s remaining: 2.72s
+364: learn: 0.1460919 total: 5.49s remaining: 2.71s
+365: learn: 0.1460618 total: 5.5s remaining: 2.69s
+366: learn: 0.1460613 total: 5.51s remaining: 2.67s
+367: learn: 0.1460356 total: 5.53s remaining: 2.66s
+368: learn: 0.1460355 total: 5.54s remaining: 2.64s
+369: learn: 0.1460243 total: 5.55s remaining: 2.63s
+370: learn: 0.1460088 total: 5.57s remaining: 2.61s
+371: learn: 0.1460087 total: 5.58s remaining: 2.59s
+372: learn: 0.1460087 total: 5.59s remaining: 2.58s
+373: learn: 0.1460087 total: 5.6s remaining: 2.56s
+374: learn: 0.1460087 total: 5.61s remaining: 2.54s
+375: learn: 0.1460086 total: 5.62s remaining: 2.53s
+376: learn: 0.1459955 total: 5.64s remaining: 2.51s
+377: learn: 0.1459718 total: 5.65s remaining: 2.5s
+378: learn: 0.1459320 total: 5.66s remaining: 2.48s
+379: learn: 0.1459122 total: 5.68s remaining: 2.47s
+380: learn: 0.1459122 total: 5.69s remaining: 2.45s
+381: learn: 0.1459121 total: 5.7s remaining: 2.43s
+382: learn: 0.1458971 total: 5.72s remaining: 2.42s
+383: learn: 0.1458970 total: 5.73s remaining: 2.4s
+384: learn: 0.1458968 total: 5.74s remaining: 2.38s
+385: learn: 0.1458962 total: 5.75s remaining: 2.37s
+386: learn: 0.1458689 total: 5.76s remaining: 2.35s
+387: learn: 0.1458689 total: 5.78s remaining: 2.34s
+388: learn: 0.1458689 total: 5.79s remaining: 2.32s
+389: learn: 0.1458544 total: 5.8s remaining: 2.3s
+390: learn: 0.1458330 total: 5.81s remaining: 2.29s
+391: learn: 0.1457931 total: 5.83s remaining: 2.27s
+392: learn: 0.1457580 total: 5.84s remaining: 2.26s
+393: learn: 0.1457580 total: 5.85s remaining: 2.24s
+394: learn: 0.1457444 total: 5.86s remaining: 2.23s
+395: learn: 0.1457443 total: 5.87s remaining: 2.21s
+396: learn: 0.1457441 total: 5.89s remaining: 2.19s
+397: learn: 0.1457439 total: 5.9s remaining: 2.18s
+398: learn: 0.1457305 total: 5.92s remaining: 2.16s
+399: learn: 0.1457305 total: 5.92s remaining: 2.15s
+400: learn: 0.1457305 total: 5.93s remaining: 2.13s
+401: learn: 0.1457302 total: 5.95s remaining: 2.12s
+402: learn: 0.1457190 total: 5.96s remaining: 2.1s
+403: learn: 0.1457189 total: 5.97s remaining: 2.08s
+404: learn: 0.1457187 total: 5.99s remaining: 2.07s
+405: learn: 0.1457172 total: 6s remaining: 2.05s
+406: learn: 0.1456801 total: 6.01s remaining: 2.04s
+407: learn: 0.1456731 total: 6.03s remaining: 2.02s
+408: learn: 0.1456468 total: 6.04s remaining: 2.01s
+409: learn: 0.1456468 total: 6.05s remaining: 1.99s
+410: learn: 0.1456313 total: 6.06s remaining: 1.98s
+411: learn: 0.1456313 total: 6.07s remaining: 1.96s
+412: learn: 0.1456053 total: 6.08s remaining: 1.94s
+413: learn: 0.1456052 total: 6.09s remaining: 1.93s
+414: learn: 0.1455799 total: 6.11s remaining: 1.91s
+415: learn: 0.1455799 total: 6.12s remaining: 1.9s
+416: learn: 0.1455632 total: 6.13s remaining: 1.88s
+417: learn: 0.1455413 total: 6.14s remaining: 1.87s
+418: learn: 0.1455109 total: 6.16s remaining: 1.85s
+419: learn: 0.1455109 total: 6.17s remaining: 1.84s
+420: learn: 0.1454876 total: 6.18s remaining: 1.82s
+421: learn: 0.1454615 total: 6.2s remaining: 1.8s
+422: learn: 0.1454474 total: 6.21s remaining: 1.79s
+423: learn: 0.1454472 total: 6.22s remaining: 1.77s
+424: learn: 0.1454255 total: 6.23s remaining: 1.76s
+425: learn: 0.1454251 total: 6.25s remaining: 1.75s
+426: learn: 0.1454249 total: 6.26s remaining: 1.73s
+427: learn: 0.1453970 total: 6.27s remaining: 1.71s
+428: learn: 0.1453688 total: 6.29s remaining: 1.7s
+429: learn: 0.1453399 total: 6.3s remaining: 1.69s
+430: learn: 0.1453095 total: 6.32s remaining: 1.67s
+431: learn: 0.1453094 total: 6.33s remaining: 1.65s
+432: learn: 0.1453092 total: 6.34s remaining: 1.64s
+433: learn: 0.1452858 total: 6.36s remaining: 1.63s
+434: learn: 0.1452776 total: 6.37s remaining: 1.61s
+435: learn: 0.1452513 total: 6.38s remaining: 1.59s
+436: learn: 0.1452355 total: 6.4s remaining: 1.58s
+437: learn: 0.1452351 total: 6.41s remaining: 1.57s
+438: learn: 0.1452085 total: 6.42s remaining: 1.55s
+439: learn: 0.1452085 total: 6.44s remaining: 1.53s
+440: learn: 0.1452084 total: 6.45s remaining: 1.52s
+441: learn: 0.1451997 total: 6.46s remaining: 1.5s
+442: learn: 0.1451798 total: 6.47s remaining: 1.49s
+443: learn: 0.1451796 total: 6.49s remaining: 1.48s
+444: learn: 0.1451592 total: 6.51s remaining: 1.46s
+445: learn: 0.1451407 total: 6.53s remaining: 1.45s
+446: learn: 0.1451151 total: 6.55s remaining: 1.44s
+447: learn: 0.1450938 total: 6.58s remaining: 1.42s
+448: learn: 0.1450609 total: 6.6s remaining: 1.41s
+449: learn: 0.1450352 total: 6.62s remaining: 1.4s
+450: learn: 0.1450351 total: 6.63s remaining: 1.38s
+451: learn: 0.1450335 total: 6.64s remaining: 1.37s
+452: learn: 0.1450335 total: 6.65s remaining: 1.35s
+453: learn: 0.1450335 total: 6.66s remaining: 1.33s
+454: learn: 0.1450110 total: 6.68s remaining: 1.32s
+455: learn: 0.1449887 total: 6.69s remaining: 1.31s
+456: learn: 0.1449618 total: 6.7s remaining: 1.29s
+457: learn: 0.1449430 total: 6.72s remaining: 1.28s
+458: learn: 0.1449229 total: 6.73s remaining: 1.26s
+459: learn: 0.1449088 total: 6.75s remaining: 1.25s
+460: learn: 0.1449088 total: 6.76s remaining: 1.23s
+461: learn: 0.1449008 total: 6.77s remaining: 1.22s
+462: learn: 0.1448763 total: 6.78s remaining: 1.2s
+463: learn: 0.1448509 total: 6.79s remaining: 1.19s
+464: learn: 0.1448508 total: 6.81s remaining: 1.17s
+465: learn: 0.1448395 total: 6.82s remaining: 1.16s
+466: learn: 0.1448176 total: 6.83s remaining: 1.14s
+467: learn: 0.1447877 total: 6.85s remaining: 1.13s
+468: learn: 0.1447876 total: 6.86s remaining: 1.11s
+469: learn: 0.1447739 total: 6.87s remaining: 1.1s
+470: learn: 0.1447739 total: 6.88s remaining: 1.08s
+471: learn: 0.1447588 total: 6.9s remaining: 1.07s
+472: learn: 0.1447360 total: 6.91s remaining: 1.05s
+473: learn: 0.1447141 total: 6.92s remaining: 1.04s
+474: learn: 0.1446927 total: 6.94s remaining: 1.02s
+475: learn: 0.1446619 total: 6.95s remaining: 1.01s
+476: learn: 0.1446155 total: 6.96s remaining: 993ms
+477: learn: 0.1445939 total: 6.98s remaining: 978ms
+478: learn: 0.1445939 total: 6.99s remaining: 963ms
+479: learn: 0.1445842 total: 7s remaining: 948ms
+480: learn: 0.1445683 total: 7.01s remaining: 933ms
+481: learn: 0.1445683 total: 7.02s remaining: 918ms
+482: learn: 0.1445475 total: 7.04s remaining: 903ms
+483: learn: 0.1445291 total: 7.05s remaining: 888ms
+484: learn: 0.1445150 total: 7.06s remaining: 874ms
+485: learn: 0.1445024 total: 7.08s remaining: 859ms
+486: learn: 0.1444871 total: 7.09s remaining: 844ms
+487: learn: 0.1444764 total: 7.1s remaining: 829ms
+488: learn: 0.1444521 total: 7.11s remaining: 815ms
+489: learn: 0.1444285 total: 7.13s remaining: 800ms
+490: learn: 0.1444285 total: 7.14s remaining: 785ms
+491: learn: 0.1444095 total: 7.15s remaining: 771ms
+492: learn: 0.1444094 total: 7.17s remaining: 756ms
+493: learn: 0.1443975 total: 7.18s remaining: 741ms
+494: learn: 0.1443974 total: 7.19s remaining: 726ms
+495: learn: 0.1443932 total: 7.2s remaining: 711ms
+496: learn: 0.1443932 total: 7.21s remaining: 696ms
+497: learn: 0.1443931 total: 7.22s remaining: 682ms
+498: learn: 0.1443931 total: 7.23s remaining: 667ms
+499: learn: 0.1443844 total: 7.25s remaining: 652ms
+500: learn: 0.1443717 total: 7.26s remaining: 638ms
+501: learn: 0.1443523 total: 7.27s remaining: 623ms
+502: learn: 0.1443421 total: 7.29s remaining: 609ms
+503: learn: 0.1443421 total: 7.3s remaining: 594ms
+504: learn: 0.1443421 total: 7.31s remaining: 579ms
+505: learn: 0.1443420 total: 7.32s remaining: 564ms
+506: learn: 0.1443420 total: 7.33s remaining: 550ms
+507: learn: 0.1443418 total: 7.34s remaining: 535ms
+508: learn: 0.1443418 total: 7.36s remaining: 520ms
+509: learn: 0.1443418 total: 7.37s remaining: 505ms
+510: learn: 0.1443173 total: 7.38s remaining: 491ms
+511: learn: 0.1442930 total: 7.39s remaining: 477ms
+512: learn: 0.1442779 total: 7.41s remaining: 462ms
+513: learn: 0.1442471 total: 7.42s remaining: 448ms
+514: learn: 0.1442469 total: 7.43s remaining: 433ms
+515: learn: 0.1442469 total: 7.45s remaining: 419ms
+516: learn: 0.1442231 total: 7.46s remaining: 404ms
+517: learn: 0.1442007 total: 7.47s remaining: 390ms
+518: learn: 0.1441800 total: 7.49s remaining: 375ms
+519: learn: 0.1441584 total: 7.5s remaining: 361ms
+520: learn: 0.1441391 total: 7.51s remaining: 346ms
+521: learn: 0.1441390 total: 7.53s remaining: 332ms
+522: learn: 0.1441059 total: 7.54s remaining: 317ms
+523: learn: 0.1440839 total: 7.55s remaining: 303ms
+524: learn: 0.1440670 total: 7.57s remaining: 288ms
+525: learn: 0.1440452 total: 7.58s remaining: 274ms
+526: learn: 0.1440349 total: 7.59s remaining: 259ms
+527: learn: 0.1440349 total: 7.61s remaining: 245ms
+528: learn: 0.1440332 total: 7.62s remaining: 230ms
+529: learn: 0.1440332 total: 7.63s remaining: 216ms
+530: learn: 0.1440332 total: 7.64s remaining: 201ms
+531: learn: 0.1440332 total: 7.65s remaining: 187ms
+532: learn: 0.1440272 total: 7.66s remaining: 173ms
+533: learn: 0.1440150 total: 7.67s remaining: 158ms
+534: learn: 0.1440121 total: 7.69s remaining: 144ms
+535: learn: 0.1439930 total: 7.7s remaining: 129ms
+536: learn: 0.1439741 total: 7.71s remaining: 115ms
+537: learn: 0.1439569 total: 7.73s remaining: 101ms
+538: learn: 0.1439258 total: 7.74s remaining: 86.2ms
+539: learn: 0.1439210 total: 7.75s remaining: 71.8ms
+540: learn: 0.1439210 total: 7.77s remaining: 57.4ms
+541: learn: 0.1439013 total: 7.78s remaining: 43.1ms
+542: learn: 0.1439013 total: 7.79s remaining: 28.7ms
+543: learn: 0.1438822 total: 7.8s remaining: 14.3ms
+544: learn: 0.1438605 total: 7.82s remaining: 0us
+Out[74]:
+<catboost.core.CatBoostClassifier at 0x7954489647f0>
+In [75]:
+# model = CatBoostClassifier(learning_rate= 0.0978635108138112, depth=4, l2_leaf_reg=9.839415391427151, iterations= 481, subsample= 0.9445065638759137, colsample_bylevel= 0.8961751597628416)
+# model.fit(x_train,y_train)
+In [76]:
+y_pred = model.predict(x_valid)
+Accuracy
+In [77]:
+accuracy_score(y_valid,y_pred)
+Out[77]:
+0.940227434257285
+In [78]:
+test_df
+Out[78]:
+id Name Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure Job Satisfaction Sleep Duration Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Numeric Sleep Duration
+0 140700 Shivam 1 53.0 67 1 26 0.0 2.0 5.0 Less than 5 hours 1 53 0 9.0 3.0 1 5.0
+1 140701 Sanya 0 58.0 25 1 18 0.0 2.0 4.0 Less than 5 hours 1 16 0 6.0 4.0 0 5.0
+2 140702 Yash 1 53.0 21 1 54 0.0 4.0 1.0 7-8 hours 1 12 1 12.0 4.0 0 7.5
+3 140703 Nalini 0 23.0 47 0 51 5.0 0.0 0.0 More than 8 hours 1 35 1 10.0 4.0 0 8.0
+4 140704 Shaurya 1 47.0 22 1 54 0.0 5.0 5.0 7-8 hours 1 28 1 3.0 4.0 0 7.5
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+93795 234495 Zoya 0 49.0 21 1 42 0.0 3.0 5.0 Less than 5 hours 1 35 1 2.0 2.0 1 5.0
+93796 234496 Shlok 1 29.0 3 1 42 0.0 5.0 1.0 7-8 hours 1 29 1 11.0 3.0 1 7.5
+93797 234497 Rishi 1 24.0 67 0 51 1.0 0.0 0.0 7-8 hours 1 23 0 7.0 1.0 0 7.5
+93798 234498 Eshita 0 23.0 22 1 36 0.0 4.0 2.0 5-6 hours 0 25 1 7.0 5.0 1 5.5
+93799 234499 Gauri 0 43.0 62 1 18 0.0 5.0 2.0 More than 8 hours 0 16 0 11.0 2.0 0 8.0
+93800 rows × 18 columns
+In [79]:
+test = test_df.drop(columns=['id','Name','Sleep Duration'])
+In [80]:
+X
+Out[80]:
+Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure Job Satisfaction Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Numeric Sleep Duration
+0 0 49.0 50 1 10 0.0 5.0 2.0 0 33 0 1.0 2.0 0 8.0
+1 1 26.0 93 1 55 0.0 4.0 3.0 2 63 1 7.0 3.0 0 5.0
+2 1 33.0 97 0 54 5.0 0.0 0.0 0 21 1 3.0 1.0 0 5.5
+3 1 22.0 64 1 55 0.0 5.0 1.0 1 28 1 10.0 1.0 1 5.0
+4 0 30.0 37 1 9 0.0 1.0 1.0 2 28 1 9.0 4.0 1 5.5
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+140695 0 18.0 4 1 15 0.0 5.0 4.0 2 45 0 2.0 4.0 1 5.5
+140696 0 41.0 26 1 15 0.0 5.0 4.0 1 24 1 6.0 5.0 1 7.5
+140697 0 24.0 44 1 38 0.0 3.0 1.0 1 19 0 4.0 4.0 0 8.0
+140698 0 49.0 84 1 47 0.0 5.0 2.0 1 84 1 10.0 1.0 0 5.5
+140699 1 27.0 72 0 54 4.0 0.0 0.0 0 29 1 2.0 3.0 1 5.0
+140699 rows × 15 columns
+In [81]:
+test
+Out[81]:
+Gender Age City Working Professional or Student Profession Academic Pressure Work Pressure Job Satisfaction Dietary Habits Degree Have you ever had suicidal thoughts ? Work/Study Hours Financial Stress Family History of Mental Illness Numeric Sleep Duration
+0 1 53.0 67 1 26 0.0 2.0 5.0 1 53 0 9.0 3.0 1 5.0
+1 0 58.0 25 1 18 0.0 2.0 4.0 1 16 0 6.0 4.0 0 5.0
+2 1 53.0 21 1 54 0.0 4.0 1.0 1 12 1 12.0 4.0 0 7.5
+3 0 23.0 47 0 51 5.0 0.0 0.0 1 35 1 10.0 4.0 0 8.0
+4 1 47.0 22 1 54 0.0 5.0 5.0 1 28 1 3.0 4.0 0 7.5
+... ... ... ... ... ... ... ... ... ... ... ... ... ... ... ...
+93795 0 49.0 21 1 42 0.0 3.0 5.0 1 35 1 2.0 2.0 1 5.0
+93796 1 29.0 3 1 42 0.0 5.0 1.0 1 29 1 11.0 3.0 1 7.5
+93797 1 24.0 67 0 51 1.0 0.0 0.0 1 23 0 7.0 1.0 0 7.5
+93798 0 23.0 22 1 36 0.0 4.0 2.0 0 25 1 7.0 5.0 1 5.5
+93799 0 43.0 62 1 18 0.0 5.0 2.0 0 16 0 11.0 2.0 0 8.0
+93800 rows × 15 columns
+In [82]:
+y_pred = model.predict(test)
+Submission
+In [83]:
+submission = pd.DataFrame({
+    'id': test_df['id'],  
+    'Depression': y_pred  
+})
+submission.to_csv('submission5.csv', index=False)
+In [84]:
+submission
+Out[84]:
+id Depression
+0 140700 0
+1 140701 0
+2 140702 0
+3 140703 1
+4 140704 0
+... ... ...
+93795 234495 0
+93796 234496 1
+93797 234497 0
+93798 234498 1
+93799 234499 0
+93800 rows × 2 columns

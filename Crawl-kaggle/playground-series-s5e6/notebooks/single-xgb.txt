@@ -1,0 +1,301 @@
+In [1]:
+# inspired by:
+# https://www.kaggle.com/competitions/playground-series-s5e6/discussion/584983
+# https://www.kaggle.com/competitions/playground-series-s5e6/discussion/585000
+# https://www.kaggle.com/code/lizzylee1111111111/single-xgboost-baseline
+In [2]:
+from tqdm import tqdm
+from itertools import combinations
+from sklearn.model_selection import KFold
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import mean_squared_error
+from xgboost import XGBRegressor
+import pandas as pd
+import numpy as np
+import os
+import warnings
+
+warnings.simplefilter(action='ignore', category=FutureWarning)
+warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+train = pd.read_csv("/kaggle/input/playground-series-s5e6/train.csv")
+test = pd.read_csv("/kaggle/input/playground-series-s5e6/test.csv")
+original = pd.read_csv("/kaggle/input/fertilizer-prediction/Fertilizer Prediction.csv")
+submission = pd.read_csv("/kaggle/input/playground-series-s5e6/sample_submission.csv")
+In [3]:
+original_copy = original.copy()
+for k in range(6):
+    original = pd.concat([original,original_copy],axis=0)
+In [4]:
+def feature_eng(df):
+    numerical_features = [col for col in df.select_dtypes(include=['int64', 'float64']).columns 
+                      if col != 'id']
+    for col in numerical_features:
+        df[f'{col}_Binned'] = df[col].astype(str).astype('category')
+    return df
+
+train = feature_eng(train)
+test = feature_eng(test)
+original = feature_eng(original)
+In [5]:
+def rename_temperature_column(df):
+    df = df.rename(columns={'Temparature': 'Temperature'})
+    print("Column name corrected from 'Temparature' to 'Temperature'")
+    return df
+    
+train = rename_temperature_column(train)
+test = rename_temperature_column(test)
+original = rename_temperature_column(original)
+Column name corrected from 'Temparature' to 'Temperature'
+Column name corrected from 'Temparature' to 'Temperature'
+Column name corrected from 'Temparature' to 'Temperature'
+In [6]:
+cat_cols = [col for col in train.select_dtypes(include=['object', 'category']).columns 
+            if col != "Fertilizer Name"]
+
+for i in cat_cols:
+    label_enc = LabelEncoder()
+    train[i] = label_enc.fit_transform(train[i])
+    original[i] = label_enc.fit_transform(original[i])
+    test[i] = label_enc.transform(test[i])
+
+fer_label_enc = LabelEncoder()
+train["Fertilizer Name"] = fer_label_enc.fit_transform(train["Fertilizer Name"])
+original["Fertilizer Name"] = fer_label_enc.fit_transform(original["Fertilizer Name"])
+for col in cat_cols:
+    train[col] = train[col].astype("category")
+    test[col] = test[col].astype("category")
+    original[col] = original[col].astype("category")
+##############################################Dataset#########################################
+
+X = train.drop(columns=["id", "Fertilizer Name"])
+y = train["Fertilizer Name"]
+X_test = test.drop(columns=["id"])
+
+X_original = original.drop(columns=["Fertilizer Name"])
+y_original = original["Fertilizer Name"]
+In [7]:
+params = {
+        'objective': 'multi:softprob',  
+        'num_class': len(np.unique(y)), 
+        'max_depth': 7,
+        'learning_rate': 0.03,
+        'subsample': 0.8,
+        'max_bin': 128,
+        'colsample_bytree': 0.3, 
+        'colsample_bylevel': 1,  
+        'colsample_bynode': 1,  
+        'tree_method': 'hist',  
+        'random_state': 42,
+        'eval_metric': 'mlogloss',
+        'device': "cuda",
+        'enable_categorical':True,
+        'n_estimators':10000,
+        'early_stopping_rounds':50,
+    }
+In [8]:
+from xgboost import XGBClassifier
+from sklearn.model_selection import StratifiedKFold
+
+def mapk(actual, predicted, k=3):
+    def apk(a, p, k):
+        p = p[:k]
+        score = 0.0
+        hits = 0
+        seen = set()
+        for i, pred in enumerate(p):
+            if pred in a and pred not in seen:
+                hits += 1
+                score += hits / (i + 1.0)
+                seen.add(pred)
+        return score / min(len(a), k)
+    return np.mean([apk(a, p, k) for a, p in zip(actual, predicted)])
+
+FOLDS = 5
+skf = StratifiedKFold(n_splits=FOLDS, shuffle=True, random_state=42)
+
+oof = np.zeros(shape = (len(train) ,y.nunique()))
+pred_prob = np.zeros(shape = (len(test),y.nunique()))
+
+xgb_model = XGBClassifier(**params)
+
+map3_scores = []
+
+for i, (train_idx, valid_idx) in enumerate(skf.split(X,y)):
+    print('#' * 15, i+1, '#' *15)
+    x_train, x_valid = X.iloc[train_idx],X.iloc[valid_idx]
+    y_train, y_valid = y.iloc[train_idx],y.iloc[valid_idx]
+
+    x_train = pd.concat([x_train,X_original], axis=0, ignore_index=True)
+    y_train = pd.concat([y_train,y_original], axis=0, ignore_index=True)
+    
+    xgb_model.fit(
+        x_train, 
+        y_train, 
+        eval_set=[(x_train, y_train), (x_valid, y_valid)], 
+        verbose=100,
+    )
+    oof[valid_idx] = xgb_model.predict_proba(x_valid)
+    pred_prob += xgb_model.predict_proba(X_test)  
+    top_3_preds = np.argsort(oof[valid_idx], axis=1)[:, -3:][:, ::-1]  
+    actual = [[label] for label in y_valid]
+    map3_score = mapk(actual, top_3_preds)
+    map3_scores.append(map3_score)  # Store the score
+    print(f"✅ FOLD {i+1}: MAP@3 Score: {map3_score:.5f}")
+
+avg_map3 = np.mean(map3_scores)
+print(f"\n🎯 Average MAP@3 Score across all folds: {avg_map3:.5f}")
+############### 1 ###############
+[0] validation_0-mlogloss:1.94556 validation_1-mlogloss:1.94567
+[100] validation_0-mlogloss:1.91353 validation_1-mlogloss:1.92931
+[200] validation_0-mlogloss:1.88774 validation_1-mlogloss:1.92052
+[300] validation_0-mlogloss:1.86416 validation_1-mlogloss:1.91413
+[400] validation_0-mlogloss:1.84254 validation_1-mlogloss:1.90913
+[500] validation_0-mlogloss:1.82198 validation_1-mlogloss:1.90489
+[600] validation_0-mlogloss:1.80175 validation_1-mlogloss:1.90113
+[700] validation_0-mlogloss:1.78214 validation_1-mlogloss:1.89776
+[800] validation_0-mlogloss:1.76333 validation_1-mlogloss:1.89490
+[900] validation_0-mlogloss:1.74565 validation_1-mlogloss:1.89248
+[1000] validation_0-mlogloss:1.72867 validation_1-mlogloss:1.89037
+[1100] validation_0-mlogloss:1.71169 validation_1-mlogloss:1.88857
+[1200] validation_0-mlogloss:1.69565 validation_1-mlogloss:1.88703
+[1300] validation_0-mlogloss:1.68040 validation_1-mlogloss:1.88565
+[1400] validation_0-mlogloss:1.66509 validation_1-mlogloss:1.88464
+[1500] validation_0-mlogloss:1.65035 validation_1-mlogloss:1.88374
+[1600] validation_0-mlogloss:1.63603 validation_1-mlogloss:1.88293
+[1700] validation_0-mlogloss:1.62203 validation_1-mlogloss:1.88225
+[1800] validation_0-mlogloss:1.60838 validation_1-mlogloss:1.88181
+[1900] validation_0-mlogloss:1.59510 validation_1-mlogloss:1.88148
+[2000] validation_0-mlogloss:1.58221 validation_1-mlogloss:1.88116
+[2100] validation_0-mlogloss:1.56980 validation_1-mlogloss:1.88100
+[2200] validation_0-mlogloss:1.55752 validation_1-mlogloss:1.88097
+[2217] validation_0-mlogloss:1.55545 validation_1-mlogloss:1.88097
+/usr/local/lib/python3.11/dist-packages/xgboost/core.py:160: UserWarning: [01:43:46] WARNING: /workspace/src/common/error_msg.cc:58: Falling back to prediction using DMatrix due to mismatched devices. This might lead to higher memory usage and slower performance. XGBoost is running on: cuda:0, while the input data is on: cpu.
+Potential solutions:
+- Use a data structure that matches the device ordinal in the booster.
+- Set the device for booster before call to inplace_predict.
+
+This warning will only be shown once.
+
+  warnings.warn(smsg, UserWarning)
+✅ FOLD 1: MAP@3 Score: 0.37648
+############### 2 ###############
+[0] validation_0-mlogloss:1.94555 validation_1-mlogloss:1.94566
+[100] validation_0-mlogloss:1.91350 validation_1-mlogloss:1.92933
+[200] validation_0-mlogloss:1.88783 validation_1-mlogloss:1.92055
+[300] validation_0-mlogloss:1.86420 validation_1-mlogloss:1.91416
+[400] validation_0-mlogloss:1.84245 validation_1-mlogloss:1.90906
+[500] validation_0-mlogloss:1.82200 validation_1-mlogloss:1.90486
+[600] validation_0-mlogloss:1.80177 validation_1-mlogloss:1.90101
+[700] validation_0-mlogloss:1.78219 validation_1-mlogloss:1.89777
+[800] validation_0-mlogloss:1.76347 validation_1-mlogloss:1.89492
+[900] validation_0-mlogloss:1.74566 validation_1-mlogloss:1.89252
+[1000] validation_0-mlogloss:1.72873 validation_1-mlogloss:1.89038
+[1100] validation_0-mlogloss:1.71185 validation_1-mlogloss:1.88850
+[1200] validation_0-mlogloss:1.69582 validation_1-mlogloss:1.88692
+[1300] validation_0-mlogloss:1.68049 validation_1-mlogloss:1.88551
+[1400] validation_0-mlogloss:1.66518 validation_1-mlogloss:1.88437
+[1500] validation_0-mlogloss:1.65040 validation_1-mlogloss:1.88339
+[1600] validation_0-mlogloss:1.63615 validation_1-mlogloss:1.88261
+[1700] validation_0-mlogloss:1.62216 validation_1-mlogloss:1.88190
+[1800] validation_0-mlogloss:1.60860 validation_1-mlogloss:1.88141
+[1900] validation_0-mlogloss:1.59534 validation_1-mlogloss:1.88104
+[2000] validation_0-mlogloss:1.58248 validation_1-mlogloss:1.88074
+[2100] validation_0-mlogloss:1.57004 validation_1-mlogloss:1.88056
+[2200] validation_0-mlogloss:1.55776 validation_1-mlogloss:1.88051
+[2300] validation_0-mlogloss:1.54558 validation_1-mlogloss:1.88052
+[2311] validation_0-mlogloss:1.54424 validation_1-mlogloss:1.88050
+✅ FOLD 2: MAP@3 Score: 0.37633
+############### 3 ###############
+[0] validation_0-mlogloss:1.94556 validation_1-mlogloss:1.94565
+[100] validation_0-mlogloss:1.91357 validation_1-mlogloss:1.92907
+[200] validation_0-mlogloss:1.88792 validation_1-mlogloss:1.92012
+[300] validation_0-mlogloss:1.86427 validation_1-mlogloss:1.91368
+[400] validation_0-mlogloss:1.84249 validation_1-mlogloss:1.90854
+[500] validation_0-mlogloss:1.82200 validation_1-mlogloss:1.90422
+[600] validation_0-mlogloss:1.80184 validation_1-mlogloss:1.90034
+[700] validation_0-mlogloss:1.78230 validation_1-mlogloss:1.89698
+[800] validation_0-mlogloss:1.76360 validation_1-mlogloss:1.89413
+[900] validation_0-mlogloss:1.74594 validation_1-mlogloss:1.89171
+[1000] validation_0-mlogloss:1.72898 validation_1-mlogloss:1.88964
+[1100] validation_0-mlogloss:1.71208 validation_1-mlogloss:1.88775
+[1200] validation_0-mlogloss:1.69605 validation_1-mlogloss:1.88616
+[1300] validation_0-mlogloss:1.68079 validation_1-mlogloss:1.88471
+[1400] validation_0-mlogloss:1.66544 validation_1-mlogloss:1.88347
+[1500] validation_0-mlogloss:1.65069 validation_1-mlogloss:1.88243
+[1600] validation_0-mlogloss:1.63648 validation_1-mlogloss:1.88159
+[1700] validation_0-mlogloss:1.62245 validation_1-mlogloss:1.88089
+[1800] validation_0-mlogloss:1.60882 validation_1-mlogloss:1.88040
+[1900] validation_0-mlogloss:1.59559 validation_1-mlogloss:1.88009
+[2000] validation_0-mlogloss:1.58264 validation_1-mlogloss:1.87974
+[2100] validation_0-mlogloss:1.57023 validation_1-mlogloss:1.87952
+[2151] validation_0-mlogloss:1.56399 validation_1-mlogloss:1.87954
+✅ FOLD 3: MAP@3 Score: 0.37676
+############### 4 ###############
+[0] validation_0-mlogloss:1.94555 validation_1-mlogloss:1.94566
+[100] validation_0-mlogloss:1.91350 validation_1-mlogloss:1.92953
+[200] validation_0-mlogloss:1.88787 validation_1-mlogloss:1.92093
+[300] validation_0-mlogloss:1.86423 validation_1-mlogloss:1.91461
+[400] validation_0-mlogloss:1.84249 validation_1-mlogloss:1.90970
+[500] validation_0-mlogloss:1.82186 validation_1-mlogloss:1.90551
+[600] validation_0-mlogloss:1.80161 validation_1-mlogloss:1.90173
+[700] validation_0-mlogloss:1.78203 validation_1-mlogloss:1.89861
+[800] validation_0-mlogloss:1.76326 validation_1-mlogloss:1.89583
+[900] validation_0-mlogloss:1.74555 validation_1-mlogloss:1.89344
+[1000] validation_0-mlogloss:1.72861 validation_1-mlogloss:1.89136
+[1100] validation_0-mlogloss:1.71172 validation_1-mlogloss:1.88952
+[1200] validation_0-mlogloss:1.69569 validation_1-mlogloss:1.88796
+[1300] validation_0-mlogloss:1.68039 validation_1-mlogloss:1.88668
+[1400] validation_0-mlogloss:1.66503 validation_1-mlogloss:1.88566
+[1500] validation_0-mlogloss:1.65019 validation_1-mlogloss:1.88474
+[1600] validation_0-mlogloss:1.63592 validation_1-mlogloss:1.88397
+[1700] validation_0-mlogloss:1.62188 validation_1-mlogloss:1.88337
+[1800] validation_0-mlogloss:1.60826 validation_1-mlogloss:1.88294
+[1900] validation_0-mlogloss:1.59495 validation_1-mlogloss:1.88264
+[2000] validation_0-mlogloss:1.58201 validation_1-mlogloss:1.88239
+[2100] validation_0-mlogloss:1.56958 validation_1-mlogloss:1.88227
+[2119] validation_0-mlogloss:1.56729 validation_1-mlogloss:1.88229
+✅ FOLD 4: MAP@3 Score: 0.37514
+############### 5 ###############
+[0] validation_0-mlogloss:1.94556 validation_1-mlogloss:1.94566
+[100] validation_0-mlogloss:1.91356 validation_1-mlogloss:1.92914
+[200] validation_0-mlogloss:1.88783 validation_1-mlogloss:1.92026
+[300] validation_0-mlogloss:1.86432 validation_1-mlogloss:1.91382
+[400] validation_0-mlogloss:1.84255 validation_1-mlogloss:1.90870
+[500] validation_0-mlogloss:1.82200 validation_1-mlogloss:1.90452
+[600] validation_0-mlogloss:1.80180 validation_1-mlogloss:1.90061
+[700] validation_0-mlogloss:1.78218 validation_1-mlogloss:1.89739
+[800] validation_0-mlogloss:1.76340 validation_1-mlogloss:1.89446
+[900] validation_0-mlogloss:1.74559 validation_1-mlogloss:1.89208
+[1000] validation_0-mlogloss:1.72867 validation_1-mlogloss:1.88998
+[1100] validation_0-mlogloss:1.71172 validation_1-mlogloss:1.88809
+[1200] validation_0-mlogloss:1.69570 validation_1-mlogloss:1.88660
+[1300] validation_0-mlogloss:1.68042 validation_1-mlogloss:1.88524
+[1400] validation_0-mlogloss:1.66512 validation_1-mlogloss:1.88412
+[1500] validation_0-mlogloss:1.65029 validation_1-mlogloss:1.88306
+[1600] validation_0-mlogloss:1.63601 validation_1-mlogloss:1.88232
+[1700] validation_0-mlogloss:1.62200 validation_1-mlogloss:1.88170
+[1800] validation_0-mlogloss:1.60841 validation_1-mlogloss:1.88124
+[1900] validation_0-mlogloss:1.59514 validation_1-mlogloss:1.88087
+[2000] validation_0-mlogloss:1.58226 validation_1-mlogloss:1.88060
+[2100] validation_0-mlogloss:1.56991 validation_1-mlogloss:1.88039
+[2200] validation_0-mlogloss:1.55759 validation_1-mlogloss:1.88031
+[2215] validation_0-mlogloss:1.55581 validation_1-mlogloss:1.88031
+✅ FOLD 5: MAP@3 Score: 0.37699
+
+🎯 Average MAP@3 Score across all folds: 0.37634
+In [9]:
+top_3_preds = np.argsort(pred_prob, axis=1)[:, -3:][:, ::-1]
+top_3_labels = fer_label_enc.inverse_transform(top_3_preds.ravel()).reshape(top_3_preds.shape)
+df_sub = pd.read_csv("/kaggle/input/playground-series-s5e6/sample_submission.csv")
+submission = pd.DataFrame({
+    'id': df_sub['id'],
+    'Fertilizer Name': [' '.join(row) for row in top_3_labels]
+})
+submission.to_csv('submission.csv', index=False)
+print("✅ Submission file saved as 'submission.csv'")
+✅ Submission file saved as 'submission.csv'
+In [10]:
+np.save('xgb_repeat_train_oof.npy', oof)
+np.save('xgb_repeat_test_oof.npy', pred_prob / 5)

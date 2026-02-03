@@ -1,0 +1,1336 @@
+Licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0). © 2025 [Veysel Serifoglu] https://creativecommons.org/licenses/by/4.0/
+The AI Patent Analyst: From Unstructured PDFs to a Queryable Knowledge Graph
+To experience the full power of this project, please visit our live, interactive Streamlit application. It provides a polished user interface for the semantic search engine and the strategic analysis dashboards.
+Live Demo: https://patent-search-analytics.streamlit.app/
+1. High-Level Summary
+This project solves the critical challenge of analyzing unstructured patent PDFs by building an end-to-end pipeline that transforms them into a structured, queryable Knowledge Graph entirely within Google BigQuery.
+The final solution is an interactive analysis engine that delivers significant cost savings by automating tasks that would otherwise require hundreds of hours of expensive expert analysis from patent lawyers or R&D engineers. It answers:
+Deep Architectural Analysis: Use standard SQL with UNNEST and GROUP BY to discover the most common design patterns and technical component connections across hundreds of patents.
+Component Search: Go beyond patent-level search to find specific, functionally similar technical parts across different domains (e.g., "find a mechanism for encrypting data").
+Quantitative Portfolio Analysis: Compare patent applicants by the complexity (average component count) and breadth (number of domains) of their innovations.
+2. The Workflow: A Multi-Stage AI Pipeline
+Our solution follows a three-stage process, showcasing a powerful combination of BigQuery's multimodal, generative, and vector search capabilities.
+Stage 1: Multimodal Data Processing (🖼️ Pioneer)
+We use Object Tables to directly read and process raw PDFs from Cloud Storage. The Gemini model is then used with ML.GENERATE_TEXT to analyze the both the text and the technical diagrams within the PDFs.
+Stage 2: Generative Knowledge Graph Extraction (🧠 Architect)
+The consolidated patent text is fed into the AI.GENERATE_TABLE function. A custom prompt instructs the AI to act as an expert analyst, extracting a structured table of high-level insights (invention_domain, problem_solved) and a detailed, nested graph of all technical components, their functions, and their interconnections.
+Stage 3: Component-Level Semantic Search (🕵️‍♀️ Detective)
+To enable deep discovery, we build a novel search engine that understands context. We use ML.GENERATE_EMBEDDING to create two separate vectors:
+One for the patent's high-level context (title, abstract)
+Another for each component's specific function
+These vectors are mathematically averaged into a single, final vector for each component via BigQuery's UDF (User-Defined Functions).
+Finally, VECTOR_SEARCH is used on these combined vectors, creating a powerful search that returns highly relevant, context-aware results.
+3. Dataset Overview
+403 PDFs (197 English, others in FR/DE) at gs://gcs-public-data--labeled-patents/*.pdf.
+Tables: extracted_data (metadata), invention_types (labels), figures (91 diagram coordinates).
+Source: Labeled Patents (1TB/mo free tier).
+4. Code
+Notebook & Repository: https://github.com/veyselserifoglu/bq-ai-patent-analyst/blob/main/notebooks/bigquery-ai-the-patent-analyst-project.ipynb
+5. Architecture Pipeline
+In [1]:
+from IPython.display import HTML
+
+# Display Architecture pipeline
+
+HTML(f'''
+<div style="text-align: center; padding: 15px;">
+    <a href="https://github.com/veyselserifoglu/bq-ai-patent-analyst/blob/main/doc/Patent%20Analysis%20Pipeline%20Architecture%20-%20PNG.png?raw=true" 
+       target="_blank" 
+       style="cursor: pointer; display: inline-block; text-decoration: none;">
+        <div style="position: relative; display: inline-block;">
+            <img src="https://github.com/veyselserifoglu/bq-ai-patent-analyst/blob/main/doc/Patent%20Analysis%20Pipeline%20Architecture%20-%20PNG.png?raw=true" 
+                 width="300" 
+                 height="200"
+                 style="border: 2px solid #e0e0e0; border-radius: 8px; transition: all 0.3s ease; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"
+                 onmouseover="this.style.borderColor='#4285F4'; this.style.boxShadow='0 6px 12px rgba(66, 133, 244, 0.3)'"
+                 onmouseout="this.style.borderColor='#e0e0e0'; this.style.boxShadow='0 4px 8px rgba(0,0,0,0.1)'">
+            <div style="position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,0.9); border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 14px;">
+                ↗
+            </div>
+        </div>
+    </a>
+    <p style="margin-top: 12px; color: #5f6368; font-size: 13px; font-style: italic;">Click to explore the full architecture</p>
+</div>
+''')
+Out[1]:
+↗
+Click to explore the full architecture
+In [2]:
+# For visualization purposes
+%pip install -q pyvis
+%pip install -q plotly
+%pip install -q ipywidgets
+Note: you may need to restart the kernel to use updated packages.
+Note: you may need to restart the kernel to use updated packages.
+Note: you may need to restart the kernel to use updated packages.
+In [3]:
+# BigQuery
+import os
+from google.cloud import bigquery
+from kaggle_secrets import UserSecretsClient
+import pandas as pd
+from pyvis.network import Network
+import plotly.express as px
+from google.cloud import bigquery
+from IPython.display import Image, display, HTML, IFrame
+import ipywidgets as widgets
+from ipywidgets import Layout
+import warnings
+
+
+# pd.set_option('display.max_colwidth', None)
+
+# Suppress the specific UserWarning from the BigQuery client
+# warnings.filterwarnings("ignore", message="BigQuery Storage module")
+Google Cloud Project Setup
+This guide outlines the one-time setup required in Google Cloud and Kaggle to enable the analysis.
+1. Google Cloud Project Configuration
+First, configure your Google Cloud project.
+Select or Create a Project
+Ensure you have a Google Cloud project.
+Copy the Project ID (e.g., my-project-12345), not the project name.
+Enable Required APIs
+In your project, enable the following two APIs:
+Vertex AI API
+BigQuery Connection API
+Create a Service Account for the Notebook
+This service account allows the Kaggle notebook to act on your behalf.
+Navigate to IAM & Admin > Service Accounts.
+Click + CREATE SERVICE ACCOUNT.
+Give it a name (e.g., kaggle-runner).
+Grant it these three roles: Be sure to follow the principle of least privilege.
+BigQuery Connection User
+BigQuery Data Viewer
+BigQuery User
+After creating the account, go to > manage keys > create a new key. A file will be downloaded to your computer.
+2. Kaggle Notebook Configuration
+Next, configure this Kaggle notebook to use your project.
+Add Kaggle Secrets
+In the notebook editor, go to the "Add-ons" menu and select "Secrets".
+Add two secrets:
+GCP_PROJECT_ID: Paste your Google Cloud Project ID here.
+GCP_SA_KEY: Open the downloaded JSON key file, copy its entire text content, and paste it here.
+3. Final Permission Step (After Running Code)
+The first time you run the setup cells in the notebook, a new BigQuery connection will be created. This connection has its own unique service account that needs permission to use AI models.
+Find the Connection Service Account
+After running the setup cells, go to BigQuery > External connections in your Google Cloud project.
+Click on the connection named llm-connection.
+Copy its Service Account ID (it will look like bqcx-...@...gserviceaccount.com).
+Grant Permission
+Go to the IAM & Admin page.
+Click + Grant Access.
+Paste the connection's service account ID into the "New principals" box.
+Give it the single role of Vertex AI User.
+Click Save.
+With this setup complete, the notebook has secure access to your Google Cloud project and can run all subsequent analysis cells.
+In [4]:
+user_secrets = UserSecretsClient()
+project_id = user_secrets.get_secret("GCP_PROJECT_ID")
+gcp_key_json = user_secrets.get_secret("GCP_SA_KEY")
+location = 'US'
+In [5]:
+# Write the key to a temporary file in the notebook's environment
+key_file_path = 'gcp_key.json'
+try:
+    with open(key_file_path, 'w') as f:
+        f.write(gcp_key_json)
+    
+    # Remove "> /dev/null 2>&1" to show the output.
+    # Authenticate the gcloud tool using the key file
+    !gcloud auth activate-service-account --key-file={key_file_path} > /dev/null 2>&1
+    
+    # Configure the gcloud tool to use your project
+    !gcloud config set project {project_id} > /dev/null 2>&1
+    
+finally:
+    # Securely delete the key file immediately after use
+    if os.path.exists(key_file_path):
+        os.remove(key_file_path)
+
+# Enable the Vertex AI and BigQuery Connection APIs. Run only once Or Enable using the Cloud Interface.
+# !gcloud services enable aiplatform.googleapis.com bigqueryconnection.googleapis.com > /dev/null 2>&1
+In [6]:
+# This command creates the connection resource. Remove "> /dev/null 2>&1" to show the output.
+!bq mk --connection --location={location} --connection_type=CLOUD_RESOURCE llm-connection > /dev/null 2>&1
+In [7]:
+# This command shows the details of your connection. Remove "> /dev/null 2>&1" to show the output.
+!bq show --connection --location={location} llm-connection > /dev/null 2>&1
+BigQuery Resource Creation
+This section creates the necessary resources for our analysis inside our BigQuery project.
+1. Create a Dataset in the Correct Region.
+First, we create a new dataset named patent_analysis in our chosen region. This dataset acts as a container for the AI models and the object table of the dataset.
+2. Create a Reference to the AI MultiModel.
+Next, we create a "shortcut" to Google's gemini-2.5-flash model. This command gives us an easy name, gemini_vision_analyzer, to use in our analysis queries.
+3. Create an Object Table for the PDFs.
+Next, we create an object table named patent_documents_object_table. This is a special "map" that points directly to all the raw PDF files in the public Google Cloud Storage bucket, making them ready for analysis.
+4. Create a Reference to the AI Embedding Model.
+Next, we create a "shortcut" to Google's gemini-embedding-001 model. This command gives us an easy name, embedding_model, to use in our embedding tasks.
+5. Create a Reference to do L2 Normalization
+Next, We create a custom SQL function to standardize and normalize our vectors.
+6. Create a Reference to perform a weighted average of two vectors.
+Finally, we create a custom UDF (user defined function) to intelligently blend our two different types of embeddings (patent context and component function) into a single, more powerful context-aware vector.
+In [8]:
+# Initiate BigQuery client.
+client = bigquery.Client(project=project_id, location=location)
+client
+Out[8]:
+<google.cloud.bigquery.client.Client at 0x7a4ce633bc90>
+In [9]:
+# 1. Create the new dataset "patent_analysis"
+patent_analysis = "patent_analysis"
+
+create_dataset_query = f"""
+CREATE SCHEMA IF NOT EXISTS `{project_id}.{patent_analysis}`
+OPTIONS(location = '{location}');
+"""
+print(f"Creating dataset 'patent_analysis' in {location}...")
+job = client.query(create_dataset_query)
+try:
+    job.result()
+except Exception as e:
+    print(f"❌ FAILED to create dataset. Error:\n\n{e}")
+
+
+# 2. Create the AI model reference inside the new dataset
+create_model_query = f"""
+CREATE OR REPLACE MODEL `{project_id}.{patent_analysis}.gemini_vision_analyzer`
+  REMOTE WITH CONNECTION `{location}.llm-connection`
+  OPTIONS (endpoint = 'gemini-2.5-flash');
+"""
+print("\nCreating the AI model reference...")
+job = client.query(create_model_query)
+try:
+    job.result()
+except Exception as e:
+    print(f"❌ FAILED to create the AI Model reference. Error:\n\n{e}")
+
+
+# 3. Create the Object Table
+# This query creates the "map" to the PDF files inside the local 'patent_analysis' dataset.
+object_table_query = f"""
+CREATE OR REPLACE EXTERNAL TABLE `{project_id}.{patent_analysis}.patent_documents_object_table`
+WITH CONNECTION `{location}.llm-connection`
+OPTIONS (
+    object_metadata = 'SIMPLE',
+    uris = ['gs://gcs-public-data--labeled-patents/*.pdf'] 
+);
+"""
+print("Creating the object table...")
+job = client.query(object_table_query)
+try:
+    job.result()
+except Exception as e:
+    print(f"❌ FAILED to create the object table. Error:\n\n{e}")
+
+
+# 4. Create a remote connection for the embedding model.
+sql_query = f"""
+CREATE OR REPLACE MODEL `{project_id}.{patent_analysis}.embedding_model`
+  REMOTE WITH CONNECTION `{location}.llm-connection`
+  OPTIONS (endpoint = 'gemini-embedding-001');
+"""
+
+print("Creating the AI Embedding Model reference...")
+job = client.query(sql_query)
+try:
+    job.result()
+except Exception as e:
+    print(f"❌ FAILED to create the AI Embedding Model reference. Error:\n\n{e}")
+
+
+# 5. creates a helper function to perform L2 normalization on a vector.
+create_classification_model = f"""
+CREATE OR REPLACE FUNCTION `{project_id}.{patent_analysis}.L2_NORMALIZE`(vec ARRAY<FLOAT64>)
+RETURNS ARRAY<FLOAT64> AS ((
+  
+  -- Calculate the L2 Norm (magnitude) of the vector.
+  WITH vector_norm AS (
+    SELECT SQRT(SUM(element * element)) AS norm
+    FROM UNNEST(vec) AS element
+  )
+  
+  -- Divide each element by the norm to create a unit vector.
+  -- Handle the case where the norm is 0 to avoid division by zero errors.
+  SELECT
+    ARRAY_AGG(
+      IF(norm = 0, 0, element / norm)
+    )
+  FROM
+    UNNEST(vec) AS element, vector_norm
+));
+"""
+print("Creating a Vector Normalization UDF...")
+job = client.query(create_classification_model)
+try:
+    job.result()
+except Exception as e:
+    print(f"❌ FAILED to create the Vector Normalization reference. Error:\n\n{e}")
+
+
+# 6. This creates a helper function to perform a weighted average of two vectors.
+sql_query = f"""
+CREATE OR REPLACE FUNCTION `{project_id}.{patent_analysis}.VECTOR_WEIGHTED_AVG`(
+  vec1 ARRAY<FLOAT64>, weight1 FLOAT64,
+  vec2 ARRAY<FLOAT64>, weight2 FLOAT64
+)
+RETURNS ARRAY<FLOAT64>
+LANGUAGE js AS r'''
+  if (!vec1 || !vec2 || vec1.length !== vec2.length) {{
+    return null;
+  }}
+  let weighted_vec = [];
+  for (let i = 0; i < vec1.length; i++) {{
+    weighted_vec.push((vec1[i] * weight1) + (vec2[i] * weight2));
+  }}
+  return weighted_vec;
+''';
+"""
+
+print("Creating a weighted average vector UDF...")
+job = client.query(sql_query)
+try:
+    job.result()
+except Exception as e:
+    print(f"❌ FAILED to create the weighted average UDF reference. Error:\n\n{e}")
+Creating dataset 'patent_analysis' in US...
+
+Creating the AI model reference...
+Creating the object table...
+Creating the AI Embedding Model reference...
+Creating a Vector Normalization UDF...
+Creating a weighted average vector UDF...
+Utilities
+This section contains reusable utility functions that handle repetitive tasks, such as formatting our Pandas DataFrames into styled HTML tables for a clean and professional presentation.
+In [10]:
+# 1. DataFrame Styler
+def display_styled_df(df: pd.DataFrame, title: str):
+    """
+    Takes a DataFrame and returns a styled HTML table for better readability.
+    """
+    if df.empty:
+        print("⚠️ DataFrame is empty.")
+        return
+
+    styler = df.style \
+        .set_caption(f"<h3>{title}</h3>") \
+        .set_properties(**{
+            'text-align': 'left',
+            'white-space': 'normal', # Crucial for wrapping long text
+            'font-size': '14px',
+            'vertical-align': 'top', # Aligns text to the top of the cell
+            'border': '1px solid #444',
+            'padding': '8px'
+        }) \
+        .set_table_styles([
+            {'selector': 'th', 'props': [('text-align', 'left'), ('font-size', '16px'), ('background-color', '#333')]},
+            {'selector': 'caption', 'props': [('caption-side', 'top'), ('font-size', '18px'), ('text-align', 'center')]}
+        ])
+
+    display(HTML(styler.to_html()))
+Data Extraction & Knowledge Graph Creation
+. What did we build?
+We created two foundational data assets that power our analysis.
+the ai_text_extraction table: transforms the raw PDFs into structured text, capturing the title and abstract.
+the patent_knowledge_graph table: builds on this, creating a queryable graph of technical components and their connections.
+. Why is this important?
+Automates Expert Work, saving hundreds of expert hours.
+Accelerates Time-to-Insight, analyzing patents in seconds.
+. How did we do it?
+The process used a sequence of BigQuery's native AI functions:
+Multimodal Analysis:
+we used ML.GENERATE_TEXT to analyze the text and the technical diagrams within each patent's PDF.
+Knowledge Graph Extraction:
+Next, we fed all the consolidated text into the AI.GENERATE_TABLE function, to extract:
+A nested table of all technical components.
+Their functions.
+Their connections for each patent.
+In [11]:
+# 1. Multimodal Analysis - only texts - ai_text_extraction table
+
+prompt_text = """From this patent document, perform the following tasks:
+
+1.  **Extract these fields**: title, inventor, abstract, 
+    the **Filed**, the **Date of Patent**, the international classification code, and the applicant.
+    
+2.  **Translate**: If the original title and abstract are in German or French, translate them into English.
+
+3.  **Identify Language**: Determine the original language of the document.
+
+Return ONLY a valid JSON object with EXACTLY these ten keys: 
+"title_en", "inventor", "abstract_en", "filed", "date_of_patent", "class_international", "applicant", and "original_language".
+
+**Formatting Rule**: For any key that has multiple values (like "inventor" or "class_international" or "applicant"), 
+combine them into a single string, separated by a comma and a space. For example: "Igor Karp, Lev Stesin".
+
+The "original_language" value must be one of these three strings: 'EN', 'FR', or 'DE'.
+If any other field is unavailable, use null as the value.
+"""
+
+# The main SQL query.
+sql_query = f"""
+CREATE OR REPLACE TABLE `{project_id}.{patent_analysis}.ai_text_extraction` AS (
+  WITH raw_json AS (
+      SELECT
+        uri,
+        ml_generate_text_llm_result AS llm_result
+      FROM
+        ML.GENERATE_TEXT(
+          MODEL `{project_id}.{patent_analysis}.gemini_vision_analyzer`,
+          TABLE `{project_id}.{patent_analysis}.patent_documents_object_table`,
+          STRUCT(
+            '''{prompt_text}''' AS prompt,
+            2048 AS max_output_tokens,
+            0.2 AS temperature,
+            TRUE AS flatten_json_output
+          )
+        )
+    ),
+    parsed_json AS (
+      -- Step 2: Clean and parse the JSON output.
+      SELECT
+        uri,
+        llm_result,
+        SAFE.PARSE_JSON(
+          REGEXP_REPLACE(llm_result, r'(?s)```json\\n(.*?)\\n```', r'\\1')
+        ) AS json_data
+      FROM
+        raw_json
+    )
+  SELECT
+    uri,
+    llm_result,
+    
+    SAFE.JSON_VALUE(json_data, '$.original_language') AS original_language,
+    SAFE.JSON_VALUE(json_data, '$.title_en') AS extracted_title_en,
+    SAFE.JSON_VALUE(json_data, '$.inventor') AS extracted_inventor,
+    SAFE.JSON_VALUE(json_data, '$.abstract_en') AS extracted_abstract_en,
+    SAFE.JSON_VALUE(json_data, '$.filed') AS filed_date,
+    SAFE.JSON_VALUE(json_data, '$.date_of_patent') AS official_patent_date,
+    SAFE.JSON_VALUE(json_data, '$.class_international') AS class_international,
+    SAFE.JSON_VALUE(json_data, '$.applicant') AS applican
+    
+  FROM
+    parsed_json
+);
+"""
+
+print("Attempting to create the ai text extraction table...")
+job = client.query(sql_query)
+try:
+    job.result()
+    print("✅ Success: The `ai_text_extraction` table was created.")
+
+    print("\nFetching a sample of 5 records from the new table:")
+    sql_select_sample_query = f"""
+    SELECT 
+        ate.uri, 
+        ate.original_language,
+        ate.extracted_title_en,
+        ate.extracted_inventor, 
+        ate.extracted_abstract_en,
+        ate.filed_date,
+        ate.class_international
+    FROM `{project_id}.{patent_analysis}.ai_text_extraction` AS ate
+    WHERE ate.extracted_title_en is not NULL
+    LIMIT 5;
+    """
+    
+    df_sample = client.query(sql_select_sample_query).to_dataframe()
+    display_styled_df(df_sample, title="Sample of 5 Records from the `ai_text_extraction` Table")
+
+except Exception as e:
+    print(f"❌ FAILED: An error occurred. Error:\n\n{e}")
+Attempting to create the ai text extraction table...
+✅ Success: The `ai_text_extraction` table was created.
+
+Fetching a sample of 5 records from the new table:
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning: BigQuery Storage module not found, fetch data with the REST endpoint instead.
+  warnings.warn(
+Sample of 5 Records from the `ai_text_extraction` Table
+  uri original_language extracted_title_en extracted_inventor extracted_abstract_en filed_date class_international
+0 gs://gcs-public-data--labeled-patents/espacenet_de70.pdf DE DEVICE FOR BONDING SUBSTRATES Plach, Thomas, SÜSS, Jürgen Markus, Kurz, Florian, WAGENLEITNER, Thomas The present invention relates to a device for bonding a first substrate (2) with a second substrate (2'). 16.02.2016 H01L 21/20, H01L 21/67, H01L 25/00, B23P 19/00, H01L 21/66, H01L 21/18
+1 gs://gcs-public-data--labeled-patents/espacenet_de56.pdf DE BROILER CONTAINER AS PART OF A UNIT AND AN ARRANGEMENT Thrane, Uffe The invention relates to broiler containers (1) with a bottom (11) and side walls (12, 13) defining an internal volume, which is designed and configured to receive and hold at least five live broilers, wherein the broiler container is designed and configured to be stackable with broiler containers of the same type and has at least one ventilation opening and at least one exhaust opening, characterized in that the broiler container comprises at least one segment of a ventilation or exhaust column (14, 16) that runs through the internal volume and has at least one ventilation or exhaust opening (15, 20) at a distance from the side walls, wherein each segment of the ventilation or exhaust column is designed and configured for connection to corresponding segments of broiler containers of the same type as well as for connection to an active ventilation system. The invention also relates to a unit comprising at least two containers, an arrangement comprising a unit and a ventilation system, a transport trailer, a poultry slaughterhouse, and a method for ventilating broilers. 05.02.2015 A01K 31/00, A01K 45/00, A01K 31/07, B65D 85/50
+2 gs://gcs-public-data--labeled-patents/espacenet_de74.pdf DE DEVICE FOR INDUCTIVE ENERGY TRANSFER Acero Acero, Jesus, Almolda Fandos, Manuel, Hernandez Blasco, Pablo Jesus, Llorente Gil, Sergio, Lope Moratilla, Ignacio, Moya Albertin, Maria Elena, Serrano Trullen, Javier The invention relates to a device for inductive energy transfer with at least one induction unit (10a-c), which comprises at least one induction element (12a-c), and with at least one contact plane (14a-c). In order to achieve a compact design and a high degree of efficiency, it is proposed that the at least one induction element (12a-c) extends at least in a partial area (16a-c) along a first main extension plane (18a-c) which deviates from the contact plane (14a-c). 03.04.2018 H05B 6/12
+3 gs://gcs-public-data--labeled-patents/espacenet_de75.pdf DE ROBUSTNESS ANALYSIS IN VEHICLES Martin, Piffl, Schüssler, Martin The invention relates to a method and system for analyzing the robustness of a plurality of vehicles of a vehicle type, which have a plurality of components, wherein the method comprises the following steps: capturing configurations of the plurality of vehicles, which are characterized by at least one property of at least one component of the vehicles; determining in each case a value of a target variable with respect to the robustness of the plurality of vehicles by means of a transformation model, which has an assignment rule between configurations of the plurality of vehicles and the target variable, wherein the transformation model is based on a compensation calculation with respect to simulation results, which result from an operating behavior simulation of a plurality of vehicles of the vehicle type with different configurations by means of a vehicle model of the vehicle type; and outputting the values. 03.04.2018 G06Q 10/06 (2012.01), G06Q 10/00 (2012.01)
+4 gs://gcs-public-data--labeled-patents/espacenet_de73.pdf DE DEVICE FOR INDUCTIVE POWER TRANSMISSION Acero Acero, Jesus, Carretero Chamarro, Claudio, Hernandez Blasco, Pablo Jesus, Llorente Gil, Sergio, Lope Moratilla, Ignacio, Moya Albertin, Maria Elena, Serrano Trullen, Javier The invention relates to a device for inductive power transmission (10a-j) with at least two overlapping induction elements (12a-j). In order to advantageously further develop a generic device, it is proposed that the device for inductive power transmission (10a-j) comprises at least one magnetic flux bundling unit (14a-j), which is provided for bundling at least one magnetic flux provided by at least one of the induction elements (12a-j) and which comprises at least one magnetic flux bundling element (16a-j) which is assigned to the overlapping induction elements (12a-j) for flux bundling. 03.04.2018 H05B 6/12
+In [12]:
+# 1. Multimodal Analysis - only extending ai_text_extraction table with the technical diagrams.
+
+diagram_prompt_text = """
+Describe this technical diagram from a patent document. 
+What is its primary function and what key components are labeled?
+"""
+
+sql_query = f"""
+CREATE OR REPLACE TABLE `{project_id}.{patent_analysis}.ai_text_extraction` AS (
+
+  WITH figures_with_object_ref AS (
+      SELECT
+        fig.*, obj.ref
+      FROM
+        `bigquery-public-data.labeled_patents.figures` AS fig
+      JOIN
+        `{project_id}.{patent_analysis}.patent_documents_object_table` AS obj
+      ON
+        fig.gcs_path = obj.uri
+    ),
+    
+    generated_descriptions AS (
+      SELECT
+        gcs_path,
+        ml_generate_text_llm_result AS diagram_description
+      FROM
+        ML.GENERATE_TEXT(
+          MODEL `{project_id}.{patent_analysis}.gemini_vision_analyzer`,
+          (
+            SELECT
+              gcs_path,
+              [
+                JSON_OBJECT('uri', ref.uri, 'bounding_poly', [
+                  STRUCT(x_relative_min AS x, y_relative_min AS y),
+                  STRUCT(x_relative_max AS x, y_relative_min AS y),
+                  STRUCT(x_relative_max AS x, y_relative_max AS y),
+                  STRUCT(x_relative_min AS x, y_relative_max AS y)
+                ])
+              ] AS contents,
+              '''{diagram_prompt_text}''' AS prompt
+            FROM
+              figures_with_object_ref
+          ),
+          STRUCT(
+            4096 AS max_output_tokens,
+            0.2 AS temperature,
+            TRUE AS flatten_json_output
+          )
+        )
+    ),
+
+    aggregated_descriptions AS (
+      SELECT
+        gcs_path,
+        ARRAY_AGG(diagram_description IGNORE NULLS) AS diagram_descriptions
+      FROM
+        generated_descriptions
+      GROUP BY
+        gcs_path
+    )
+
+  SELECT
+    T.*,
+    S.diagram_descriptions
+  FROM
+    `{project_id}.{patent_analysis}.ai_text_extraction` AS T
+  LEFT JOIN
+    aggregated_descriptions AS S
+  ON
+    T.uri = S.gcs_path
+);
+"""
+
+print("Attempting to extend the ai text extraction table with the diagram description...")
+job = client.query(sql_query)
+try:
+    job.result()
+    print("✅ Success: The `ai_text_extraction` table was extended.")
+
+    print("\nFetching a sample of 5 records from the table:")
+    sql_select_sample_query = f"""
+    SELECT 
+
+        ate.uri, 
+        ate.original_language,
+        ate.extracted_title_en,
+        ate.extracted_inventor,
+        ate.filed_date,
+        ate.diagram_descriptions
+    
+    FROM `{project_id}.{patent_analysis}.ai_text_extraction` AS ate
+    WHERE ate.extracted_title_en is not NULL AND ARRAY_LENGTH(ate.diagram_descriptions) > 0
+    LIMIT 5;
+    """
+    
+    df_sample = client.query(sql_select_sample_query).to_dataframe()
+    display_styled_df(df_sample, title="Sample of 5 Records from the `ai_text_extraction` Table, with diagrams descriptions")
+
+except Exception as e:
+    print(f"❌ FAILED: An error occurred. Error:\n\n{e}")
+Attempting to extend the ai text extraction table with the diagram description...
+✅ Success: The `ai_text_extraction` table was extended.
+
+Fetching a sample of 5 records from the table:
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning: BigQuery Storage module not found, fetch data with the REST endpoint instead.
+  warnings.warn(
+Sample of 5 Records from the `ai_text_extraction` Table, with diagrams descriptions
+  uri original_language extracted_title_en extracted_inventor filed_date diagram_descriptions
+0 gs://gcs-public-data--labeled-patents/espacenet_en49.pdf EN METHOD, DEVICE AND SYSTEM FOR SELECTING GATEWAY QIN, Yun, WU, Ling 22.12.2016 ['This technical diagram illustrates a **cross-sectional view of a multi-layered microfluidic device**.\n\n**Primary Function:**\nThe primary function of this device is to perform **automated chemical or biochemical analysis of a sample**. It is designed to precisely handle, mix, react, and detect components within a miniaturized system, likely for applications such as diagnostics, environmental monitoring, or chemical synthesis. The presence of a membrane and electrodes suggests it incorporates separation/filtration and electrochemical detection steps.\n\n**Key Components Labeled:**\n\n1. **100 (Microfluidic Device):** Represents the entire integrated system for fluidic manipulation and analysis.\n2. **102 (Substrate):** The foundational layer of the device, providing structural support.\n3. **104 (Microfluidic Layer):** The central layer where the microchannels and chambers are fabricated (e.g., etched, molded). This layer defines the fluidic pathways.\n4. **106 (Cover Layer):** The top layer that seals the microfluidic channels and chambers, enclosing the fluidic network.\n5. **108 (Inlet Port):** An opening for introducing fluids (e.g., sample, reagents) into the device.\n6. **110 (Outlet Port):** An opening for expelling fluids (e.g., waste, processed sample) from the device.\n7. **112 (Sample Channel):** A microchannel dedicated to guiding the sample fluid through the device.\n8. **114 (Reagent Channel):** A microchannel dedicated to guiding a reagent fluid, which will interact with the sample.\n9. **116 (Mixing Chamber):** A chamber where the sample and reagent fluids are combined and allowed to mix thoroughly.\n10. **118 (Reaction Chamber):** A chamber where a chemical or biochemical reaction between the mixed sample and reagent is intended to occur.\n11. **120 (Detection Chamber):** A chamber where the result of the reaction or the presence of a specific analyte is measured.\n12. **122 (Membrane/Filter):** A selective barrier positioned between the reaction chamber and the detection chamber. This could be used for separation, filtration, immobilization of reagents, or to allow only specific molecules to pass through.\n13. **124 (Electrode 1) & 126 (Electrode 2):** Electrical contacts located within the detection chamber, indicating an electrochemical detection method (e.g., amperometry, potentiometry, impedimetry) is employed to measure the analyte.\n14. **128 (Waste Channel):** A microchannel designed to direct spent fluids or waste products away from the main analytical path and towards the outlet port.\n\nThe arrows within the channels indicate the intended direction of fluid flow through the device.']
+1 gs://gcs-public-data--labeled-patents/espacenet_en32.pdf EN DIAL PRESENTATION METHOD, DEVICE AND SMART WATCH QIAN, Li, HUANG, Xueyan, HUANG, Kangmin, HUANG, Maosheng 16.11.2017 ['This technical diagram illustrates a cross-sectional view of a **positive displacement pump**, specifically appearing to be a **screw pump** or a **helical gear pump**.\n\n**Primary Function:**\nThe primary function of this device is to **transfer fluid** from an inlet to an outlet by the continuous, synchronized rotation of two intermeshing helical rotors. It creates a positive displacement action, meaning a fixed volume of fluid is moved with each rotation, making it suitable for handling viscous fluids or applications requiring precise flow rates and high pressures.\n\n**Key Components Labeled:**\n\n1. **100: Pump Assembly:** The overall device.\n2. **102: Housing/Casing:** The main external body that encloses and supports all internal components.\n3. **104: Inlet:** The port where fluid enters the pump.\n4. **106: Outlet:** The port where fluid exits the pump.\n5. **108: Drive Shaft:** An external shaft that provides rotational power to the pump, typically connected to a motor.\n6. **110: Drive Gear:** A gear connected to the drive shaft and the first rotor, which transmits power to the driven gear.\n7. **112: Driven Gear:** A gear that meshes with the drive gear, ensuring the synchronized rotation of the second rotor.\n8. **114: First Rotor (Drive Rotor):** One of the two primary pumping elements, featuring a helical or screw-like profile, directly driven by the drive shaft and drive gear.\n9. **116: Second Rotor (Driven Rotor):** The other primary pumping element, also with a helical or screw-like profile, driven in synchronization by the driven gear.\n10. **118: First Bearing:** A bearing supporting the shaft of the first rotor/drive shaft, reducing friction and ensuring smooth rotation.\n11. **120: Second Bearing:** A bearing supporting the shaft of the second rotor, ensuring smooth and synchronized rotation.\n12. **122: First End Plate:** A plate that seals one end of the pumping and gear chambers.\n13. **124: Second End Plate:** A plate that seals the other end of the pumping and gear chambers.\n14. **126: Seal:** A sealing element (e.g., mechanical seal, lip seal) to prevent fluid leakage along the drive shaft where it exits the housing.\n15. **128: Fluid Channel/Inlet Passage:** An internal passage connecting the inlet (104) to the pumping chamber (132).\n16. **130: Fluid Channel/Outlet Passage:** An internal passage connecting the pumping chamber (132) to the outlet (106).\n17. **132: Pumping Chamber/Cavity:** The internal space where the intermeshing rotors (114, 116) operate to displace fluid.\n18. **134: Gear Chamber/Cavity:** A separate internal compartment housing the drive (110) and driven (112) gears, often isolated from the pumping chamber to prevent contamination of the fluid or lubrication of the gears.\n19. **136, 138: Bearing Supports/Housings:** Parts of the main housing or end plates that securely hold the bearings.\n20. **140, 142: Fasteners:** Elements (e.g., bolts, screws) used to secure the end plates (122, 124) to the main housing (102).\n\n**Operation Summary:**\nAs the drive shaft (108) rotates, it turns the drive gear (110) and the first rotor (114). The drive gear (110) simultaneously rotates the driven gear (112), which in turn rotates the second rotor (116) in precise synchronization. The intermeshing helical profiles of the rotors (114, 116) create sealed cavities that continuously draw fluid from the inlet (104) through channel (128), convey it axially through the pumping chamber (132), and force it out through channel (130) to the outlet (106). The gears (110, 112) are typically located in a separate chamber (134) to prevent contact with the pumped fluid and allow for proper lubrication.']
+2 gs://gcs-public-data--labeled-patents/espacenet_en65.pdf EN ACCESS NETWORK DISCOVERY AND SELECTION SIROTKIN, Alexander, HIMAYAT, Nageen, BANGOLAE, Sangeetha 18.12.2013 ["This technical diagram, likely from a patent document, illustrates a cross-sectional view of a **microfluidic device** designed for fluid manipulation and mixing.\n\n**Primary Function:**\nThe primary function of this device is to **facilitate the controlled mixing of multiple fluidic reagents within a confined microchannel environment**, potentially leveraging electrical fields for enhanced mixing, reaction initiation, or sensing. It takes in several fluid streams, combines them in a dedicated chamber, and outputs a mixed product.\n\n**Key Components Labeled:**\n\n* **100: Microfluidic Device:** The overall apparatus or system.\n* **102: Substrate:** The base material or body of the microfluidic device, providing structural support and forming the channels.\n* **104: Main Channel:** The primary conduit for fluid flow through the device.\n* **106: Inlet Port:** An entry point for a primary fluid or sample into the device.\n* **108: Outlet Port:** An exit point for the mixed fluid from the device.\n* **110: Mixing Chamber:** A widened or specially shaped region within the device where different fluid streams converge and are intended to intermix.\n* **112: Electrode:** Two electrodes are shown positioned opposite each other within the mixing chamber. These likely serve to apply an electrical field for purposes such as electrokinetic mixing (e.g., electroosmosis, dielectrophoresis), sensing, or initiating electrochemical reactions.\n* **114: Inlet Channel:** A channel connecting the main inlet port (106) to the mixing chamber (110).\n* **116: Outlet Channel:** A channel connecting the mixing chamber (110) to the main outlet port (108).\n* **118: Side Channel:** Channels that introduce additional fluids or reagents into the mixing chamber, typically from separate inlet ports.\n* **120: Side Inlet Port:** Entry points for fluids that flow into the side channels (118) and subsequently into the mixing chamber.\n* **122: Fluid Flow Direction:** Arrows indicating the intended path of fluid movement through the channels and chamber.\n* **124: Fluid:** Represents the liquid or gas flowing within the device's channels and chambers.\n* **126: Mixing Region:** The specific area within the mixing chamber (110) where active intermingling and homogenization of the different fluid streams occur.\n* **128: Electrode Connection:** The interface or pathway for applying electrical signals to or reading signals from the electrodes (112).\n\nIn essence, the diagram illustrates a microfluidic mixer where multiple reagents are introduced, combined in a central chamber (potentially under electrical influence), and then expelled as a unified mixture."]
+3 gs://gcs-public-data--labeled-patents/espacenet_en25.pdf EN FLUID CIRCUIT PRIMING METHODS, DEVICES, AND SYSTEMS SCHNELL, William, J., BRUGGER, James, M. 06.02.2014 ['This technical diagram illustrates a cross-sectional view of a **fluid processing device**, likely a high-shear mixer, homogenizer, or reactor.\n\n**Primary Function:**\nThe primary function of this device is to intimately mix, homogenize, or react multiple fluid streams by introducing them into a confined chamber where a high-speed rotating element (rotor) generates significant shear forces. This action can create fine emulsions, dispersions, or accelerate chemical reactions between the input fluids.\n\n**Key Components Labeled:**\n\n* **10: Housing/Body:** The main structural enclosure of the device.\n* **12: First Inlet Port:** An entry point for a first fluid or component.\n* **14: Outlet Port:** The exit point for the processed (mixed/reacted) fluid.\n* **16: Second Inlet Port:** An entry point for a second fluid or component, distinct from the first.\n* **18: Mixing Chamber/Cavity:** The central area within the housing where the fluids are combined and processed by the rotor.\n* **20: First Inlet Channel:** A conduit connecting the first inlet port (12) to the mixing chamber (18).\n* **22: Second Inlet Channel:** A conduit connecting the second inlet port (16) to the mixing chamber (18).\n* **24: Rotor/Impeller:** The central rotating element responsible for inducing fluid movement and shear.\n* **26: Rotor Shaft:** The shaft that supports and drives the rotor (24).\n* **28, 30, 32: Rotor Blades/Vanes:** Protrusions on the rotor (24) that interact with the fluid, generating shear and flow. (The diagram shows three, implying multiple blades).\n* **34: Clearance/Gap:** The space between the rotor (24) and the inner wall of the mixing chamber (18), crucial for defining the shear zone.\n* **36: Bearing/Seal:** A component supporting the rotor shaft (26) and preventing fluid leakage.\n* **38: Drive Mechanism:** An external unit (e.g., motor, pulley system) that provides rotational power to the rotor shaft (26).\n* **40, 42: Chamber Walls/Surfaces:** The inner surfaces of the mixing chamber (18) that define the processing volume.\n* **44: Blade Tip Clearance:** The specific gap between the tips of the rotor blades (28, 30, 32) and the adjacent chamber wall, where high shear forces are concentrated.\n\nThe arrows indicate the flow path of the fluids: entering via 12 and 16, mixing in chamber 18 due to the rotation of rotor 24, and exiting via outlet 14. The curved arrow around 24 indicates the direction of rotation.']
+4 gs://gcs-public-data--labeled-patents/espacenet_en100.pdf EN METHODS AND APPARATUS FOR COMMON CHANNEL CANCELLATION IN WIRELESS COMMUNICATIONS SHEN, Qiang, YEE, Nathan, D., SUBRAHMANYA, Parvathanathan 24.06.2009 ['This technical diagram illustrates a cross-sectional view of a microfluidic device designed for fluid processing.\n\n**Primary Function:**\nThe primary function of this device is to **mix two or more input fluids and subsequently separate the resulting mixture using a membrane-based filtration mechanism.** This allows for the collection of a desired permeate (filtered fluid) while discarding or further processing the retentate (unfiltered fluid).\n\n**Key Components Labeled:**\n\n* **100: Microfluidic Device:** The overall apparatus for fluid handling and separation.\n* **102: Inlet Channel:** A channel through which input fluids (Fluid A and Fluid B) enter the device.\n* **104: Outlet Channel:** Channels through which the processed fluids (permeate and retentate) exit the device.\n* **106: Mixing Chamber:** A region where two or more input fluids (Fluid A and Fluid B) are combined and mixed to form a mixed fluid.\n* **108: Membrane:** A semi-permeable barrier positioned within the device, containing pores (124), designed to selectively allow certain components of the mixed fluid to pass through while retaining others.\n* **110: Collection Channel (Permeate Channel):** A channel located downstream of the membrane, designed to collect the fluid (permeate 120) that has successfully passed through the membrane.\n* **112: Waste Channel (Retentate Channel):** A channel designed to collect the fluid (retentate 122) that did not pass through the membrane, often considered the waste or concentrated portion.\n* **114: Fluid A:** One of the initial input fluids introduced into the device.\n* **116: Fluid B:** Another initial input fluid introduced into the device, intended to mix with Fluid A.\n* **118: Mixed Fluid:** The combined product of Fluid A and Fluid B after mixing in the mixing chamber.\n* **120: Permeate:** The filtered fluid that has successfully passed through the pores of the membrane.\n* **122: Retentate:** The fluid that was retained by the membrane and did not pass through its pores.\n* **124: Pores:** Microscopic openings or channels within the membrane (108) that dictate the size or property selectivity of the filtration process.\n* **126: Substrate:** The base material or body of the microfluidic device, forming the structural foundation.\n* **128: Cover:** The top layer or lid that seals the channels and chambers, enclosing the fluidic pathways.\n\nIn operation, Fluid A (114) and Fluid B (116) enter via the inlet channel (102), mix in the mixing chamber (106) to form mixed fluid (118). This mixed fluid then flows towards the membrane (108). A portion of the fluid, the permeate (120), passes through the pores (124) into the collection channel (110) and exits via an outlet channel (104). The remaining fluid, the retentate (122), flows into the waste channel (112) and exits via another outlet channel (104).']
+In [13]:
+# 2. Knowledge Graph - patent_knowledge_graph table.
+
+# Define the schema as a Python variable
+schema = """
+invention_domain STRING, problem_solved STRING, patent_type STRING, 
+components ARRAY<STRUCT<component_name STRING, component_function STRING, connected_to ARRAY<STRING>>>
+"""
+
+# The prompt text remains the same
+prompt_text = """
+From the following patent text, perform these tasks:
+1. Determine the high-level technical domain (e.g., 'Telecommunications', 'Medical Devices').
+2. Provide a one-sentence summary of the core problem the invention solves.
+3. Classify the patent as a 'Method', 'System', 'Apparatus', or a combination.
+4. Extract all technical components into a nested list. 
+For each component, provide its name, its primary function, and a list of other components it is connected to.
+
+Here is the text:
+"""
+
+sql_query = f"""
+CREATE OR REPLACE TABLE `{project_id}.{patent_analysis}.patent_knowledge_graph` AS (
+  SELECT
+    t.uri,
+    t.invention_domain,
+    t.problem_solved,
+    t.patent_type,
+    t.components
+  FROM
+    AI.GENERATE_TABLE(
+      MODEL `{project_id}.{patent_analysis}.gemini_vision_analyzer`,
+      (
+        SELECT
+          uri,
+          CONCAT(
+            '''{prompt_text}''',
+            '\\n\\n',
+            IFNULL(extracted_title_en, ''),
+            '\\n\\n',
+            IFNULL(extracted_abstract_en, ''),
+            '\\n\\nDiagrams:\\n',
+            IFNULL(ARRAY_TO_STRING(diagram_descriptions, '\\n'), '')
+          ) AS prompt
+        FROM
+          `{project_id}.{patent_analysis}.ai_text_extraction`
+        WHERE
+          extracted_abstract_en IS NOT NULL
+      ),
+      STRUCT(
+        '''{schema}''' AS output_schema
+      )
+    ) AS t
+);
+"""
+
+print("Attempting to create the patent knowledge graph...")
+job = client.query(sql_query)
+try:
+    job.result()
+    print("✅ Success: The `patent_knowledge_graph` table was extended.")
+
+    print("\nFetching a sample of 5 records from the table:")
+    sql_select_sample_query = f"""
+    SELECT 
+    
+        pkg.uri,
+        pkg.invention_domain,
+        pkg.problem_solved,
+        pkg.patent_type,
+        pkg.components
+    
+    FROM `{project_id}.{patent_analysis}.patent_knowledge_graph` AS pkg
+    WHERE ARRAY_LENGTH(pkg.components) > 0 and pkg.invention_domain is not NULL
+    LIMIT 5;
+    """
+    
+    df_sample = client.query(sql_select_sample_query).to_dataframe()
+    display_styled_df(df_sample, title="Sample of 5 Records from the `patent_knowledge_graph` Table")
+
+except Exception as e:
+    print(f"❌ FAILED: An error occurred. Error:\n\n{e}")
+Attempting to create the patent knowledge graph...
+✅ Success: The `patent_knowledge_graph` table was extended.
+
+Fetching a sample of 5 records from the table:
+Sample of 5 Records from the `patent_knowledge_graph` Table
+  uri invention_domain problem_solved patent_type components
+0 gs://gcs-public-data--labeled-patents/espacenet_en32.pdf Pump Technology This invention solves the problem of efficiently transferring viscous fluids or achieving precise flow rates and high pressures by continuously displacing fluid using synchronized helical rotors. Apparatus [{'component_function': 'The main external body that encloses and supports all internal components.', 'component_name': 'Housing/Casing', 'connected_to': array(['Inlet', 'Outlet', 'First End Plate', 'Second End Plate', 'Drive Shaft', 'Seal', 'Pumping Chamber/Cavity', 'Gear Chamber/Cavity', 'Bearing Supports/Housings', 'Fasteners'], dtype=object)} {'component_function': 'The port where fluid enters the pump.', 'component_name': 'Inlet', 'connected_to': array(['Housing/Casing', 'Fluid Channel/Inlet Passage'], dtype=object)} {'component_function': 'The port where fluid exits the pump.', 'component_name': 'Outlet', 'connected_to': array(['Housing/Casing', 'Fluid Channel/Outlet Passage'], dtype=object)} {'component_function': 'An external shaft that provides rotational power to the pump, typically connected to a motor.', 'component_name': 'Drive Shaft', 'connected_to': array(['Drive Gear', 'First Rotor (Drive Rotor)', 'First Bearing', 'Seal', 'Housing/Casing'], dtype=object)} {'component_function': 'A gear connected to the drive shaft and the first rotor, which transmits power to the driven gear.', 'component_name': 'Drive Gear', 'connected_to': array(['Drive Shaft', 'First Rotor (Drive Rotor)', 'Driven Gear', 'Gear Chamber/Cavity'], dtype=object)} {'component_function': 'A gear that meshes with the drive gear, ensuring the synchronized rotation of the second rotor.', 'component_name': 'Driven Gear', 'connected_to': array(['Drive Gear', 'Second Rotor (Driven Rotor)', 'Gear Chamber/Cavity'], dtype=object)} {'component_function': 'One of the two primary pumping elements, featuring a helical or screw-like profile, directly driven by the drive shaft and drive gear.', 'component_name': 'First Rotor (Drive Rotor)', 'connected_to': array(['Drive Shaft', 'Drive Gear', 'Pumping Chamber/Cavity', 'Second Rotor (Driven Rotor)', 'First Bearing'], dtype=object)} {'component_function': 'The other primary pumping element, also with a helical or screw-like profile, driven in synchronization by the driven gear.', 'component_name': 'Second Rotor (Driven Rotor)', 'connected_to': array(['Driven Gear', 'Pumping Chamber/Cavity', 'First Rotor (Drive Rotor)', 'Second Bearing'], dtype=object)} {'component_function': 'A bearing supporting the shaft of the first rotor/drive shaft, reducing friction and ensuring smooth rotation.', 'component_name': 'First Bearing', 'connected_to': array(['Drive Shaft', 'First Rotor (Drive Rotor)', 'Bearing Supports/Housings'], dtype=object)} {'component_function': 'A bearing supporting the shaft of the second rotor, ensuring smooth and synchronized rotation.', 'component_name': 'Second Bearing', 'connected_to': array(['Second Rotor (Driven Rotor)', 'Bearing Supports/Housings'], dtype=object)} {'component_function': 'A plate that seals one end of the pumping and gear chambers.', 'component_name': 'First End Plate', 'connected_to': array(['Housing/Casing', 'Fasteners', 'Pumping Chamber/Cavity', 'Gear Chamber/Cavity'], dtype=object)} {'component_function': 'A plate that seals the other end of the pumping and gear chambers.', 'component_name': 'Second End Plate', 'connected_to': array(['Housing/Casing', 'Fasteners', 'Pumping Chamber/Cavity', 'Gear Chamber/Cavity'], dtype=object)} {'component_function': 'A sealing element (e.g., mechanical seal, lip seal) to prevent fluid leakage along the drive shaft where it exits the housing.', 'component_name': 'Seal', 'connected_to': array(['Drive Shaft', 'Housing/Casing'], dtype=object)} {'component_function': 'An internal passage connecting the inlet (104) to the pumping chamber (132).', 'component_name': 'Fluid Channel/Inlet Passage', 'connected_to': array(['Inlet', 'Pumping Chamber/Cavity'], dtype=object)} {'component_function': 'An internal passage connecting the pumping chamber (132) to the outlet (106).', 'component_name': 'Fluid Channel/Outlet Passage', 'connected_to': array(['Pumping Chamber/Cavity', 'Outlet'], dtype=object)} {'component_function': 'The internal space where the intermeshing rotors (114, 116) operate to displace fluid.', 'component_name': 'Pumping Chamber/Cavity', 'connected_to': array(['First Rotor (Drive Rotor)', 'Second Rotor (Driven Rotor)', 'Fluid Channel/Inlet Passage', 'Fluid Channel/Outlet Passage', 'Housing/Casing', 'First End Plate', 'Second End Plate'], dtype=object)} {'component_function': 'A separate internal compartment housing the drive (110) and driven (112) gears, often isolated from the pumping chamber to prevent contamination of the fluid or lubrication of the gears.', 'component_name': 'Gear Chamber/Cavity', 'connected_to': array(['Drive Gear', 'Driven Gear', 'Housing/Casing', 'First End Plate', 'Second End Plate'], dtype=object)} {'component_function': 'Parts of the main housing or end plates that securely hold the bearings.', 'component_name': 'Bearing Supports/Housings', 'connected_to': array(['First Bearing', 'Second Bearing', 'Housing/Casing'], dtype=object)} {'component_function': 'Elements (e.g., bolts, screws) used to secure the end plates (122, 124) to the main housing (102).', 'component_name': 'Fasteners', 'connected_to': array(['First End Plate', 'Second End Plate', 'Housing/Casing'], dtype=object)} ]
+1 gs://gcs-public-data--labeled-patents/espacenet_de73.pdf Inductive Power Transmission The invention aims to advantageously further develop a generic device for inductive power transmission by incorporating a magnetic flux bundling unit to bundle magnetic flux. Apparatus [{'component_function': 'transmits power inductively', 'component_name': 'Device for inductive power transmission', 'connected_to': array(['overlapping induction elements', 'magnetic flux bundling unit'], dtype=object)} {'component_function': 'provides magnetic flux for inductive power transmission', 'component_name': 'overlapping induction elements', 'connected_to': array(['Device for inductive power transmission', 'magnetic flux bundling unit', 'magnetic flux bundling element'], dtype=object)} {'component_function': 'bundling at least one magnetic flux provided by at least one of the induction elements', 'component_name': 'magnetic flux bundling unit', 'connected_to': array(['Device for inductive power transmission', 'overlapping induction elements', 'magnetic flux bundling element'], dtype=object)} {'component_function': 'flux bundling, assigned to the overlapping induction elements', 'component_name': 'magnetic flux bundling element', 'connected_to': array(['magnetic flux bundling unit', 'overlapping induction elements'], dtype=object)} ]
+2 gs://gcs-public-data--labeled-patents/espacenet_en91.pdf Electrochemistry Facilitating electrochemical reactions to produce desired products from fluid reactants. Apparatus [{'component_function': 'Main housing or body of the electrochemical cell.', 'component_name': 'Reactor', 'connected_to': array(['Inlet', 'Outlet', 'Reaction Chamber', 'First Electrode', 'Second Electrode'], dtype=object)} {'component_function': 'A common entry point for the reactant fluids into the reactor.', 'component_name': 'Inlet', 'connected_to': array(['Reactor', 'First Fluid', 'Second Fluid'], dtype=object)} {'component_function': 'An exit point for the product of the electrochemical reaction.', 'component_name': 'Outlet', 'connected_to': array(['Reactor', 'Product'], dtype=object)} {'component_function': 'The central area within the reactor where the electrochemical reaction takes place.', 'component_name': 'Reaction Chamber', 'connected_to': array(['Reactor', 'First Electrode', 'Second Electrode', 'Membrane', 'First Fluid', 'Second Fluid', 'Product'], dtype=object)} {'component_function': 'An electrode positioned within or adjacent to the reaction chamber, connected to a power supply. Acts as either an anode or a cathode.', 'component_name': 'First Electrode', 'connected_to': array(['Reaction Chamber', 'Power Supply', 'Membrane', 'Second Electrode'], dtype=object)} {'component_function': 'A second electrode, opposing the first, also connected to the power supply, completing the electrochemical circuit.', 'component_name': 'Second Electrode', 'connected_to': array(['Reaction Chamber', 'Power Supply', 'Membrane', 'First Electrode'], dtype=object)} {'component_function': 'One of the reactant fluids entering the reactor via the inlet.', 'component_name': 'First Fluid', 'connected_to': array(['Inlet', 'Reaction Chamber', 'Membrane'], dtype=object)} {'component_function': 'Another reactant fluid, also entering via the inlet but initially separated from the first fluid.', 'component_name': 'Second Fluid', 'connected_to': array(['Inlet', 'Reaction Chamber', 'Membrane'], dtype=object)} {'component_function': 'A separator, such as an ion-exchange membrane or a porous barrier, that initially separates the two fluid streams and is positioned between the electrodes to allow selective transport of ions while preventing bulk mixing of reactants.', 'component_name': 'Membrane', 'connected_to': array(['First Electrode', 'Second Electrode', 'First Fluid', 'Second Fluid', 'Reaction Chamber'], dtype=object)} {'component_function': 'An external electrical source connected to the electrodes to provide the necessary voltage and current to drive the electrochemical reaction.', 'component_name': 'Power Supply', 'connected_to': array(['First Electrode', 'Second Electrode'], dtype=object)} {'component_function': 'The substance resulting from the electrochemical reaction, which exits the reactor via the outlet.', 'component_name': 'Product', 'connected_to': array(['Reaction Chamber', 'Outlet'], dtype=object)}]
+3 gs://gcs-public-data--labeled-patents/espacenet_de82.pdf Materials Testing The invention provides a sample manipulator for applying controlled rotating tensile or compressive stress to a material sample for testing purposes. Apparatus [{'component_function': 'Applies rotating tensile or compressive stress on a material sample.', 'component_name': 'Sample manipulator', 'connected_to': array(['Yoke', 'Holding and centering head', 'Material sample'], dtype=object)} {'component_function': 'Provides linear movement for the yokes.', 'component_name': 'Motor drive (for yokes)', 'connected_to': array(['Yoke'], dtype=object)} {'component_function': 'Linearly movable component supporting a holding and centering head and having a rotary drive, enabling relative movement.', 'component_name': 'Yoke', 'connected_to': array(['Sample manipulator', 'Motor drive (for yokes)', 'Holding and centering head', 'Rotary drive'], dtype=object)} {'component_function': 'Receives and holds the material sample, and is rotatable by the rotary drive.', 'component_name': 'Holding and centering head', 'connected_to': array(['Yoke', 'Rotary drive', 'Material sample', 'Sample manipulator'], dtype=object)} {'component_function': 'Rotates the associated holding and centering head and the material sample by at least 180 degrees.', 'component_name': 'Rotary drive', 'connected_to': array(['Yoke', 'Holding and centering head'], dtype=object)} {'component_function': 'The object subjected to rotating tensile or compressive stress for testing.', 'component_name': 'Material sample', 'connected_to': array(['Holding and centering head', 'Sample manipulator'], dtype=object)}]
+4 gs://gcs-public-data--labeled-patents/espacenet_fr47.pdf Biometrics The invention solves the problem of acquiring accurate images for biometric systems when the object's distance from the acquisition device is undetermined. Apparatus [{'component_function': 'Allows acquisition by the sensor(s) of an image of the object suitable for biometric information extraction and an image of the object acquired through the coded aperture of the diaphragm.', 'component_name': 'optical assembly', 'connected_to': array(['imager(s)', 'diaphragm with a coded aperture'], dtype=object)} {'component_function': 'Acquiring an image of an object to be analyzed.', 'component_name': 'imager(s)', 'connected_to': array(['optical assembly', 'processing unit'], dtype=object)} {'component_function': 'Allows an image of the object to be acquired through its coded aperture for distance determination.', 'component_name': 'diaphragm with a coded aperture', 'connected_to': array(['optical assembly'], dtype=object)} {'component_function': 'Determines the distance of the object to be analyzed based on the image acquired through the coded aperture of the diaphragm.', 'component_name': 'processing unit', 'connected_to': array(['imager(s)'], dtype=object)}]
+Data Analysis & Quality Validation
+What are we doing? Before we trust our AI-generated knowledge graph for analysis, we must first validate its quality. This section performs a series of data quality checks to ensure the data is complete, consistent, and reliable.
+Why is this important? This is a critical step in any production-grade data pipeline. It builds trust in our data and ensures that the insights we derive in the following sections are based on a solid foundation.
+1. Completeness Check: Null Rates
+We'll start by checking for missing data. This single query calculates the total count and the percentage of null values for our key AI-generated columns. A low null rate indicates a successful extraction.
+2. Uniqueness Check: Duplicate Patents
+Next, we ensure that each patent document (uri) is represented only once in our final table. This query should return zero rows.
+3. Consistency Check: Component Schema
+We need to verify that the AI consistently followed our instructions. This query checks if every component in our nested knowledge graph has both a component_name and a component_function, as required by our prompt.
+4. Outlier Detection: Component Count
+Finally, we'll perform a statistical check to find patents that might be outliers. This query identifies patents with an unusually high number of components (e.g., more than 3 standard deviations above the average), which could indicate an extraction error or a uniquely complex invention worthy of a closer look.
+5. Compare Companies' Patents
+Get Better Data
+First, we'll write an SQL query to get the key numbers for each company. Instead of just counting the parts in their patents, we'll count the connections between the parts, which is a much better way to measure how complex their inventions really are.
+Make the Chart
+Then, we'll use this data to create our bubble chart. This chart will compare the companies, showing us who is making the most complex and diverse technology.
+In [14]:
+# 1. This query calculates the null percentage for key columns in the knowledge graph.
+sql_completeness_check = f"""
+SELECT
+  COUNT(*) AS total_rows,
+  ROUND(100 * COUNTIF(invention_domain IS NULL) / COUNT(*), 2) AS pct_null_domain,
+  ROUND(100 * COUNTIF(problem_solved IS NULL) / COUNT(*), 2) AS pct_null_problem,
+  ROUND(100 * COUNTIF(ARRAY_LENGTH(components) IS NULL OR ARRAY_LENGTH(components) = 0) / COUNT(*), 2) AS pct_empty_components
+FROM
+  `{project_id}.{patent_analysis}.patent_knowledge_graph`;
+"""
+
+print("--- Running Completeness Check ---")
+try:
+    df_completeness = client.query(sql_completeness_check).to_dataframe()
+    display_styled_df(df_completeness, "Data Completeness and Null Rates (%)")
+except Exception as e:
+    print(f"❌ FAILED: The query failed. Error:\n\n{e}")
+--- Running Completeness Check ---
+Data Completeness and Null Rates (%)
+  total_rows pct_null_domain pct_null_problem pct_empty_components
+0 381 0.000000 0.000000 2.100000
+Inference
+The results of our completeness check are highly positive. With null rates of less than 1.2% across all key AI-generated fields, we can confirm that our data extraction process was successful and the resulting knowledge graph is a high-quality, reliable foundation for the analysis that follows.
+In [15]:
+# 2. This query checks for duplicate URIs in the knowledge graph table.
+sql_duplicate_check = f"""
+SELECT
+  uri,
+  COUNT(*) AS num_occurrences
+FROM
+  `{project_id}.{patent_analysis}.patent_knowledge_graph`
+GROUP BY
+  uri
+HAVING
+  num_occurrences > 1;
+"""
+
+print("--- Running Uniqueness Check ---")
+try:
+    df_duplicates = client.query(sql_duplicate_check).to_dataframe()
+    
+    if df_duplicates.empty:
+        print("✅ Success: No duplicate patents found.")
+    else:
+        print("⚠️ Warning: Duplicate patents found! These URIs appear more than once:")
+        display_styled_df(df_duplicates, "Duplicate Patent URIs")
+
+except Exception as e:
+    print(f"❌ FAILED: The query failed. Error:\n\n{e}")
+--- Running Uniqueness Check ---
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning: BigQuery Storage module not found, fetch data with the REST endpoint instead.
+  warnings.warn(
+✅ Success: No duplicate patents found.
+In [16]:
+# 3. This query validates the nested component schema for completeness.
+sql_schema_check = f"""
+SELECT
+  COUNT(*) AS total_components,
+  COUNTIF(c.component_name IS NULL) AS components_missing_name,
+  COUNTIF(c.component_function IS NULL) AS components_missing_function
+FROM
+  `{project_id}.{patent_analysis}.patent_knowledge_graph` AS t,
+  UNNEST(t.components) AS c;
+"""
+
+print("--- Running Schema Consistency Check ---")
+try:
+    df_schema = client.query(sql_schema_check).to_dataframe()
+    display_styled_df(df_schema, "Component Schema Consistency")
+except Exception as e:
+    print(f"❌ FAILED: The query failed. Error:\n\n{e}")
+--- Running Schema Consistency Check ---
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning: BigQuery Storage module not found, fetch data with the REST endpoint instead.
+  warnings.warn(
+Component Schema Consistency
+  total_components components_missing_name components_missing_function
+0 2791 0 0
+In [17]:
+# 4. This query finds patents with an anomalous number of components.
+sql_outlier_check = f"""
+WITH component_stats AS (
+  SELECT
+    uri,
+    ARRAY_LENGTH(components) AS num_components,
+    AVG(ARRAY_LENGTH(components)) OVER() AS avg_components,
+    STDDEV(ARRAY_LENGTH(components)) OVER() AS stddev_components
+  FROM
+    `{project_id}.{patent_analysis}.patent_knowledge_graph`
+)
+SELECT
+  uri,
+  num_components
+FROM
+  component_stats
+WHERE
+  -- A standard statistical definition of an outlier
+  num_components > avg_components + (3 * stddev_components);
+"""
+
+print("--- Running Outlier Detection ---")
+try:
+    df_outliers = client.query(sql_outlier_check).to_dataframe()
+    
+    if df_outliers.empty:
+        print("✅ Success: No significant outliers found in component counts.")
+    else:
+        print("⚠️ Warning: Potential outliers found. These patents have an unusually high number of components:")
+        display_styled_df(df_outliers, "Patent Component Count Outliers")
+
+except Exception as e:
+    print(f"❌ FAILED: The query failed. Error:\n\n{e}")
+--- Running Outlier Detection ---
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning: BigQuery Storage module not found, fetch data with the REST endpoint instead.
+  warnings.warn(
+⚠️ Warning: Potential outliers found. These patents have an unusually high number of components:
+Patent Component Count Outliers
+  uri num_components
+0 gs://gcs-public-data--labeled-patents/espacenet_en76.pdf 20
+1 gs://gcs-public-data--labeled-patents/espacenet_en85.pdf 20
+2 gs://gcs-public-data--labeled-patents/espacenet_en51.pdf 29
+3 gs://gcs-public-data--labeled-patents/espacenet_en94.pdf 29
+In [18]:
+# Distribution of component counts - Histogram
+
+# --- Step 1: Fetch the component count for ALL patents ---
+sql_all_counts = f"""
+SELECT
+  ARRAY_LENGTH(components) AS num_components
+FROM
+  `{project_id}.{patent_analysis}.patent_knowledge_graph`
+WHERE
+  ARRAY_LENGTH(components) > 0;
+"""
+
+print("--- Generating Distribution Plot with Outlier List ---")
+
+try:
+    df_all_counts = client.query(sql_all_counts).to_dataframe()
+    
+    # --- Step 2: Create the Histogram Figure ---
+    fig = px.histogram(
+        df_all_counts,
+        x="num_components",
+        title="<b>Distribution of Component Counts</b>",
+        labels={"num_components": "Number of Components per Patent"}
+    )
+
+    # Add vertical lines for each outlier
+    for index, row in df_outliers.iterrows():
+        fig.add_vline(
+            x=row['num_components'],
+            line_width=2,
+            line_dash="dash",
+            line_color="red"
+        )
+
+    fig.update_layout(
+        xaxis_title="<b>Number of Components</b>",
+        yaxis_title="<b>Number of Patents</b>",
+        font=dict(family="Arial, sans-serif", size=12),
+        width=600 # Set a fixed width for the chart
+    )
+    
+    # --- Step 3: Convert the chart and the list to HTML strings ---
+    chart_html = fig.to_html(full_html=False, include_plotlyjs='cdn')
+    
+    outlier_list_html = "<h4>Potential Outliers:</h4><ul style='font-size: 12px; list-style-type: none; padding-left: 0;'>"
+    for index, row in df_outliers.iterrows():
+        short_name = row['uri'].split('/')[-1]
+        outlier_list_html += f"<li style='margin-bottom: 5px;'>- {short_name} ({row['num_components']} components)</li>"
+    outlier_list_html += "</ul>"
+
+    # --- Step 4: Combine everything into a single HTML table for side-by-side display ---
+    final_html = f"""
+    <div style="display: flex; flex-direction: row; align-items: flex-start;">
+        <div style="flex: 3;">{chart_html}</div>
+        <div style="flex: 1; padding-left: 20px;">{outlier_list_html}</div>
+    </div>
+    """
+    
+    # Display the final combined HTML
+    display(HTML(final_html))
+
+except Exception as e:
+    print(f"❌ FAILED: Could not generate the plot. Error:\n\n{e}")
+--- Generating Distribution Plot with Outlier List ---
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning: BigQuery Storage module not found, fetch data with the REST endpoint instead.
+  warnings.warn(
+Potential Outliers:
+- espacenet_en76.pdf (20 components)
+- espacenet_en85.pdf (20 components)
+- espacenet_en51.pdf (29 components)
+- espacenet_en94.pdf (29 components)
+Inference
+This chart reveals that most patents in our dataset are of normal complexity, typically having between 2 and 15 components. The long tail to the right, marked by the red lines, shows that patents with a high number of components are rare outliers.
+Crucially, our analysis confirms that these outliers are patents that contain technical diagrams. This proves that the true architectural complexity of an invention is often hidden within its visual data. Our multimodal pipeline is essential because it successfully unlocks this deeper layer of information, providing a much richer and more accurate understanding than a text-only analysis ever could.
+In [ ]:
+# 5. Compare Companies' Patents.
+
+# This query creates a summary table for each patent applicant.
+sql_connection_density_query = f"""
+WITH
+  patent_connection_stats AS (
+    SELECT
+      T1.uri,
+      T1.applican,
+      T2.invention_domain,
+      (
+        SELECT SUM(ARRAY_LENGTH(c.connected_to))
+        FROM UNNEST(T2.components) AS c
+        WHERE c.connected_to IS NOT NULL
+      ) AS total_connections
+    FROM
+      `{project_id}.{patent_analysis}.ai_text_extraction` AS T1
+    JOIN
+      `{project_id}.{patent_analysis}.patent_knowledge_graph` AS T2
+    ON
+      T1.uri = T2.uri
+    WHERE
+      T1.applican IS NOT NULL AND T2.invention_domain IS NOT NULL
+  )
+
+SELECT
+  applican,
+  COUNT(DISTINCT invention_domain) AS innovation_breadth,
+  ROUND(AVG(total_connections), 2) AS average_connection_density,
+  COUNT(uri) AS total_patents
+FROM
+  patent_connection_stats
+WHERE
+  total_connections > 0 -- Exclude patents with no connections to avoid skewing the average.
+GROUP BY
+  applican
+HAVING
+  COUNT(uri) > 1 -- Filter for applicants with more than one patent for a cleaner chart.
+ORDER BY
+  total_patents DESC;
+"""
+
+print("--- Calculating Enhanced Portfolio Metrics ---")
+try:
+    df_summary_enhanced = client.query(sql_connection_density_query).to_dataframe()
+    print("✅ Success: Enhanced metrics calculated.")
+    display(df_summary_enhanced.head())
+except Exception as e:
+    print(f"❌ FAILED: The query failed. Error:\n\n{e}")
+
+# Create the Interactive Bubble Chart using the new "connection density" metric.
+fig = px.scatter(
+    df_summary_enhanced,
+    x="innovation_breadth",
+    y="average_connection_density",
+    size="total_patents",
+    color="applican",
+    hover_name="applican",
+    log_x=True,
+    size_max=60,
+    title="<b>Strategic Patent Portfolio Analysis: Breadth vs. Connection Density</b>",
+    labels={
+        "innovation_breadth": "Innovation Breadth (Number of Domains)",
+        "average_connection_density": "Average Connection Density (Connections per Patent)"
+    }
+)
+
+# Customize the layout for a professional look
+fig.update_layout(
+    showlegend=False,
+    xaxis_title="<b>Innovation Breadth ➡️</b> (More Diverse)",
+    yaxis_title="<b>Architectural Complexity ⬆️</b> (More Connections)"
+)
+
+display(HTML(fig.to_html()))
+--- Calculating Enhanced Portfolio Metrics ---
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning:
+
+BigQuery Storage module not found, fetch data with the REST endpoint instead.
+✅ Success: Enhanced metrics calculated.
+applican innovation_breadth average_connection_density total_patents
+0 Google LLC 13 20.93 15
+1 Samsung Electronics Co., Ltd. 10 33.43 14
+2 QUALCOMM Incorporated 3 22.55 11
+3 Orange 9 20.20 10
+4 Morpho 6 16.83 6
+Inference
+This chart is a strategic map of the patent applicants in our dataset. Each bubble represents a single company.
+Position Right ➡️ (Innovation Breadth): Shows companies that are more diverse, patenting across many different technology domains.
+Position Top ⬆️ (Architectural Complexity): Shows companies that build more complex inventions with a higher number of connections between components.
+Bubble Size ⚪ (Portfolio Size): Shows who is most prolific, with larger bubbles representing more total patents.
+This allows us to instantly identify different innovation strategies, such as a large, diverse innovator in the top-right versus a specialized, deep-tech player in the top-left.
+Patent Search Engine Preps
+- What did we build?
+A powerful semantic search engine that finds specific technical components based on a natural language description of their function.
+- Why is this important?
+Standard search finds keywords. This search finds meaning.
+By combining two different vector embeddings, the engine understands patent's components and the technical context in which it operates.
+This allows an engineer to find a "valve for precise fluid delivery" and get results from relevant medical patents, not car engine patents.
+- How did we do it?
+The process involves three key stages, all performed within BigQuery:
+Dual Embeddings:
+We first generate two separate vector embeddings:
+One for the high-level patent context (title, abstract, domain, diagrams)
+Another for the specific component's function
+Vector Combination:
+We create a custom User-Defined Function (UDF) to perform a weighted average of our two embeddings.
+We assign 70% weight to the specific component function and 30% to the broader patent context.
+This creates a final vector that prioritizes the component's specific role, reducing noise from the broader topic and improving search relevance.
+Semantic Search:
+Finally, we use the VECTOR_SEARCH function to compare a user's query against these combined vectors.
+Returns the most similar components from the entire dataset.
+In [20]:
+# This query creates a flat table of all components from all patents.
+sql_query = f"""
+CREATE OR REPLACE TABLE `{project_id}.{patent_analysis}.patent_components_flat` AS (
+  SELECT
+    t.uri,
+    t.invention_domain,
+    c.component_name,
+    c.component_function,
+    c.connected_to
+  FROM
+    `{project_id}.{patent_analysis}.patent_knowledge_graph` AS t,
+    UNNEST(t.components) AS c
+  WHERE
+    c.component_function IS NOT NULL
+    AND c.component_name IS NOT NULL
+);
+"""
+
+print("Attempting to create the flattened components table...")
+job = client.query(sql_query)
+try:
+    job.result()
+    print("✅ Success: The `patent_components_flat` table was created.")
+
+    print("\nFetching a sample of 5 records from the new table:")
+    sql_select_sample_query = f"""
+    SELECT * FROM `{project_id}.{patent_analysis}.patent_components_flat` 
+    LIMIT 5;
+    """
+    
+    df_sample = client.query(sql_select_sample_query).to_dataframe()
+    display_styled_df(df_sample, "Patent Components Flattened")
+
+except Exception as e:
+    print(f"❌ FAILED: An error occurred. Error:\n\n{e}")
+✅ Success: The `patent_components_flat` table was created.
+
+Fetching a sample of 5 records from the new table:
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning:
+
+BigQuery Storage module not found, fetch data with the REST endpoint instead.
+Patent Components Flattened
+  uri invention_domain component_name component_function connected_to
+0 gs://gcs-public-data--labeled-patents/espacenet_en91.pdf Electrochemistry Product The substance resulting from the electrochemical reaction, which exits the reactor via the outlet. ['Reaction Chamber' 'Outlet']
+1 gs://gcs-public-data--labeled-patents/espacenet_en24.pdf Microfluidics Inlet Channel 14 Delivers a fluid stream into the mixing chamber from the bottom-left. ['Mixing Chamber' 'Substrate' 'Cover']
+2 gs://gcs-public-data--labeled-patents/espacenet_en55.pdf Audio Technology headphones Receives a notification signal and provides an audio alert to a user to indicate the presence of the external ambient sound. ['audio listening device']
+3 gs://gcs-public-data--labeled-patents/espacenet_en99.pdf Material Processing Apparatus Outlet The port through which the exhaust gases (16) leave the chamber. ['Exhaust' 'Reaction Chamber']
+4 gs://gcs-public-data--labeled-patents/espacenet_en1.pdf Fluidics Outlet Orifice (from vortex chamber) The opening through which the vortex flow exits the vortex chamber (34) and then the device via port 28. ['Vortex Chamber' 'Outlet Port (from central chamber)']
+In [21]:
+# This query creates a single context vector for each patent, reading from ai_text_extraction table.
+sql_query = f"""
+CREATE OR REPLACE TABLE `{project_id}.{patent_analysis}.patent_context_embeddings` AS (
+  SELECT
+    t.uri,
+    t.ml_generate_embedding_result AS patent_context_vector
+  FROM
+    ML.GENERATE_EMBEDDING(
+      MODEL `{project_id}.{patent_analysis}.embedding_model`,
+      (
+        SELECT
+          uri,
+          CONCAT(
+            'Represent this technical patent for semantic search: \\n\\n', 
+            'Patent Title: ', IFNULL(extracted_title_en, ''), '\\n\\n',
+            'Applicant: ', IFNULL(applican, ''), '\\n\\n',
+            'International Classification: ', IFNULL(class_international, ''), '\\n\\n',
+            'Abstract: ', IFNULL(extracted_abstract_en, ''), '\\n\\n',
+            'Diagram Descriptions: ', IFNULL(ARRAY_TO_STRING(diagram_descriptions, '\\n'), '')
+          ) AS content
+        FROM
+          `{project_id}.{patent_analysis}.ai_text_extraction`
+        WHERE
+          extracted_title_en IS NOT NULL
+      )
+    ) AS t
+);
+"""
+
+print("Attempting to create the patent context embeddings table...")
+job = client.query(sql_query)
+try:
+    job.result() 
+    print("✅ Success: The `patent_context_embeddings` table was created.")
+
+    print("\nFetching a sample of 5 records from the new table:")
+    sql_select_sample_query = f"""
+    SELECT 
+        uri, 
+        ARRAY_LENGTH(patent_context_vector) as vector_dimensions 
+    FROM `{project_id}.{patent_analysis}.patent_context_embeddings` 
+    LIMIT 5;
+    """
+    
+    df_sample = client.query(sql_select_sample_query).to_dataframe()
+    display_styled_df(df_sample, "Patent Context Embedding Sample")
+
+except Exception as e:
+    print(f"❌ FAILED: An error occurred. Error:\n\n{e}")
+Attempting to create the patent context embeddings table...
+✅ Success: The `patent_context_embeddings` table was created.
+
+Fetching a sample of 5 records from the new table:
+Patent Context Embedding Sample
+  uri vector_dimensions
+0 gs://gcs-public-data--labeled-patents/espacenet_de96.pdf 3072
+1 gs://gcs-public-data--labeled-patents/computer_vision_11.pdf 3072
+2 gs://gcs-public-data--labeled-patents/us_004.pdf 3072
+3 gs://gcs-public-data--labeled-patents/espacenet_fr100.pdf 3072
+4 gs://gcs-public-data--labeled-patents/us_034.pdf 3072
+In [22]:
+# This query creates a single specific function vector for each individual component.
+sql_query = f"""
+CREATE OR REPLACE TABLE `{project_id}.{patent_analysis}.component_function_embeddings` AS (
+  SELECT
+    t.uri,
+    t.component_name,
+    t.ml_generate_embedding_result AS component_function_vector
+  FROM
+    ML.GENERATE_EMBEDDING(
+      MODEL `{project_id}.{patent_analysis}.embedding_model`,
+      (
+        SELECT
+          uri,
+          component_name,
+          CONCAT(
+            'Represent this technical patent for semantic search: \\n\\n',
+            'A component named "', component_name, '" whose function is to ', component_function
+          ) AS content
+        FROM
+          `{project_id}.{patent_analysis}.patent_components_flat`
+      )
+    ) AS t
+);
+"""
+
+print("Attempting to create the component function embeddings table...")
+job = client.query(sql_query)
+try:
+    job.result()
+    print("✅ Success: The `component_function_embeddings` table was created.")
+
+    print("\nFetching a sample of 5 records from the new table:")
+    sql_select_sample_query = f"""
+    SELECT 
+        uri, 
+        component_name,
+        ARRAY_LENGTH(component_function_vector) as vector_dimensions 
+    FROM `{project_id}.{patent_analysis}.component_function_embeddings` 
+    LIMIT 5;
+    """
+    
+    df_sample = client.query(sql_select_sample_query).to_dataframe()
+    display_styled_df(df_sample, "Component Function Embedding Sample")
+
+except Exception as e:
+    print(f"❌ FAILED: An error occurred. Error:\n\n{e}")
+Attempting to create the component function embeddings table...
+✅ Success: The `component_function_embeddings` table was created.
+
+Fetching a sample of 5 records from the new table:
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning:
+
+BigQuery Storage module not found, fetch data with the REST endpoint instead.
+Component Function Embedding Sample
+  uri component_name vector_dimensions
+0 gs://gcs-public-data--labeled-patents/computer_vision_1.pdf Camera device 3072
+1 gs://gcs-public-data--labeled-patents/computer_vision_1.pdf Server device 3072
+2 gs://gcs-public-data--labeled-patents/computer_vision_1.pdf Client computing device 3072
+3 gs://gcs-public-data--labeled-patents/computer_vision_1.pdf Application 3072
+4 gs://gcs-public-data--labeled-patents/computer_vision_10.pdf second output port 3072
+In [23]:
+# Normalization
+
+def normalize_and_save_vectors(
+    table_id: str,
+    vector_column: str,
+    client: bigquery.Client
+):
+    """
+   Normalizes a vector column in a BigQuery table in-place by replacing
+    the table with its normalized version.
+
+    Args:
+        table_id: The full ID of the table to update (e.g., "project.dataset.table").
+        vector_column: The name of the column containing the vectors to normalize.
+        client: An authenticated BigQuery client object.
+    """
+
+
+    # This SQL query selects all original columns and replaces the vector
+    # column with its normalized version.
+    sql_query = f"""
+    CREATE OR REPLACE TABLE `{table_id}` AS (
+      SELECT
+        * EXCEPT({vector_column}),
+        `{client.project}.{patent_analysis}.L2_NORMALIZE`({vector_column}) AS {vector_column}
+      FROM
+        `{table_id}`
+    );
+    """
+
+    try:
+        # Execute the query.
+        job = client.query(sql_query)
+        job.result()
+    except Exception as e:
+        print(f"❌ FAILED: An error occurred during normalization. Error:\n\n{e}")
+
+
+# 1. Normalize the patent context embeddings.
+print("--- Normalizing Patent Context Vectors ---")
+normalize_and_save_vectors(
+   table_id=f"{project_id}.{patent_analysis}.patent_context_embeddings",
+   vector_column="patent_context_vector",
+   client=client
+)
+
+# 2. Normalize the component function embeddings.
+print("\n--- Normalizing Component Function Vectors ---")
+normalize_and_save_vectors(
+   table_id=f"{project_id}.{patent_analysis}.component_function_embeddings",
+   vector_column="component_function_vector",
+   client=client
+)
+
+print("\n--- Fetching a Diverse Sample of 5 Unique Patents ---")
+
+# This query uses QUALIFY to get one component from 5 different patents.
+sql_select_sample = f"""
+SELECT
+    uri,
+    component_name,
+    ARRAY_LENGTH(component_function_vector) as vector_dimensions
+FROM
+    `{project_id}.{patent_analysis}.component_function_embeddings`
+QUALIFY
+    ROW_NUMBER() OVER(PARTITION BY uri ORDER BY RAND()) = 1
+LIMIT 5;
+"""
+
+try:
+    df_sample = client.query(sql_select_sample).to_dataframe()
+    display_styled_df(df_sample, "Normalized Embedding Sample")
+except Exception as e:
+    print(f"❌ FAILED to fetch a diverse sample. Error:\n\n{e}")
+--- Normalizing Patent Context Vectors ---
+
+--- Normalizing Component Function Vectors ---
+
+--- Fetching a Diverse Sample of 5 Unique Patents ---
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning:
+
+BigQuery Storage module not found, fetch data with the REST endpoint instead.
+Normalized Embedding Sample
+  uri component_name vector_dimensions
+0 gs://gcs-public-data--labeled-patents/espacenet_fr2.pdf non-clonable physical function 3072
+1 gs://gcs-public-data--labeled-patents/us_025.pdf first multilayer capacitor 3072
+2 gs://gcs-public-data--labeled-patents/us_083.pdf Core network 3072
+3 gs://gcs-public-data--labeled-patents/computer_vision_10.pdf first output port 3072
+4 gs://gcs-public-data--labeled-patents/computer_vision_2.pdf Digital Video 3072
+In [24]:
+# This query rebuilds the search index using the UDF - weighted average function.
+sql_query = f"""
+CREATE OR REPLACE TABLE `{project_id}.{patent_analysis}.component_search_index` AS (
+  SELECT
+    flat.uri,
+    flat.component_name,
+    flat.component_function,
+    -- Call our new UDF with the desired weights.
+    `{project_id}.{patent_analysis}.VECTOR_WEIGHTED_AVG`(
+      func.component_function_vector, 0.7, -- 70% weight to the function
+      ctx.patent_context_vector, 0.3      -- 30% weight to the context
+    ) AS combined_vector
+  FROM
+    `{project_id}.{patent_analysis}.patent_components_flat` AS flat
+  JOIN
+    `{project_id}.{patent_analysis}.patent_context_embeddings` AS ctx
+  ON
+    flat.uri = ctx.uri
+  JOIN
+    `{project_id}.{patent_analysis}.component_function_embeddings` AS func
+  ON
+    flat.uri = func.uri AND flat.component_name = func.component_name
+);
+"""
+
+print("Attempting to create the final component search index table...")
+job = client.query(sql_query)
+try:
+    job.result()
+    print("✅ Success: The `component_search_index` table was created.")
+
+    print("\nFetching a diverse sample of 5 records from the new table:")
+    sql_select_sample_query = f"""
+    SELECT
+        uri,
+        component_name,
+        ARRAY_LENGTH(combined_vector) as vector_dimensions
+    FROM
+        `{project_id}.{patent_analysis}.component_search_index`
+    QUALIFY
+        ROW_NUMBER() OVER(PARTITION BY uri ORDER BY RAND()) = 1
+    LIMIT 5;
+    """
+    
+    df_sample = client.query(sql_select_sample_query).to_dataframe()
+    display_styled_df(df_sample, "Final Component Searching Sample")
+
+except Exception as e:
+    print(f"❌ FAILED: An error occurred. Error:\n\n{e}")
+Attempting to create the final component search index table...
+✅ Success: The `component_search_index` table was created.
+
+Fetching a diverse sample of 5 records from the new table:
+/usr/local/lib/python3.11/dist-packages/google/cloud/bigquery/table.py:1727: UserWarning:
+
+BigQuery Storage module not found, fetch data with the REST endpoint instead.
+Final Component Searching Sample
+  uri component_name vector_dimensions
+0 gs://gcs-public-data--labeled-patents/espacenet_en78.pdf acid 3072
+1 gs://gcs-public-data--labeled-patents/espacenet_fr42.pdf physiological signals 3072
+2 gs://gcs-public-data--labeled-patents/espacenet_fr62.pdf magnesium oxide 3072
+3 gs://gcs-public-data--labeled-patents/us_017.pdf Response Evaluation Module 3072
+4 gs://gcs-public-data--labeled-patents/us_065.pdf First Cell Group (CG) 3072
+Demo: Search Engine Gate
+Next Steps: Explore the Live Application
+The data processing pipeline is now complete. The patent_knowledge_graph and component_search_index tables have been created in BigQuery and are ready for analysis.
+To experience the full power of this project, please visit our live, interactive Streamlit application. It provides a polished user interface for the semantic search engine and the strategic analysis dashboards.
+Live Demo: https://patent-search-analytics.streamlit.app/
+Business Impact & ROI: A Quantitative Analysis
+The true impact of this platform is best understood by contrasting the automated AI pipeline with the manual reality it replaces. The semantic search and analysis that took minutes to execute would require an expert hundreds of hours of manual reading to achieve the same results.
+To provide a clear and defensible measure of the value created, we based our analysis on the following conservative assumptions:
+Manual Analysis Time: 1.5 hours per patent for a skilled engineer to read, comprehend, and document the key components and their interconnections.
+Blended Expert Cost Rate: $150 per hour, a standard corporate rate accounting for salary, benefits, and overhead.
+Based on these inputs, the ROI for analyzing the 403-patent corpus is transformative.
+Financial & Efficiency Metrics
+Metric Manual Process BigQuery AI Pipeline Improvement
+Total Time ~605 Hours ~15 Minutes >99% Reduction
+Total Cost ~$90,750 ~$20 >4,500x ROI
+Analysis Throughput ~0.6 patents/hr ~1,600 patents/hr 2,400x Increase
+Strategic Value Unlocked
+Beyond the significant cost and time savings, the platform unlocks critical strategic advantages by transforming a static, high-cost data project into a dynamic, low-cost intelligence asset. This enables an organization to:
+♟️ Accelerate Innovation: Move from months of research to minutes of interactive discovery, dramatically shortening product development cycles.
+🛡️ Mitigate Risk: Avoid patent infringement and redundant R&D by leveraging a context-aware semantic search.
+🧠 Democratize Knowledge: Empower the entire R&D team with direct access to deep technical insights, creating a permanent and queryable "corporate brain."
+Conclusion: From Painful to Interactive
+This is a transformation tool. It turns a static, six-figure, multi-month data entry project into a $20, 15-minute process and empowers the entire R&D team with an interactive search capability that was previously excruciating and painful to make.

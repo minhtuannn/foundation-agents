@@ -1,0 +1,667 @@
+Dataset Description
+The dataset for this competition (both train and test) was generated from a deep learning model trained on the Rainfall Prediction using Machine Learning dataset. Feature distributions are close to, but not exactly the same, as the original. Feel free to use the original dataset as part of this competition, both to explore differences as well as to see whether incorporating the original in training improves model performance.
+<3 I will continue to improve my notebook every day. I would appreciate it if you review and like it and upvote it. <3
+Import Libraries
+In [1]:
+# Importing Libraries
+
+import pandas as pd
+import shap
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import math
+from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV, StratifiedKFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neural_network import MLPClassifier
+#from lightgbm import LGBMClassifier
+from xgboost import XGBClassifier
+from catboost import CatBoostClassifier
+
+import warnings
+warnings.filterwarnings("ignore")
+Load Dataset
+In [2]:
+# Load the datasets
+train_data = pd.read_csv('/kaggle/input/playground-series-s5e3/train.csv')
+test_data = pd.read_csv('/kaggle/input/playground-series-s5e3/test.csv')
+sample_data = pd.read_csv('/kaggle/input/playground-series-s5e3/sample_submission.csv')
+
+# Verify shapes
+print("Train Data Shape:", train_data.shape)
+print("Test Data Shape:", test_data.shape)
+Train Data Shape: (2190, 13)
+Test Data Shape: (730, 12)
+Checking the data's Basic statistics
+In [3]:
+# Display sample data
+print("\nTrain Data Sample:")
+display(train_data.head())
+
+print("\nTest Data Sample:")
+display(test_data.head())
+Train Data Sample:
+id day pressure maxtemp temparature mintemp dewpoint humidity cloud sunshine winddirection windspeed rainfall
+0 0 1 1017.4 21.2 20.6 19.9 19.4 87.0 88.0 1.1 60.0 17.2 1
+1 1 2 1019.5 16.2 16.9 15.8 15.4 95.0 91.0 0.0 50.0 21.9 1
+2 2 3 1024.1 19.4 16.1 14.6 9.3 75.0 47.0 8.3 70.0 18.1 1
+3 3 4 1013.4 18.1 17.8 16.9 16.8 95.0 95.0 0.0 60.0 35.6 1
+4 4 5 1021.8 21.3 18.4 15.2 9.6 52.0 45.0 3.6 40.0 24.8 0
+Test Data Sample:
+id day pressure maxtemp temparature mintemp dewpoint humidity cloud sunshine winddirection windspeed
+0 2190 1 1019.5 17.5 15.8 12.7 14.9 96.0 99.0 0.0 50.0 24.3
+1 2191 2 1016.5 17.5 16.5 15.8 15.1 97.0 99.0 0.0 50.0 35.3
+2 2192 3 1023.9 11.2 10.4 9.4 8.9 86.0 96.0 0.0 40.0 16.9
+3 2193 4 1022.9 20.6 17.3 15.2 9.5 75.0 45.0 7.1 20.0 50.6
+4 2194 5 1022.2 16.1 13.8 6.4 4.3 68.0 49.0 9.2 20.0 19.4
+In [4]:
+# Display sample data
+print("\nTrain Data Sample (Tail):")
+display(train_data.tail())
+
+print("\nTest Data Sample (Tail):")
+display(test_data.tail())
+Train Data Sample (Tail):
+id day pressure maxtemp temparature mintemp dewpoint humidity cloud sunshine winddirection windspeed rainfall
+2185 2185 361 1014.6 23.2 20.6 19.1 19.9 97.0 88.0 0.1 40.0 22.1 1
+2186 2186 362 1012.4 17.2 17.3 16.3 15.3 91.0 88.0 0.0 50.0 35.3 1
+2187 2187 363 1013.3 19.0 16.3 14.3 12.6 79.0 79.0 5.0 40.0 32.9 1
+2188 2188 364 1022.3 16.4 15.2 13.8 14.7 92.0 93.0 0.1 40.0 18.0 1
+2189 2189 365 1013.8 21.2 19.1 18.0 18.0 89.0 88.0 1.0 70.0 48.0 1
+Test Data Sample (Tail):
+id day pressure maxtemp temparature mintemp dewpoint humidity cloud sunshine winddirection windspeed
+725 2915 361 1020.8 18.2 17.6 16.1 13.7 96.0 95.0 0.0 20.0 34.3
+726 2916 362 1011.7 23.2 18.1 16.0 16.0 78.0 80.0 1.6 40.0 25.2
+727 2917 363 1022.7 21.0 18.5 17.0 15.5 92.0 96.0 0.0 50.0 21.9
+728 2918 364 1014.4 21.0 20.0 19.7 19.8 94.0 93.0 0.0 50.0 39.5
+729 2919 365 1020.9 22.2 18.8 17.0 13.3 79.0 89.0 0.2 60.0 50.6
+In [5]:
+# Display information about the DataFrames
+print("\nTrain Data Info:")
+train_data.info()
+
+print("\nTest Data Info:")
+test_data.info()
+Train Data Info:
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 2190 entries, 0 to 2189
+Data columns (total 13 columns):
+ #   Column         Non-Null Count  Dtype  
+---  ------         --------------  -----  
+ 0   id             2190 non-null   int64  
+ 1   day            2190 non-null   int64  
+ 2   pressure       2190 non-null   float64
+ 3   maxtemp        2190 non-null   float64
+ 4   temparature    2190 non-null   float64
+ 5   mintemp        2190 non-null   float64
+ 6   dewpoint       2190 non-null   float64
+ 7   humidity       2190 non-null   float64
+ 8   cloud          2190 non-null   float64
+ 9   sunshine       2190 non-null   float64
+ 10  winddirection  2190 non-null   float64
+ 11  windspeed      2190 non-null   float64
+ 12  rainfall       2190 non-null   int64  
+dtypes: float64(10), int64(3)
+memory usage: 222.5 KB
+
+Test Data Info:
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 730 entries, 0 to 729
+Data columns (total 12 columns):
+ #   Column         Non-Null Count  Dtype  
+---  ------         --------------  -----  
+ 0   id             730 non-null    int64  
+ 1   day            730 non-null    int64  
+ 2   pressure       730 non-null    float64
+ 3   maxtemp        730 non-null    float64
+ 4   temparature    730 non-null    float64
+ 5   mintemp        730 non-null    float64
+ 6   dewpoint       730 non-null    float64
+ 7   humidity       730 non-null    float64
+ 8   cloud          730 non-null    float64
+ 9   sunshine       730 non-null    float64
+ 10  winddirection  729 non-null    float64
+ 11  windspeed      730 non-null    float64
+dtypes: float64(10), int64(2)
+memory usage: 68.6 KB
+In [6]:
+# Display NULL Counts
+print("Train NULL Count:",train_data.isnull().sum().sum())
+print("Test NULL Count:",test_data.isnull().sum().sum())
+Train NULL Count: 0
+Test NULL Count: 1
+In [7]:
+# Display sample data
+print("\nTrain Data Columns: ", train_data.columns)
+print("\nTest Data Columns: ", test_data.columns)
+Train Data Columns:  Index(['id', 'day', 'pressure', 'maxtemp', 'temparature', 'mintemp',
+       'dewpoint', 'humidity', 'cloud', 'sunshine', 'winddirection',
+       'windspeed', 'rainfall'],
+      dtype='object')
+
+Test Data Columns:  Index(['id', 'day', 'pressure', 'maxtemp', 'temparature', 'mintemp',
+       'dewpoint', 'humidity', 'cloud', 'sunshine', 'winddirection',
+       'windspeed'],
+      dtype='object')
+In [8]:
+# Display information about the DataFrames
+print("\nTrain Data Describe: ")
+train_data.describe().T
+Train Data Describe: 
+Out[8]:
+count mean std min 25% 50% 75% max
+id 2190.0 1094.500000 632.342866 0.0 547.250 1094.50 1641.750 2189.0
+day 2190.0 179.948402 105.203592 1.0 89.000 178.50 270.000 365.0
+pressure 2190.0 1013.602146 5.655366 999.0 1008.600 1013.00 1017.775 1034.6
+maxtemp 2190.0 26.365799 5.654330 10.4 21.300 27.80 31.200 36.0
+temparature 2190.0 23.953059 5.222410 7.4 19.300 25.50 28.400 31.5
+mintemp 2190.0 22.170091 5.059120 4.0 17.700 23.85 26.400 29.8
+dewpoint 2190.0 20.454566 5.288406 -0.3 16.800 22.15 25.000 26.7
+humidity 2190.0 82.036530 7.800654 39.0 77.000 82.00 88.000 98.0
+cloud 2190.0 75.721918 18.026498 2.0 69.000 83.00 88.000 100.0
+sunshine 2190.0 3.744429 3.626327 0.0 0.400 2.40 6.800 12.1
+winddirection 2190.0 104.863151 80.002416 10.0 40.000 70.00 200.000 300.0
+windspeed 2190.0 21.804703 9.898659 4.4 14.125 20.50 27.900 59.5
+rainfall 2190.0 0.753425 0.431116 0.0 1.000 1.00 1.000 1.0
+In [9]:
+# Display information about the DataFrames
+print("\nTest Data Describe:")
+test_data.describe().T
+Test Data Describe:
+Out[9]:
+count mean std min 25% 50% 75% max
+id 730.0 2554.500000 210.877136 2190.0 2372.250 2554.50 2736.750 2919.0
+day 730.0 183.000000 105.438271 1.0 92.000 183.00 274.000 365.0
+pressure 730.0 1013.503014 5.505871 1000.0 1008.725 1012.70 1017.600 1032.2
+maxtemp 730.0 26.372466 5.672521 7.4 21.600 27.80 31.000 35.8
+temparature 730.0 23.963288 5.278098 5.9 19.825 25.65 28.375 31.8
+mintemp 730.0 22.110274 5.170744 4.2 17.825 23.90 26.400 29.1
+dewpoint 730.0 20.460137 5.391169 -0.0 16.800 22.30 25.000 26.7
+humidity 730.0 82.669863 7.818714 39.0 77.250 82.00 89.000 98.0
+cloud 730.0 76.360274 17.934121 0.0 69.000 83.00 88.000 100.0
+sunshine 730.0 3.664384 3.639272 0.0 0.325 2.20 6.675 11.8
+winddirection 729.0 103.923182 81.695458 10.0 40.000 70.00 200.000 300.0
+windspeed 730.0 22.484247 9.954779 4.5 14.500 21.30 28.400 59.5
+📊 Dataset Overview
+Train Data: 2190 records, 13 features
+Test Data: 730 records, 12 features (missing rainfall, the target variable)
+There is just one missing values in Test data no missing value in Train data
+🔍 Train Columns
+ID: A unique identifier for each record.
+Day: Represents the day of the year (1 to 365).
+Pressure: Ranges from 999 to 1034.6 hPa.
+Temperature Features: Max temp (10.4°C - 36.0°C), Min temp (4.0°C - 29.8°C), and Average temp.
+Dew Point: Ranges from -0.3°C to 26.7°C.
+Humidity: Ranges from 39% to 98%.
+Cloud Cover: Ranges from 2% to 100%.
+Sunshine Duration: Ranges from 0 to 12.1 hours.
+In [10]:
+numerical_variables = ['winddirection', 'pressure', 'maxtemp', 'temparature', 'mintemp', 'dewpoint', 'humidity', 'cloud', 'sunshine', 'windspeed']
+target_variable = 'rainfall' 
+categorical_variables = []
+
+# fill the missing data as columns' mean
+test_data['winddirection'].fillna(test_data["winddirection"].mean(), inplace=True)
+Distribution Visualisation
+In [11]:
+# Analysis of all NUMERICAL features
+# Define a custom color palette
+custom_palette = ['#f1b963', '#c4c1e0']
+
+# Define numerical features
+variables = [col for col in train_data.columns if col in numerical_variables]
+
+# Function to create and display plots for a single numerical variable
+def create_variable_plots(variable):
+    sns.set_theme(style='whitegrid')
+
+    # Merge data for visualization (without modifying original DataFrames)
+    train_temp = train_data.copy()
+    test_temp = test_data.copy()
+    train_temp["Dataset"] = "Train"
+    test_temp["Dataset"] = "Test"
+    combined_data = pd.concat([train_temp, test_temp])
+
+    # Create subplots
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Box plot
+    sns.boxplot(data=combined_data, x=variable, y="Dataset", palette=custom_palette, ax=axes[0])
+    axes[0].set_xlabel(variable)
+    axes[0].set_title(f"Box Plot of {variable}")
+
+    # Histogram
+    sns.histplot(data=train_data, x=variable, color=custom_palette[0], kde=True, bins=30, label="Train", ax=axes[1])
+    sns.histplot(data=test_data, x=variable, color=custom_palette[1], kde=True, bins=30, label="Test", ax=axes[1])
+    axes[1].set_xlabel(variable)
+    axes[1].set_ylabel("Frequency")
+    axes[1].set_title(f"Histogram of {variable} [Train, Test]")
+    axes[1].legend()
+
+    # Adjust spacing and show
+    plt.tight_layout()
+    plt.show()
+
+# Perform univariate analysis for each numerical variable
+for variable in variables:
+    create_variable_plots(variable)
+In [12]:
+cmap = plt.get_cmap('BrBG')
+colors = [cmap(0.8), cmap(0.2), cmap(0)]
+
+fig, axes = plt.subplots(len(numerical_variables), 1, figsize=(12, len(numerical_variables) * 3))
+
+for i, feature in enumerate(numerical_variables):
+    rolling_max = train_data[feature].rolling(window=7).max()
+    rolling_mean = train_data[feature].rolling(window=7).mean()
+    rolling_min = train_data[feature].rolling(window=7).min()
+    
+    axes[i].plot(rolling_max, label='Max', color=colors[0])
+    axes[i].plot(rolling_mean, label='Mean', color=colors[1])
+    axes[i].plot(rolling_min, label='Min', color=colors[2])
+    
+    axes[i].set_title(f'{feature} Over Time')
+    axes[i].set_xlabel('Index')
+    axes[i].set_ylabel(feature)
+    axes[i].grid(color='gray', linestyle='--', linewidth=0.7)
+    axes[i].legend()
+
+plt.tight_layout()
+plt.show()
+In [13]:
+# Target variable
+plt.figure(figsize=(6,4))
+sns.countplot(x=train_data['rainfall'], palette='coolwarm')
+plt.title('Rainfall Class Distribution')
+plt.xlabel('Rainfall')
+plt.ylabel('Count')
+plt.show()
+In [14]:
+# KDE plot for Feature-Target Relationship
+plt.figure(figsize=(14, 10))
+for i, col in enumerate(numerical_variables, 1):
+    plt.subplot(3, 4, i)
+    sns.kdeplot(train_data[col][train_data['rainfall'] == 1], color='red', label='Rainfall: 1')
+    sns.kdeplot(train_data[col][train_data['rainfall'] == 0], color='blue', label='Rainfall: 0')
+    plt.title(f'Distribution of {col} by Rainfall')
+    plt.legend()
+plt.tight_layout()
+plt.show()
+The most important things in raining are sunshine and cloud!
+In [15]:
+# Pairplot Analysis: Visualising relationships between variables
+sns.pairplot(train_data[numerical_variables + ['rainfall']], hue='rainfall', palette='coolwarm', diag_kind='kde')
+plt.show()
+In [16]:
+# Filter data based on rainfall
+rain_data = train_data[train_data['rainfall'] > 0]
+no_rain_data = train_data[train_data['rainfall'] == 0]
+
+# Create a figure with two subplots
+fig, axes = plt.subplots(1, 2, subplot_kw={'projection': 'polar'}, figsize=(12, 6))
+
+# First wind rose plot (rain)
+ax1 = axes[0]
+ax1.set_theta_direction(-1)
+ax1.set_theta_offset(np.pi / 2.0)
+bars1 = ax1.bar(
+    np.deg2rad(rain_data['winddirection']),
+    rain_data['windspeed'],
+    width=np.pi/8,
+    bottom=0.0,
+    color="b"  
+)
+ax1.set_title('Wind Speed and Direction with Rain')
+
+# Second wind rose plot (no rain)
+ax2 = axes[1]
+ax2.set_theta_direction(-1)
+ax2.set_theta_offset(np.pi / 2.0)
+bars2 = ax2.bar(
+    np.deg2rad(no_rain_data['winddirection']),
+    no_rain_data['windspeed'],
+    width=np.pi/8,
+    bottom=0.0,
+    color="r"  
+)
+ax2.set_title('Wind Speed and Direction without Rain')
+
+plt.tight_layout()
+plt.show()
+In [17]:
+# Correlation heatmap
+def plot_correlation_heatmap(data, title, annot_size=12):
+    plt.figure(figsize=(12, 8))
+    corr_matrix = data.corr()
+    sns.heatmap(corr_matrix, annot=True, annot_kws={"size": annot_size},cmap="coolwarm", fmt=".2f", linewidths=0.5)
+    plt.title(f'Correlation Heatmap - {title}', fontsize=16)
+    plt.show()
+
+plot_correlation_heatmap(train_data, "Train Data")
+As we can see in the Correlation Heatmap, there are many columns that are correlated.
+Feature Engineering
+In [18]:
+def preprocess_weather_data(data):
+    # Feature Engineering
+    data["dew_humidity"] = data["dewpoint"] * data["humidity"] # ***
+    data["cloud_windspeed"] = data["cloud"] * data["windspeed"] # ***
+    data["cloud_to_humidity"] = data["cloud"] / data["humidity"]
+    data["temp_to_sunshine"] = data["sunshine"] / data["temparature"] # ***
+
+    
+    #data["temp_range"] = data["maxtemp"] - data["mintemp"]
+    #data["temp_from_dewpoint"] = data["temparature"] - data["dewpoint"] # **?
+    #data["wind_speeddirection"] = data["windspeed"] * data["winddirection"]
+    #data['avg_temp'] = (data['maxtemp'] + data['mintemp']) / 2
+    #data['cloud_persistence'] = data['cloud'] * data['sunshine']  # If both are low, it means the cloud cover persists.
+    #data['pressure_temp_ratio'] = data['pressure'] / (data['temparature'] + 1)  # Avoid division by zero.
+    #data['dew_temp_diff'] = data['temparature'] - data['dewpoint']
+    #data['dew_humidity_ratio'] = data['dewpoint'] / (data['humidity'] + 1)
+    #data['cloud_humidity_plus'] = data['cloud'] + data["humidity"] 
+    #data['cloud_humidity_sunshine_plus'] = data['cloud'] + data["humidity"] + data['sunshine']
+    #data['cloud_sunshine_*'] = data['cloud'] * data['sunshine']
+    data['wind_temp_interaction'] = data['windspeed'] * data['temparature']
+    #data['sunshine_wind_interaction'] = data['sunshine'] + data['windspeed'] # *
+    #data['cloud_humidity_ratio'] = data['cloud'] + (data['humidity'])  # Avoid division by zero
+    #data['pressure_temp_ratio'] = data['pressure'] / (data['temparature'] + 1)  # Avoid division by zero
+    #data['cloud_wind_ratio'] = data['cloud'] / (data['windspeed'] + 1)  # Avoid division by zero
+
+
+    #data['cloud_coverage_rate'] = data['cloud'] / 100  # Normalize to 0-1 range 
+    #data['cloud_sun_interaction'] = data['cloud'] * (1 - data['sunshine'])
+
+    
+    #data['weather_severity'] = (data['cloud'] * data['humidity']) / (data['pressure'] * (data['sunshine'] + 1))
+    data['cloud_sun_ratio'] = data['cloud'] / (data['sunshine'] + 1) # ***
+    #data["cloud_sunshine_+"] = data["cloud"] + data["sunshine"]
+    #data["cloud_sunshine_-"] = data["cloud"] - data["sunshine"]
+    data["dew_humidity/sun"] = data["dewpoint"] * data["humidity"] / (data['sunshine'] + 1)
+    data["dew_humidity_+"] = data["dewpoint"] * data["humidity"]
+    
+
+    data['humidity_sunshine_*'] = data["humidity"] * data['sunshine']
+
+    data["cloud_humidity/pressure"] = (data["cloud"] * data["humidity"]) / data["pressure"]
+    
+
+    # Extract temporal features
+    data['month'] = ((data['day'] - 1) // 30 + 1).clip(upper=12)
+    data['season'] = data['month'].apply(lambda x: 1 if 3 <= x <= 5  # Spring
+                                         else 2 if 6 <= x <= 8  # Summer
+                                         else 3 if 9 <= x <= 11  # Autumn
+                                         else 0)  # Winter
+    # Seasonal trends
+    #data['season_temp_trend'] = data['temparature'] * data['season']
+    data['season_cloud_trend'] = data['cloud'] * data['season']
+    
+
+    # Seasonal deviation from mean values
+    data['season_cloud_deviation'] = data['cloud'] - data.groupby('season')['cloud'].transform('mean')
+    data['season_temperature'] = data['temparature'] * data['season']  # Interaction of temper
+
+
+
+    
+    data = data.drop(columns=["month"])
+    #data['season_temp_trend'] = data['avg_temp'] * data['season']
+    #data['season_dewpoint_trend'] = data['dewpoint'] * data['season']
+    #data["dew_humidity_with_season"] = data['humidity'] * data['season']
+    
+    data = data.drop(columns=["maxtemp", "winddirection","humidity","temparature","pressure","day","season"])
+
+    return data
+
+# Apply to train and test datasets
+train_data = preprocess_weather_data(train_data)
+test_data = preprocess_weather_data(test_data)
+Data Preprocessing and Feature Engineering
+This cell processes the raw weather data by performing several key steps of feature engineering and creating new features that may enhance the model's ability to make accurate predictions.
+Feature Engineering:
+New features such as dew_humidity, cloud_windspeed, and pressure_temp_ratio are created to capture interactions between weather variables.
+Interaction terms like wind_temp_interaction and sunshine_wind_interaction are calculated to better understand how wind and sunshine affect the weather.
+A weather_severity metric is computed to capture the combined effect of cloud cover, humidity, pressure, and sunshine.
+Temporal Features:
+The month and season are derived from the day of the year to account for seasonal trends.
+Feature Removal:
+Unnecessary columns such as maxtemp, winddirection, and humidity are dropped to reduce dimensionality.
+In [19]:
+plot_correlation_heatmap(train_data, "Train Data", 7)
+In [20]:
+# Select features and target variable
+X = train_data.drop(['rainfall', 'id'], axis=1)
+y = train_data['rainfall']
+X_test = test_data.drop(['id'], axis=1)
+
+# Standardize the features
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
+X_test = scaler.transform(X_test)
+Models
+In [21]:
+# Define models
+models = {
+    "Logistic Regression": LogisticRegression(random_state=42,max_iter=1000),
+    "Random Forest": RandomForestClassifier(random_state=42, n_estimators=100),
+    "Gradient Boosting": GradientBoostingClassifier(random_state=42),
+    "Support Vector Machine": SVC(probability=True, random_state=42),
+    "K-Nearest Neighbors": KNeighborsClassifier(),
+    "Neural Network": MLPClassifier(random_state=42, max_iter=100, hidden_layer_sizes=(10)),
+    "XGBoost": XGBClassifier(random_state=42, n_estimators=100, learning_rate=0.05, max_depth=6),
+    "CatBoost": CatBoostClassifier(random_state=42, iterations=100, learning_rate=0.14, depth=6, verbose=0)
+}
+
+# Train models using StratifiedKFold CV
+FOLDS = 13
+skf = StratifiedKFold(n_splits=FOLDS, shuffle=True, random_state=42)
+auc_scores = {}
+roc_curves = {}
+
+for name, model in models.items():
+    oof_preds = np.zeros(len(y))
+    
+    for train_idx, val_idx in skf.split(X, y):
+        X_train, X_val = X[train_idx], X[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
+
+        
+        if hasattr(model, 'fit'):
+            if "eval_set" in model.fit.__code__.co_varnames:
+                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], early_stopping_rounds=50, verbose=0)
+            else:
+                model.fit(X_train, y_train)
+        
+        oof_preds[val_idx] = model.predict_proba(X_val)[:, 1]
+    
+    auc_score = roc_auc_score(y, oof_preds)
+    auc_scores[name] = auc_score
+    fpr, tpr, _ = roc_curve(y, oof_preds)
+    roc_curves[name] = (fpr, tpr, auc_score)
+    print(f"{name}: AUC = {auc_score:.4f}")
+Logistic Regression: AUC = 0.8938
+Random Forest: AUC = 0.8794
+Gradient Boosting: AUC = 0.8897
+Support Vector Machine: AUC = 0.8504
+K-Nearest Neighbors: AUC = 0.8537
+Neural Network: AUC = 0.8923
+XGBoost: AUC = 0.8865
+CatBoost: AUC = 0.8985
+ROC Curve Comparison among the Models
+In [22]:
+# Plot ROC curves
+plt.figure(figsize=(8, 6))
+for model_name, (fpr, tpr, auc_score) in roc_curves.items():
+    plt.plot(fpr, tpr, label=f"{model_name} (AUC = {auc_score:.4f})")
+plt.plot([0, 1], [0, 1], 'k--')
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC Curve Comparison")
+plt.legend()
+plt.show()
+In [23]:
+# Plot AUC scores
+plt.figure(figsize=(8, 6))
+ax = sns.barplot(x=list(auc_scores.keys()), y=list(auc_scores.values()))
+
+# Annotate the bars with AUC scores
+for i, score in enumerate(auc_scores.values()):
+    ax.text(i, score + 0.01, f'{score:.4f}', ha='center', va='bottom', fontsize=12)
+
+plt.xticks(rotation=45)
+plt.ylabel("AUC Score")
+plt.xlabel("Models")
+plt.title("Model AUC Score Comparison")
+plt.ylim(0.5, 1)  
+plt.grid(axis='y', linestyle='--', alpha=0.7) 
+plt.show()
+In [24]:
+# Find the best model overall
+best_model_name = max(auc_scores, key=auc_scores.get)
+best_model = models[best_model_name]
+print(f"Best Model Overall: {best_model_name} with AUC = {auc_scores[best_model_name]:.4f}")
+Best Model Overall: CatBoost with AUC = 0.8985
+Visualize Feature importance in the best model
+In [25]:
+# Check if the model has feature_importances_ attribute
+if hasattr(best_model, 'feature_importances_'):
+    feature_importance = best_model.feature_importances_
+    importance_type = 'Feature Importance'
+else:
+    # For logistic regression, use coefficients as importance
+    feature_importance = np.abs(best_model.coef_[0])
+    importance_type = 'Coefficient Magnitudes'
+
+# Create a DataFrame to combine feature names and their importance values
+feature_df = pd.DataFrame({
+    'Feature': train_data.drop(['rainfall', 'id'], axis=1).columns,
+    'Importance': feature_importance
+})
+
+# Sort the features by importance in descending order
+feature_df = feature_df.sort_values(by='Importance', ascending=False)
+
+plt.figure(figsize=(8, 6))
+sns.barplot(x='Importance', y='Feature', data=feature_df)
+plt.title(f"{importance_type} ({best_model_name}) with Best AUC")
+plt.show()
+Training with the best model and the best features
+In [26]:
+# Select the best model based on AUC
+best_model_name = max(auc_scores, key=auc_scores.get)
+best_model = models[best_model_name]
+
+# Check if the model has feature_importances_ attribute
+if hasattr(best_model, 'feature_importances_'):
+    feature_importance = best_model.feature_importances_
+    importance_type = 'Feature Importance'
+else:
+    # For logistic regression, use coefficients as importance
+    feature_importance = np.abs(best_model.coef_[0])
+    importance_type = 'Coefficient Magnitudes'
+
+# Create a DataFrame to combine feature names and their importance values
+feature_df = pd.DataFrame({
+    'Feature': train_data.drop(['rainfall', 'id'], axis=1).columns,
+    'Importance': feature_importance
+})
+
+# Sort the features by importance in descending order
+feature_df = feature_df.sort_values(by='Importance', ascending=False)
+In [27]:
+# List of top N features to try 
+top_feature_counts = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+
+# Variables to track the best AUC and corresponding top features
+best_auc_top = 0
+best_top_n = 0
+best_oof_preds_top = None
+
+# Loop over different top feature counts
+for top_n in top_feature_counts:
+    # Select the top N features
+    top_features = feature_df.head(top_n)['Feature']
+    
+    # Prepare the data with the selected top N features
+    X_top = X[:, [train_data.drop(['rainfall', 'id'], axis=1).columns.get_loc(col) for col in top_features]]
+    X_test_top = X_test[:, [train_data.drop(['rainfall', 'id'], axis=1).columns.get_loc(col) for col in top_features]]
+
+    # Retrain the best model using the top N features
+    best_model.fit(X_top, y)
+
+    # Make predictions and calculate AUC for the top N features
+    oof_preds_top = np.zeros(len(y))
+    for train_idx, val_idx in skf.split(X_top, y):
+        X_train, X_val = X_top[train_idx], X_top[val_idx]
+        y_train, y_val = y[train_idx], y[val_idx]
+
+        best_model.fit(X_train, y_train, eval_set=(X_val, y_val), early_stopping_rounds=50, verbose=0)
+        oof_preds_top[val_idx] = best_model.predict_proba(X_val)[:, 1]
+
+    # Calculate and print AUC score for top N features model
+    auc_score_top = roc_auc_score(y, oof_preds_top)
+    print(f"AUC for top {top_n} features model: {auc_score_top:.4f}")
+    
+    # Track the best AUC and corresponding features
+    if auc_score_top > best_auc_top:
+        best_auc_top = auc_score_top
+        best_top_n = top_n
+        best_oof_preds_top = oof_preds_top
+
+# Now plot the feature importance for the set with the highest AUC
+best_features = feature_df.head(best_top_n)
+AUC for top 8 features model: 0.8958
+AUC for top 9 features model: 0.8971
+AUC for top 10 features model: 0.8984
+AUC for top 11 features model: 0.8996
+AUC for top 12 features model: 0.8965
+AUC for top 13 features model: 0.8974
+AUC for top 14 features model: 0.8982
+AUC for top 15 features model: 0.9008
+AUC for top 16 features model: 0.9000
+AUC for top 17 features model: 0.8977
+AUC for top 18 features model: 0.8982
+In [28]:
+# Plotting the feature importance for the best model with the highest AUC
+plt.figure(figsize=(10, 6))
+sns.barplot(x='Importance', y='Feature', data=best_features, palette="mako")
+plt.title(f"{importance_type} for Top {best_top_n} Features ({best_model_name})")
+plt.show()
+
+print("=" * 50)
+print(f"🏆 Best Model: {best_model_name}")
+print(f"🎯 Best AUC: {best_auc_top:.4f} using Top {best_top_n} Features")
+print("=" * 50)
+==================================================
+🏆 Best Model: CatBoost
+🎯 Best AUC: 0.9008 using Top 15 Features
+==================================================
+In [29]:
+# Predictions for the test set with the top N features
+test_preds = best_model.predict_proba(X_test_top)[:, 1]
+
+# Submission
+submission = pd.DataFrame({'id': test_data['id'], 'rainfall': test_preds})
+submission.to_csv("submission.csv", index=False)
+print("\nSubmission file saved as 'submission.csv'.")
+Submission file saved as 'submission.csv'.
+In [30]:
+submission
+Out[30]:
+id rainfall
+0 2190 0.967196
+1 2191 0.977204
+2 2192 0.939921
+3 2193 0.136824
+4 2194 0.065418
+... ... ...
+725 2915 0.973129
+726 2916 0.811719
+727 2917 0.971440
+728 2918 0.977742
+729 2919 0.938505
+730 rows × 2 columns

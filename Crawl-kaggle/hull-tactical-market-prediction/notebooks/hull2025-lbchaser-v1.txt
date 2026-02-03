@@ -1,0 +1,43 @@
+In [ ]:
+ 
+ FOREWORD
+I am just starting out with this competition and saw this amazing post here where the author highlights how to arrive at a score of 17++ on the public leaderboard!
+Let's try and implement this!
+This is not going to generalize, so use with caution!!
+unfold_moreShow hidden code
+CPU times: user 2.72 s, sys: 445 ms, total: 3.16 s
+Wall time: 4.34 s
+unfold_moreShow hidden code
+CPU times: user 31 µs, sys: 5 µs, total: 36 µs
+Wall time: 40.8 µs
+PUBLIC LB CHASER
+unfold_moreShow hidden code
+ message: Optimization terminated successfully.
+ success: True
+  status: 0
+     fun: -17.396311156232123
+       x: [ 9.850e-02  5.236e-02 ...  7.168e-02  5.402e-09]
+     nit: 26
+   direc: [[ 0.000e+00  0.000e+00 ...  0.000e+00  1.000e+00]
+           [ 0.000e+00  1.000e+00 ...  0.000e+00  0.000e+00]
+           ...
+           [ 0.000e+00  0.000e+00 ...  1.000e+00  0.000e+00]
+           [-1.796e-02  4.041e-04 ...  1.325e-03  0.000e+00]]
+    nfev: 144556
+CPU times: user 4min 6s, sys: 116 ms, total: 4min 6s
+Wall time: 4min 6s
+INFERENCE
+unfold_moreShow hidden code
+---> 0.09849934 | Iteration 0
+---> 0.05235790 | Iteration 1
+---> 0.00000001 | Iteration 2
+---> 0.00000001 | Iteration 3
+---> 0.00000001 | Iteration 4
+---> 0.00000001 | Iteration 5
+---> 0.00000001 | Iteration 6
+---> 0.04648664 | Iteration 7
+---> 0.10261887 | Iteration 8
+---> 0.00000001 | Iteration 9
+
+CPU times: user 129 ms, sys: 90.8 ms, total: 220 ms
+Wall time: 417 ms
